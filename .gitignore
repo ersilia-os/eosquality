@@ -212,3 +212,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Large data files — too big for GitHub; store externally
+data/examples/*.csv
+data/libraries/*.csv

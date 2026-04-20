@@ -3,30 +3,52 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "my-package"
+name = "eosquality"
 version = "0.1.0"
-description = "A short description of my package"
+description = "Assess the quality of query data against a fitted reference population"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-  {name="Your Name", email="you@ersilia.io"}
+  {name="Ersilia Open Source Initiative", email="hello@ersilia.io"}
 ]
 requires-python = ">=3.10"
 
 dependencies = [
   "numpy>=1.21",
+  "pandas>=1.5",
+  "scipy>=1.9",
+  "scikit-learn>=1.1",
+  "joblib>=1.2",
+  "loguru>=0.7",
+  "rich>=13.0",
+  "FPSim2>=0.4",
+  "rdkit>=2022.03",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "pytest-cov",
   "black",
-  "flake8",
+  "ruff",
 ]
+
+[project.scripts]
+eosquality = "eosquality.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+eosquality = ["data/indices/**/*", "data/indices/.gitkeep"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]

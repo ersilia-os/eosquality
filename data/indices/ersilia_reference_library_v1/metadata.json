@@ -1,0 +1,12 @@
+{
+  "n_samples": 1000,
+  "method": "morgan_fpsim2",
+  "radius": 2,
+  "n_bits": 2048,
+  "max_k": 50,
+  "rdkit_version": "2026.03.1",
+  "fpsim2_version": "0.7.4",
+  "eosquality_version": "0.1.0",
+  "build_timestamp": "2026-04-16T14:57:33.567938+00:00",
+  "library_name": "ersilia_reference_library_v1"
+}
