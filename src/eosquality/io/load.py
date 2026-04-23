@@ -1,11 +1,14 @@
 """Deserialize a FitState from a folder of artifact files."""
 
+import importlib.metadata
 import json
 import pathlib
 
 import joblib
 import numpy as np
+from packaging.version import Version
 
+from eosquality._library import LIBRARY_ID
 from eosquality.config import (
     AggregationConfig,
     BootstrapConfig,
@@ -14,6 +17,7 @@ from eosquality.config import (
     ErsiliaQualityConfig,
     NeighborConfig,
 )
+from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.reference.fit_state import FitState, ReferenceReport
 from eosquality.reference.metadata import ColumnCharacteristics, FitMetadata
 from eosquality.schema.models import ColumnSpec, Schema
@@ -66,6 +70,8 @@ def load(path: str | pathlib.Path) -> FitState:
         f"  metadata.json | {metadata.n_samples:,} samples · {metadata.n_features} features"
     )
 
+    _check_artifacts_compatibility(metadata)
+
     # Joblib artifacts
     reference_ids = joblib.load(folder / "reference_ids.joblib")
     logger.debug(f"  reference_ids.joblib | {len(reference_ids):,} ids")
@@ -96,6 +102,50 @@ def load(path: str | pathlib.Path) -> FitState:
         metadata=metadata,
         vector_index_path=vector_index_path,
     )
+
+
+# ---------------------------------------------------------------------------
+# Compatibility check
+# ---------------------------------------------------------------------------
+
+
+def _check_artifacts_compatibility(metadata: FitMetadata) -> None:
+    """Refuse to load artifacts produced against a different reference library.
+
+    Two signals are checked (either mismatch is fatal):
+
+    1. ``metadata.library_id`` must equal the canonical :data:`LIBRARY_ID`
+       shipped with this install. Artifacts fit against a custom
+       ``--vector-index`` whose ``library_name`` differs will be rejected here.
+    2. The major version of ``metadata.eosquality_version`` must equal the
+       major of the currently installed package. Redundant with (1) for
+       normal releases, but catches side-loaded artifacts whose library_id
+       somehow matches but were fit under a different major.
+    """
+    if metadata.library_id != LIBRARY_ID:
+        raise IncompatibleArtifactsError(
+            f"Artifacts were fit against reference library "
+            f"{metadata.library_id!r} but this install ships {LIBRARY_ID!r}. "
+            "Major version mismatch — install a compatible eosquality release "
+            "or refit against the current library."
+        )
+
+    try:
+        current = importlib.metadata.version("eosquality")
+    except importlib.metadata.PackageNotFoundError:
+        return  # source checkout without install; skip the redundant check
+    try:
+        saved_major = Version(metadata.eosquality_version).major
+        current_major = Version(current).major
+    except Exception:
+        return  # non-PEP440 version string; library_id check above is authoritative
+    if saved_major != current_major:
+        raise IncompatibleArtifactsError(
+            f"Artifacts were fit with eosquality {metadata.eosquality_version} "
+            f"(major={saved_major}) but this install is {current} "
+            f"(major={current_major}). Reference library is pinned to major — "
+            "install a matching eosquality release or refit."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -139,4 +189,5 @@ def _metadata_from_dict(d: dict) -> FitMetadata:
         fit_timestamp=d["fit_timestamp"],
         eosquality_version=d["eosquality_version"],
         column_characteristics=characteristics,
+        library_id=d.get("library_id", ""),
     )

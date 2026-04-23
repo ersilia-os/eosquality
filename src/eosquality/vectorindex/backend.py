@@ -78,7 +78,6 @@ class VectorIndex:
         n_bits: int = N_BITS_DEFAULT,
         verbose: bool = False,
         library_name: str = "",
-        allow_duplicates: bool = False,
         max_samples: int | None = None,
     ) -> "VectorIndex":
         """Build a VectorIndex from a list of SMILES and persist to ``output_dir``.
@@ -101,9 +100,6 @@ class VectorIndex:
         library_name:
             Name of the reference library (e.g. ``"ersilia_reference_library"``).
             Stored in metadata and shown in verbose output.
-        allow_duplicates:
-            If False (default), raise ValueError when duplicate SMILES are
-            detected. Set to True to skip this check.
         max_samples:
             If set, truncate the input to the first ``max_samples`` molecules
             before building. Useful for quick tests. Default: None (use all).
@@ -125,23 +121,22 @@ class VectorIndex:
                 f"self-kNN with max_k={max_k}, got {n}."
             )
 
-        if not allow_duplicates:
-            seen: set[str] = set()
-            duplicates: list[tuple[int, str]] = []
-            for idx, smi in enumerate(smiles):
-                if smi in seen:
-                    duplicates.append((idx, smi))
-                else:
-                    seen.add(smi)
-            if duplicates:
-                n_shown = min(5, len(duplicates))
-                examples = ", ".join(f"row {i}: {s!r}" for i, s in duplicates[:n_shown])
-                raise ValueError(
-                    f"Duplicate SMILES detected: {len(duplicates)} duplicate(s) found. "
-                    f"First {n_shown}: [{examples}]. "
-                    "The vector index requires a unique molecule per row. "
-                    "Pass allow_duplicates=True to skip this check."
-                )
+        seen: set[str] = set()
+        duplicates: list[tuple[int, str]] = []
+        for idx, smi in enumerate(smiles):
+            if smi in seen:
+                duplicates.append((idx, smi))
+            else:
+                seen.add(smi)
+        if duplicates:
+            n_shown = min(5, len(duplicates))
+            examples = ", ".join(f"row {i}: {s!r}" for i, s in duplicates[:n_shown])
+            raise ValueError(
+                f"Duplicate SMILES detected: {len(duplicates)} duplicate(s) found. "
+                f"First {n_shown}: [{examples}]. "
+                "The vector index requires a unique molecule per row — "
+                "dedupe the source CSV and rebuild."
+            )
 
         output_dir = pathlib.Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

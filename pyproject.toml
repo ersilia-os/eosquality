@@ -23,6 +23,7 @@ dependencies = [
   "rich>=13.0",
   "FPSim2>=0.4",
   "rdkit>=2022.03",
+  "packaging>=21.0",
 ]
 
 [project.optional-dependencies]
@@ -38,9 +39,6 @@ eosquality = "eosquality.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-eosquality = ["data/indices/**/*", "data/indices/.gitkeep"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

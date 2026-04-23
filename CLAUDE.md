@@ -31,12 +31,26 @@ flake8 src/ tests/
 
 ## Architecture
 
-- **`src/my_package/`** — package source code using the src-layout convention. `core.py` is the main module; add new modules here.
+- **`src/eosquality/`** — package source code using the src-layout convention. Subpackages: `preprocess/` (kind-aware normalization + quantile grids), `scoring/` (support, typicality, run-time scoring), `reference/` (fit state, metadata, diagnostics), `vectorindex/` (Morgan FP kNN backend), `io/` (save/load), `schema/` (column inference), `quality/` (the public `ErsiliaQuality` API), `utils/` (stats, logging, identifiers).
 - **`tests/`** — mirrors the package structure; test files named `test_<module>.py`.
-- **`data/`** — data files for reproducibility (tracked in git, currently placeholder).
+- **`data/`** — data files for reproducibility (tracked in git). `data/indices/reference_library/` is the canonical shipped vector index.
 - **`pyproject.toml`** — single source of truth for package metadata, dependencies, and tool configuration.
 
-The package uses a `src/` layout, so imports are `from my_package.<module> import ...`. When adding new functionality, create new modules under `src/my_package/` and corresponding test files under `tests/`.
+Imports are `from eosquality.<module> import ...`. When adding new functionality, create modules under `src/eosquality/` and mirror test files under `tests/`.
+
+## Documentation Maintenance
+
+Keep `README.md` current in the same pass as the code. When any user-visible change lands — new or renamed score columns, removed features, CLI flag changes, new workflows, modified defaults, versioning rules — update README alongside the implementation. Do not let the README describe removed or deprecated behavior; a stale README is worse than no README.
+
+Scope of "user-visible" for this repo:
+- The output columns exposed by `RunResult.scores` and any other public DataFrame/dataclass fields.
+- Python API signatures shown in README examples (`ErsiliaQuality.fit(...)`, `run(...)`, `save(...)`, `load(...)`).
+- CLI subcommands, flags, and their defaults.
+- The workflow narrative (how many steps the user sees, what each produces).
+- Concept/math explanations when the underlying formula changes.
+- Versioning policy, library identity, and compatibility guarantees.
+
+Prefer editing existing README sections over appending a "Changelog" — the README describes *current* state, not history (git log is authoritative for history). If a removed feature is worth preserving context for, call it out in the relevant PR description or commit message, not in README.
 
 ## Interaction Style
 

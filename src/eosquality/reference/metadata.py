@@ -71,6 +71,7 @@ class FitMetadata:
     fit_timestamp: str                                          # ISO 8601 UTC
     eosquality_version: str                                     # package version
     column_characteristics: dict[str, ColumnCharacteristics]   # per-column kind/sparsity
+    library_id: str = ""                                        # e.g. "ersilia_reference_library_v1"
 
 
 def compute_metadata(

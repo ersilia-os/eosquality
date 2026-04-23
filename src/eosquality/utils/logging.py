@@ -123,6 +123,7 @@ class Logger:
         fragmentation_score: float,
         median_k_distance: float,
         notes: list[str],
+        reference_typicality: float | None = None,
     ) -> None:
         """Display reference quality diagnostics computed during fit."""
         if not self._verbose:
@@ -149,6 +150,11 @@ class Logger:
             "reference_quality",
             f"[{_quality_style(reference_quality)}]{reference_quality:.4f}[/]",
         )
+        if reference_typicality is not None:
+            table.add_row(
+                "reference_typicality",
+                f"[{_quality_style(reference_typicality)}]{reference_typicality:.4f}[/]",
+            )
         table.add_row("cohesion_score", f"{cohesion_score:.4f}")
         table.add_row("fragmentation_score", f"{fragmentation_score:.4f}")
         table.add_row("median_k_distance", f"{median_k_distance:.4f}")
@@ -162,7 +168,7 @@ class Logger:
         """Display a summary of score distributions from a run() call."""
         if not self._verbose:
             return
-        score_cols = ["quality_score", "support_score", "consistency_score", "intrinsic_richness"]
+        score_cols = ["quality_score", "support_score", "typicality_score", "consistency_score"]
         present = [c for c in score_cols if c in scores_df.columns]
 
         table = Table(

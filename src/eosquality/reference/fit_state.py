@@ -16,6 +16,7 @@ class ReferenceReport:
     cohesion_score: float
     fragmentation_score: float
     median_k_distance: float
+    reference_typicality: float = 1.0
     notes: list[str] = field(default_factory=list)
 
 

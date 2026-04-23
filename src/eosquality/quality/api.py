@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from eosquality._library import reference_library_csv_path, reference_library_path
 from eosquality.config import ErsiliaQualityConfig, NeighborConfig
 from eosquality.exceptions import NotFittedError, SchemaError
 from eosquality.io.load import load
@@ -19,6 +20,7 @@ from eosquality.reference.fit_state import FitState
 from eosquality.reference.metadata import compute_metadata
 from eosquality.schema.infer import infer_schema, validate_against_schema
 from eosquality.scoring.run import RunResult, score_queries
+from eosquality.scoring.typicality import compute_typicality
 from eosquality.utils.identifiers import validate_eos_id, validate_version
 from eosquality.utils.logging import logger
 from eosquality.vectorindex.backend import VectorIndex
@@ -65,9 +67,8 @@ class ErsiliaQuality:
         reference: pd.DataFrame,
         eos_id: str,
         version: str = "v1",
-        vector_index: str | pathlib.Path = "",
+        vector_index: str | pathlib.Path | None = None,
         ignore_size: bool = False,
-        allow_duplicates: bool = False,
     ) -> "ErsiliaQuality":
         """Build all reference-dependent artifacts from a numeric DataFrame.
 
@@ -75,24 +76,24 @@ class ErsiliaQuality:
         ----------
         reference:
             A pandas DataFrame containing ``key``, ``input`` (SMILES), and
-            numeric feature columns.
+            numeric feature columns. Duplicate ``key`` values are always
+            rejected — fix the source CSV if you hit this.
         eos_id:
             EOS model identifier (e.g. ``"eos4e40"``). Must match the
             pattern ``eos<digit><3 alphanumeric>`` (7 characters).
         version:
             Dataset version string (e.g. ``"v1"``). Must match ``v<digits>``.
         vector_index:
-            Path to a pre-built :class:`VectorIndex` folder produced by
-            ``eosquality index``. The SMILES in the index must match the
-            ``input`` column of ``reference`` row-for-row.
+            Optional path to a pre-built :class:`VectorIndex` folder produced
+            by ``eosquality index``. If ``None`` (default), the canonical
+            reference library shipped with this release is used. Provide a
+            path only to fit against a non-canonical index for internal
+            testing; the SMILES in that index must match the ``input`` column
+            of ``reference`` row-for-row.
         ignore_size:
             If ``True``, skip the minimum-row check. Intended for tests and
             development only — fitting on small datasets produces unreliable
             scores. Default: ``False``.
-        allow_duplicates:
-            If ``True``, skip duplicate SMILES and duplicate key checks.
-            Default: ``False`` — duplicate rows are almost always a data
-            preparation error and should be fixed before fitting.
 
         Returns
         -------
@@ -101,80 +102,14 @@ class ErsiliaQuality:
         validate_eos_id(eos_id)
         validate_version(version)
 
-        if not vector_index:
-            raise ValueError(
-                "vector_index is required. Build one with: "
-                "eosquality index <library.csv> --output <index_dir/>"
-            )
+        using_canonical_library = not vector_index
 
-        if not ignore_size and len(reference) < MIN_REFERENCE_SAMPLES:
-            raise ValueError(
-                f"Reference dataset has {len(reference):,} rows. "
-                f"Fitting requires at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
-                "Pass ignore_size=True to bypass this check (not recommended for production use)."
-            )
-
-        # Duplicate checks — fail fast before any heavy work
-        if not allow_duplicates:
-            if "input" in reference.columns:
-                seen: set[str] = set()
-                dupes: list[tuple[int, str]] = []
-                for idx, smi in enumerate(reference["input"]):
-                    if smi in seen:
-                        dupes.append((idx, str(smi)))
-                    else:
-                        seen.add(str(smi))
-                if dupes:
-                    n_shown = min(5, len(dupes))
-                    examples = ", ".join(
-                        f"row {i}: {s!r}" for i, s in dupes[:n_shown]
-                    )
-                    raise ValueError(
-                        f"Duplicate SMILES in reference: {len(dupes)} duplicate(s). "
-                        f"First {n_shown}: [{examples}]. "
-                        "Pass allow_duplicates=True to skip this check."
-                    )
-
-            if "key" in reference.columns:
-                seen_keys: set[str] = set()
-                dupe_keys: list[tuple[int, str]] = []
-                for idx, key in enumerate(reference["key"]):
-                    k = str(key)
-                    if k in seen_keys:
-                        dupe_keys.append((idx, k))
-                    else:
-                        seen_keys.add(k)
-                if dupe_keys:
-                    n_shown = min(5, len(dupe_keys))
-                    examples = ", ".join(
-                        f"row {i}: {k!r}" for i, k in dupe_keys[:n_shown]
-                    )
-                    raise ValueError(
-                        f"Duplicate keys in reference: {len(dupe_keys)} duplicate(s). "
-                        f"First {n_shown}: [{examples}]. "
-                        "Pass allow_duplicates=True to skip this check."
-                    )
-
-        t_start = time.perf_counter()
-        logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
-
-        # 1. Schema + metadata
-        t0 = time.perf_counter()
-        schema = infer_schema(reference)
-        metadata = compute_metadata(reference, eos_id=eos_id, version=version)
-        t_schema = time.perf_counter() - t0
-
-        logger.reference_table(
-            n_samples=len(reference),
-            n_features=len(schema.columns),
-            column_names=schema.column_names,
-        )
-        logger.info(
-            f"Reference: {len(reference):,} samples · {len(schema.columns)} features"
-        )
-
-        # 2. Load vector index + validate SMILES alignment
-        t0 = time.perf_counter()
+        # Earliest possible "wrong CSV" detection: the reference CSV's SMILES
+        # must match the library, row-for-row. Everything else (size check,
+        # duplicates, schema, preprocessing, index download) is pointless work
+        # if the wrong molecules were provided, so we fail before any of it.
+        if reference.empty:
+            raise SchemaError("Reference DataFrame is empty.")
         if "input" not in reference.columns:
             raise SchemaError(
                 "Reference DataFrame must contain an 'input' column with SMILES "
@@ -192,11 +127,90 @@ class ErsiliaQuality:
                 f"Reference 'input' column has {empty_smiles.sum()} empty string(s). "
                 "All SMILES must be non-empty."
             )
+
+        t_start = time.perf_counter()
+        logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
+
+        # 1. Validate SMILES alignment.
+        #    Canonical path: check against data/libraries/<LIBRARY_ID>.csv
+        #    (source of truth) BEFORE fetching the index — so a "wrong CSV"
+        #    reference fails fast without paying the index download cost.
+        #    Supports subsampled indexes: a --max-samples index is a prefix of
+        #    the canonical library, so kNN lookups still line up row-for-row
+        #    with any reference that's also a prefix of the same library.
+        #    Custom path (user passed vector_index=...): fall back to the
+        #    index's own smiles.csv, since they've opted out of the canonical
+        #    ecosystem.
+        t0 = time.perf_counter()
+        if using_canonical_library:
+            _validate_reference_against_library_csv(reference)
+            vector_index = reference_library_path()
         vi = VectorIndex.load(vector_index)
-        vi.validate_smiles(list(reference["input"]))
+        if using_canonical_library:
+            if len(reference) != len(vi._smiles):
+                raise ValueError(
+                    f"Reference has {len(reference):,} rows but the vector "
+                    f"index has {len(vi._smiles):,} molecules. Fit requires "
+                    "matching row counts — rebuild the index with the same "
+                    "--max-samples, or use a reference of matching size."
+                )
+        else:
+            vi.validate_smiles(list(reference["input"]))
         vector_index_path = str(pathlib.Path(vector_index).resolve())
         t_vi_load = time.perf_counter() - t0
         logger.debug(f"Vector index loaded | {len(vi._smiles):,} molecules")
+
+        # Reference-local checks, now known to be for the right library
+        if not ignore_size and len(reference) < MIN_REFERENCE_SAMPLES:
+            raise ValueError(
+                f"Reference dataset has {len(reference):,} rows. "
+                f"Fitting requires at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
+                "Pass ignore_size=True to bypass this check (not recommended for production use)."
+            )
+
+        # Reference SMILES dedup is handled upstream: the library itself is
+        # built with no duplicates, and validate_smiles() above enforces
+        # row-for-row alignment, so reference["input"] is dupe-free by
+        # construction. Only key uniqueness needs an explicit check here.
+        if "key" in reference.columns:
+            seen_keys: set[str] = set()
+            dupe_keys: list[tuple[int, str]] = []
+            for idx, key in enumerate(reference["key"]):
+                k = str(key)
+                if k in seen_keys:
+                    dupe_keys.append((idx, k))
+                else:
+                    seen_keys.add(k)
+            if dupe_keys:
+                n_shown = min(5, len(dupe_keys))
+                examples = ", ".join(
+                    f"row {i}: {k!r}" for i, k in dupe_keys[:n_shown]
+                )
+                raise ValueError(
+                    f"Duplicate keys in reference: {len(dupe_keys)} duplicate(s). "
+                    f"First {n_shown}: [{examples}]. "
+                    "The 'key' column must be unique across rows."
+                )
+
+        # 2. Schema + metadata
+        t0 = time.perf_counter()
+        schema = infer_schema(reference)
+        metadata = compute_metadata(reference, eos_id=eos_id, version=version)
+        # Tag the fit with the library identity declared by the vector index itself.
+        # For the canonical shipped index this equals LIBRARY_ID; for a --vector-index
+        # override it's whatever that index was built with. The load-time check
+        # uses this to reject cross-library artifacts.
+        metadata.library_id = str(vi._config.get("library_name", "") or "")
+        t_schema = time.perf_counter() - t0
+
+        logger.reference_table(
+            n_samples=len(reference),
+            n_features=len(schema.columns),
+            column_names=schema.column_names,
+        )
+        logger.info(
+            f"Reference: {len(reference):,} samples · {len(schema.columns)} features"
+        )
 
         # 3. Preprocessing
         t0 = time.perf_counter()
@@ -225,6 +239,23 @@ class ErsiliaQuality:
             knn_indices_with_self=vi_knn_idx,
             exclude_self=False,
         )
+
+        # Reference typicality: the mean aggregate typicality of the reference
+        # under its own CDF. Calibration baseline rather than a pass/fail
+        # metric — a random reference sample has expected per-feature
+        # typicality = E[2·min(U, 1−U)] = 0.5 (U uniform on [0,1]), and the
+        # geomean across features lands below that. Compare query
+        # typicality_score values against this baseline to judge magnitude.
+        pipeline_state = pipeline.get_state()
+        reference_raw = pipeline.raw_numeric_values(reference)
+        _, ref_typ = compute_typicality(
+            raw_values=reference_raw,
+            scalers=pipeline_state["scalers"],
+            column_names=list(schema.column_names),
+            n_reference=len(reference),
+            quantile_levels=pipeline_state.get("quantile_levels"),
+        )
+        reference_report.reference_typicality = float(np.mean(ref_typ))
         t_diagnostics = time.perf_counter() - t0
 
         logger.reference_report_table(
@@ -232,6 +263,7 @@ class ErsiliaQuality:
             cohesion_score=reference_report.cohesion_score,
             fragmentation_score=reference_report.fragmentation_score,
             median_k_distance=reference_report.median_k_distance,
+            reference_typicality=reference_report.reference_typicality,
             notes=reference_report.notes,
         )
 
@@ -253,8 +285,8 @@ class ErsiliaQuality:
 
         t_total = time.perf_counter() - t_start
         logger.timing_table([
+            ("Vector index load + SMILES alignment", t_vi_load, False),
             ("Schema inference", t_schema, False),
-            ("Vector index load", t_vi_load, False),
             ("Preprocessing (type-aware L1)", t_preprocess, False),
             ("Reference diagnostics (FP kNN)", t_diagnostics, False),
         ])
@@ -294,6 +326,7 @@ class ErsiliaQuality:
 
         pipeline = PreprocessPipeline.from_state(self._fit_state.preprocess_state)
         query_repr = pipeline.transform(query)
+        query_raw = pipeline.raw_numeric_values(query)
         logger.debug(f"Query repr shape={query_repr.shape}")
 
         k = self.config.neighbors.k
@@ -314,6 +347,7 @@ class ErsiliaQuality:
 
         result = score_queries(
             query_repr=query_repr,
+            query_raw=query_raw,
             query_knn_distances_raw=knn_distances,
             query_knn_indices_raw=vi_indices,
             fit_state=self._fit_state,
@@ -411,3 +445,49 @@ class ErsiliaQuality:
             raise NotFittedError(
                 "This ErsiliaQuality instance is not fitted yet. Call fit() first."
             )
+
+
+# ------------------------------------------------------------------
+# Module-level helpers
+# ------------------------------------------------------------------
+
+
+def _validate_reference_against_library_csv(reference: pd.DataFrame) -> None:
+    """Ensure reference.input is a prefix of the canonical library SMILES.
+
+    Loads the library CSV (from CWD, cache, or S3 — resolved lazily) and
+    checks that ``reference["input"][i] == library_smiles[i]`` for every row
+    of the reference, with ``len(reference) <= len(library_smiles)``.
+
+    Failing early here makes "wrong CSV" the most visible error class for
+    users: we distinguish between "shape mismatch with library", "content
+    mismatch against library", and (downstream) "content mismatch against
+    the actual index".
+    """
+    csv_path = reference_library_csv_path()
+    lib_df = pd.read_csv(csv_path, usecols=["smiles"])
+    library_smiles = list(lib_df["smiles"])
+
+    ref_smiles = list(reference["input"])
+    if len(ref_smiles) > len(library_smiles):
+        raise ValueError(
+            f"Reference has {len(ref_smiles):,} rows but the canonical "
+            f"library {csv_path.name} has only {len(library_smiles):,}. "
+            "Reference must be a prefix of the canonical library."
+        )
+
+    mismatches = [
+        i for i, (a, b) in enumerate(zip(ref_smiles, library_smiles)) if a != b
+    ]
+    if mismatches:
+        n_shown = min(3, len(mismatches))
+        examples = "; ".join(
+            f"row {i}: reference={ref_smiles[i]!r} vs library={library_smiles[i]!r}"
+            for i in mismatches[:n_shown]
+        )
+        raise ValueError(
+            f"SMILES mismatch against canonical library {csv_path.name}: "
+            f"{len(mismatches)} row(s) differ. First {n_shown}: [{examples}]. "
+            "The reference CSV must be a prefix of the canonical library "
+            "(same molecules, same order, starting from row 0)."
+        )

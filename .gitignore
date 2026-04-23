@@ -1,5 +1,6 @@
 # Maintained by eosvc
 data
+.eosvc
 
 # Juypter
 .jupyter_ystore.db

@@ -15,11 +15,10 @@ from eosquality.utils.identifiers import extract_from_path, validate_eos_id, val
 EXPECTED_SCORE_COLUMNS = {
     "quality_score",
     "support_score",
+    "typicality_score",
     "consistency_score",
-    "intrinsic_richness",
     "distance_k_mean",
     "distance_k_max",
-    "effective_feature_fraction",
     "nearest_reference_ids",
 }
 
@@ -97,10 +96,19 @@ def test_fit_raises_on_small_dataset(reference_df_vi, vector_index_dir):
                                  vector_index=vector_index_dir, ignore_size=False)
 
 
-def test_fit_raises_without_vector_index(reference_df_vi):
-    with pytest.raises(ValueError, match="vector_index"):
-        ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
-                                 ignore_size=True)
+def test_fit_falls_back_to_reference_library_when_omitted(reference_df_vi):
+    """With no vector_index passed, fit() uses the canonical library CSV for
+    its SMILES-alignment check. The 20 hand-picked SMILES in the test fixture
+    don't match the canonical library, so we expect the CSV-based mismatch
+    error — confirming the canonical resolver path was exercised.
+
+    Runs network-free: the repo's ``data/libraries/<LIBRARY_ID>.csv`` satisfies
+    the CWD fallback in reference_library_csv_path().
+    """
+    with pytest.raises(ValueError, match="SMILES mismatch against canonical library"):
+        ErsiliaQuality(k=10).fit(
+            reference_df_vi, eos_id=EOS_ID, version=VERSION, ignore_size=True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +236,11 @@ def test_metadata_roundtrip_includes_characteristics(reference_df_vi, vector_ind
 # ---------------------------------------------------------------------------
 
 
-def test_fit_raises_on_duplicate_smiles(reference_df_vi, vector_index_dir):
+def test_fit_raises_on_wrong_smiles_alignment(reference_df_vi, vector_index_dir):
+    """Reference CSV whose SMILES diverge from the library must be rejected."""
     df = reference_df_vi.copy()
-    # duplicate row 1 into row 2 (same SMILES)
     df.iloc[2] = df.iloc[1]
-    with pytest.raises(ValueError, match="Duplicate SMILES"):
+    with pytest.raises(ValueError, match="SMILES mismatch"):
         ErsiliaQuality(k=10).fit(df, eos_id=EOS_ID, version=VERSION,
                                  vector_index=vector_index_dir, ignore_size=True)
 
@@ -245,17 +253,6 @@ def test_fit_raises_on_duplicate_keys(reference_df_vi, vector_index_dir):
     with pytest.raises(ValueError, match="Duplicate key"):
         ErsiliaQuality(k=10).fit(df, eos_id=EOS_ID, version=VERSION,
                                  vector_index=vector_index_dir, ignore_size=True)
-
-
-def test_fit_allow_duplicates_flag(reference_df_vi, vector_index_dir):
-    df = reference_df_vi.copy()
-    # Duplicate a key only (SMILES stay unique so validate_smiles still passes)
-    df.at[df.index[2], "key"] = df.at[df.index[1], "key"]
-    # Should not raise when allow_duplicates=True
-    eq = ErsiliaQuality(k=10).fit(df, eos_id=EOS_ID, version=VERSION,
-                                  vector_index=vector_index_dir, ignore_size=True,
-                                  allow_duplicates=True)
-    assert eq.is_fitted_
 
 
 # ---------------------------------------------------------------------------
@@ -373,47 +370,19 @@ def test_run_scores_bounded(reference_df_vi, query_df_vi, vector_index_dir):
     eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
                                   vector_index=vector_index_dir, ignore_size=True)
     result = eq.run(query_df_vi)
-    for col in ("quality_score", "support_score", "consistency_score",
-                "effective_feature_fraction"):
+    for col in ("quality_score", "support_score", "typicality_score",
+                "consistency_score"):
         assert (result.scores[col] >= 0.0).all(), f"{col} has values < 0"
         assert (result.scores[col] <= 1.0).all(), f"{col} has values > 1"
 
 
-def test_intrinsic_richness_bounded(reference_df_vi, query_df_vi, vector_index_dir):
-    """intrinsic_richness must be in [0, 1] for all query samples."""
-    eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
-                                  vector_index=vector_index_dir, ignore_size=True)
-    result = eq.run(query_df_vi)
-    col = result.scores["intrinsic_richness"]
-    assert (col >= 0.0).all()
-    assert (col <= 1.0).all()
-
-
-def test_intrinsic_richness_reference_samples_near_half(
-    reference_df_vi, vector_index_dir
-):
-    """Running the reference through itself: richness should be ~0.5 for
-    bell-shaped features (symmetric deviation around the median is ~E[|U - 0.5|]
-    for uniform ≈ 0.25, but the key check is that the score is well-defined and
-    in-range).
-    """
-    eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
-                                  vector_index=vector_index_dir, ignore_size=True)
-    result = eq.run(reference_df_vi.drop(columns=["key"]))
-    col = result.scores["intrinsic_richness"]
-    assert (col >= 0.0).all()
-    assert (col <= 1.0).all()
-
-
-def test_intrinsic_richness_all_at_anchor_is_zero():
-    """A sample exactly at the reference median on every feature has richness 0."""
+def test_anchor_equals_normalized_median():
+    """A value at the reference median normalizes to the stored anchor."""
     from eosquality.preprocess.pipeline import _fit_type_aware
-    from eosquality.schema.models import ColumnSpec, Schema
 
     rng = np.random.default_rng(7)
     values = rng.normal(50.0, 10.0, 200)
     params, _ = _fit_type_aware(values)
-    # anchor is the normalized median; a value at the median → deviation = 0
     p50_raw = float(np.median(values))
     p50_norm = np.clip((p50_raw - params["p1"]) / (params["p99"] - params["p1"]), 0.0, 1.0)
     assert abs(p50_norm - params["anchor"]) < 1e-6
@@ -597,8 +566,8 @@ def test_type_aware_scores_bounded(mixed_reference_df_vi, mixed_query_df_vi, vec
         vector_index=vector_index_dir, ignore_size=True,
     )
     result = eq.run(mixed_query_df_vi)
-    for col in ("quality_score", "support_score", "consistency_score",
-                "effective_feature_fraction"):
+    for col in ("quality_score", "support_score", "typicality_score",
+                "consistency_score"):
         assert (result.scores[col] >= 0.0).all(), f"{col} has values < 0"
         assert (result.scores[col] <= 1.0).all(), f"{col} has values > 1"
 

@@ -1,27 +1,40 @@
 """Command-line interface for eosquality.
 
-Usage
------
-Build a vector index from a reference library CSV (one-time per collection):
+End-user workflow
+-----------------
+Each release is pinned to a canonical reference library, auto-resolved from
+env override → ./data/indices/ersilia_reference_library_vN/ → ~/.eosquality/
+cache → S3 download. The usual path is just fit then run:
 
-    eosquality index --input library.csv --output index_dir/ [--max-k 50]
+    eosquality fit --input eos4e40_v1.csv --output artifacts/ [--k 20]
+    eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
 
-Fit a reference population and save artifacts to a folder:
+Prefetch the library explicitly (useful for CI or airgapped setups):
 
-    eosquality fit --input reference.csv --vector-index index_dir/ --output artifacts/ [--k 20]
+    eosquality download [--force]
 
-Score query data against a fitted reference:
+For maintainers / advanced use
+------------------------------
+``eosquality index`` rebuilds the vector index from a SMILES library CSV.
+It is a release tool — ordinary users should not need to run it. Use it to
+produce a new canonical library for the next major release, or to build a
+non-canonical index for internal testing; set
+``EOSQUALITY_REFERENCE_LIBRARY_PATH`` to point ``fit`` at that folder.
 
-    eosquality run --input query.csv --artifacts artifacts/ --output scores.csv [--verbose]
+    eosquality index --input library.csv --output /tmp/idx/ [--max-k 50]
+    EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/idx/ \\
+        eosquality fit --input eos4e40_v1.csv --output artifacts/
 """
 
 import argparse
+import importlib.metadata
 import pathlib
 import sys
 
 import pandas as pd
 
 from eosquality import set_verbosity
+from eosquality._library import reference_library_csv_path, reference_library_path
 from eosquality.quality.api import ErsiliaQuality
 from eosquality.utils.identifiers import extract_from_path
 from eosquality.vectorindex.backend import VectorIndex
@@ -62,7 +75,6 @@ def cmd_index(args: argparse.Namespace) -> int:
             n_bits=args.n_bits,
             verbose=args.verbose,
             library_name=pathlib.Path(args.input).stem,
-            allow_duplicates=args.allow_duplicates,
             max_samples=args.max_samples,
         )
     except Exception as exc:
@@ -122,7 +134,6 @@ def cmd_fit(args: argparse.Namespace) -> int:
             reference,
             eos_id=eos_id,
             version=version,
-            vector_index=args.vector_index,
             ignore_size=args.ignore_size,
         )
         eq.save(args.output)
@@ -132,6 +143,25 @@ def cmd_fit(args: argparse.Namespace) -> int:
 
     if not args.verbose:
         print(f"Artifacts saved → {args.output}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# download
+# ---------------------------------------------------------------------------
+
+
+def cmd_download(args: argparse.Namespace) -> int:
+    if args.verbose:
+        set_verbosity(True)
+    try:
+        csv_path = reference_library_csv_path(force_download=args.force)
+        index_path = reference_library_path(force_download=args.force)
+    except Exception as exc:
+        print(f"error: could not download reference library: {exc}", file=sys.stderr)
+        return 1
+    print(f"Library CSV    → {csv_path}")
+    print(f"Library index  → {index_path}")
     return 0
 
 
@@ -181,10 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
         prog="eosquality",
         description="Assess the quality of query data against a fitted reference population.",
     )
+    try:
+        _pkg_version = importlib.metadata.version("eosquality")
+    except importlib.metadata.PackageNotFoundError:
+        _pkg_version = "unknown"
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 0.1.0",
+        version=f"%(prog)s {_pkg_version}",
     )
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -193,11 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
     # ---- index ----
     index_p = subparsers.add_parser(
         "index",
-        help="Build a vector index from a reference library CSV.",
+        help="(release tool) Build a vector index from a reference library CSV.",
         description=(
-            "Compute Morgan vectors for all molecules in a reference library "
-            "and build a pre-computed kNN index. Run once per molecule collection; "
-            "share across all models that use the same reference set."
+            "Build a Morgan-fingerprint kNN index for a SMILES library. "
+            "This is a release / maintenance tool used to produce the canonical "
+            "reference library that ships with each major version of eosquality — "
+            "end users do not normally need to run it. Use it to prepare a "
+            "replacement library for the next release, or to build a non-canonical "
+            "index for internal testing (pass the result to 'fit --vector-index')."
         ),
     )
     index_p.add_argument(
@@ -244,12 +281,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Truncate input to the first N molecules (for testing).",
     )
     index_p.add_argument(
-        "--allow-duplicates",
-        action="store_true",
-        dest="allow_duplicates",
-        help="Skip the duplicate SMILES check (not recommended).",
-    )
-    index_p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Print progress information.",
@@ -260,7 +291,13 @@ def build_parser() -> argparse.ArgumentParser:
     fit_p = subparsers.add_parser(
         "fit",
         help="Fit a reference population and save artifacts.",
-        description="Fit a reference population from a CSV file and persist the artifacts.",
+        description=(
+            "Fit a reference population from a CSV file and persist the artifacts. "
+            "The reference library is resolved automatically (env override → "
+            "./data/indices/ersilia_reference_library_vN/ → ~/.eosquality/ "
+            "cache → S3 download); set EOSQUALITY_REFERENCE_LIBRARY_PATH to "
+            "point at a non-canonical folder for internal testing."
+        ),
     )
     fit_p.add_argument(
         "--input", "-i",
@@ -292,16 +329,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     fit_p.add_argument(
-        "--vector-index", "-vi",
-        required=True,
-        dest="vector_index",
-        metavar="PATH",
-        help=(
-            "Path to the pre-built vector index folder produced by 'eosquality index'. "
-            "The SMILES in the index must match the 'input' column of the reference CSV."
-        ),
-    )
-    fit_p.add_argument(
         "--ignore-size",
         action="store_true",
         dest="ignore_size",
@@ -316,6 +343,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print informative progress and diagnostic tables.",
     )
     fit_p.set_defaults(func=cmd_fit)
+
+    # ---- download ----
+    download_p = subparsers.add_parser(
+        "download",
+        help="Prefetch the canonical reference library into the local cache.",
+        description=(
+            "Explicitly download the reference library for this release of "
+            "eosquality into ~/.eosquality/indices/. Useful for CI or "
+            "airgapped setups where you want to fetch before the first fit. "
+            "If a valid cached copy already exists, this is a no-op unless "
+            "--force is passed. Honors EOSQUALITY_REFERENCE_BASE_URL for "
+            "staging buckets and EOSQUALITY_REFERENCE_LIBRARY_PATH to short-"
+            "circuit to an existing folder."
+        ),
+    )
+    download_p.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Redownload even if a valid cached copy already exists.",
+    )
+    download_p.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print progress information.",
+    )
+    download_p.set_defaults(func=cmd_download)
 
     # ---- run ----
     run_p = subparsers.add_parser(

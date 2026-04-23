@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from eosquality._library import LIBRARY_ID
 from eosquality.vectorindex.backend import VectorIndex
 
 RNG_SEED = 42
@@ -144,7 +145,18 @@ def ood_query_df_vi(rng):
 
 @pytest.fixture(scope="session")
 def vector_index_dir(tmp_path_factory):
-    """Session-scoped pre-built VectorIndex for SMILES_20 (built once per session)."""
+    """Session-scoped pre-built VectorIndex for SMILES_20 (built once per session).
+
+    The index is tagged with the canonical ``LIBRARY_ID`` so that artifacts
+    fit against it pass the load-time compatibility check. Tests that need
+    to verify the escape-hatch behavior (non-canonical library_name) should
+    build their own index explicitly.
+    """
     idx_dir = tmp_path_factory.mktemp("vi") / "test_index"
-    VectorIndex.build(smiles=SMILES_20, output_dir=idx_dir, max_k=15)
+    VectorIndex.build(
+        smiles=SMILES_20,
+        output_dir=idx_dir,
+        max_k=15,
+        library_name=LIBRARY_ID,
+    )
     return idx_dir
