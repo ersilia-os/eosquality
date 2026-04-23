@@ -1,3 +1,6 @@
+# Maintained by eosvc
+data
+
 # Juypter
 .jupyter_ystore.db
 .ipynb_checkpoints
