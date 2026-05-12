@@ -1,98 +1,96 @@
-"""Tests for shape-aware preprocessing: quantile grid, kind dispatch."""
+"""Tests for the eosframes-backed preprocessing pipeline contract.
+
+The scaler math itself lives in :mod:`eosframes`; here we only assert on the
+thin wrapper's contract: fit_transform shape, transform parity after a
+fit, state round-trip via get_state/from_state, and that the eosframes
+params dict is the artifact we store.
+"""
 
 from __future__ import annotations
 
 import numpy as np
-import pytest
+import pandas as pd
 
-from eosquality.preprocess.pipeline import (
-    _fit_binary,
-    _fit_column,
-    _fit_proportion,
-    _fit_type_aware,
-)
+from eosquality.preprocess.pipeline import PreprocessPipeline
+from eosquality.schema.models import ColumnSpec, Schema
 
 
-def test_quantile_grid_length_is_101():
-    rng = np.random.default_rng(0)
-    values = rng.normal(0.0, 1.0, 500)
-    params, _ = _fit_type_aware(values, kind="continuous")
-    assert params["quantiles"].shape == (101,)
+def _schema_for(cols: list[str]) -> Schema:
+    return Schema(columns=[ColumnSpec(name=c, kind="numeric") for c in cols])
 
 
-def test_quantile_grid_captures_bimodal():
-    """A bimodal distribution shouldn't have its middle quantiles collapse
-    to a single center — the stored grid should span both modes."""
-    rng = np.random.default_rng(1)
-    mode_a = rng.normal(-5.0, 0.3, 500)
-    mode_b = rng.normal(5.0, 0.3, 500)
-    values = np.concatenate([mode_a, mode_b])
-    params, _ = _fit_type_aware(values, kind="continuous")
-    # The lower half of the grid should still sit near -5, upper half near +5,
-    # indicating the bimodal structure is preserved.
-    assert params["quantiles"][25] < -2.0
-    assert params["quantiles"][75] > 2.0
+def test_fit_transform_returns_2d_array_in_unit_box(rng):
+    """Output should be the scaled feature array, one row per input row."""
+    n = 200
+    df = pd.DataFrame(
+        {
+            "a": rng.normal(0.0, 1.0, n),
+            "b": rng.exponential(1.0, n),
+            "c": rng.integers(0, 2, n).astype(float),
+        }
+    )
+    pipeline = PreprocessPipeline(schema=_schema_for(["a", "b", "c"]))
+    out = pipeline.fit_transform(df)
+    assert out.shape == (n, 3)
+    # eosframes outputs are bounded inside [-1, 1] per documented per-kind
+    # regions; values strictly outside that mean something has broken.
+    assert np.nanmin(out) >= -1.0 - 1e-6
+    assert np.nanmax(out) <= 1.0 + 1e-6
 
 
-def test_quantile_grid_densifies_toward_right_tail_on_skewed():
-    rng = np.random.default_rng(2)
-    # exponential + spike at zero: heavy right tail
-    values = np.concatenate([np.zeros(400), rng.exponential(1.0, 600)])
-    params, _ = _fit_type_aware(values, kind="continuous")
-    q = params["quantiles"]
-    # Steps between adjacent upper-tail quantiles should be wider than
-    # steps between adjacent lower-tail quantiles.
-    lower_step = float(q[50] - q[40])
-    upper_step = float(q[99] - q[90])
-    assert upper_step > lower_step
+def test_transform_matches_fit_transform_on_same_data(rng):
+    """transform() applied to the fit data should match fit_transform output."""
+    n = 150
+    df = pd.DataFrame(
+        {
+            "a": rng.normal(0.0, 1.0, n),
+            "b": rng.normal(5.0, 2.0, n),
+        }
+    )
+    pipeline = PreprocessPipeline(schema=_schema_for(["a", "b"]))
+    fit_out = pipeline.fit_transform(df)
+    transform_out = pipeline.transform(df)
+    np.testing.assert_allclose(fit_out, transform_out)
 
 
-def test_binary_class_freq_stored_correctly():
-    ref = np.array([0.0] * 70 + [1.0] * 30)
-    params, out = _fit_binary(ref)
-    assert params["kind"] == "binary"
-    assert params["class_freq"] == {0.0: 0.7, 1.0: 0.3}
-    assert params["quantiles"] is None
-    # Pass-through: output equals input.
-    np.testing.assert_array_equal(out, ref)
+def test_state_roundtrip_preserves_transform(rng):
+    """get_state → from_state must reproduce the same transform."""
+    n = 100
+    df = pd.DataFrame(
+        {
+            "a": rng.normal(0.0, 1.0, n),
+            "b": rng.normal(-3.0, 0.5, n),
+        }
+    )
+    p1 = PreprocessPipeline(schema=_schema_for(["a", "b"]))
+    out1 = p1.fit_transform(df)
+    p2 = PreprocessPipeline.from_state(p1.get_state())
+    out2 = p2.transform(df)
+    np.testing.assert_allclose(out1, out2)
 
 
-def test_binary_handles_constant_column():
-    ref = np.zeros(50)
-    params, _ = _fit_binary(ref)
-    assert params["is_constant"] is True
-    assert params["class_freq"] == {0.0: 1.0, 1.0: 0.0}
+def test_state_contains_eosframes_scaler_params(rng):
+    """The persisted state must carry an eosframes-style params dict.
+
+    Downstream callers (typicality scorer, save/load) rely on the
+    ``method`` / ``columns`` keys to dispatch.
+    """
+    n = 50
+    df = pd.DataFrame({"a": rng.normal(0.0, 1.0, n)})
+    pipeline = PreprocessPipeline(schema=_schema_for(["a"]))
+    pipeline.fit_transform(df)
+    state = pipeline.get_state()
+    params = state["scaler_params"]
+    assert params["method"] == "robust_typed"
+    assert "a" in params["columns"]
+    assert "transform" in params["columns"]["a"]
+    assert "kind" in params["columns"]["a"]["transform"]
 
 
-def test_proportion_is_pass_through():
-    rng = np.random.default_rng(3)
-    values = rng.uniform(0.0, 1.0, 200)
-    params, out = _fit_proportion(values)
-    assert params["kind"] == "proportion"
-    assert params["use_log1p"] is False
-    np.testing.assert_allclose(out, values)
-
-
-def test_kind_dispatcher_routes_correctly():
-    rng = np.random.default_rng(4)
-    continuous = rng.normal(0.0, 1.0, 50)
-    binary = rng.integers(0, 2, 50).astype(float)
-    proportion = rng.uniform(0.0, 1.0, 50)
-
-    p_cont, _ = _fit_column(continuous, kind="continuous")
-    p_bin, _ = _fit_column(binary, kind="binary")
-    p_prop, _ = _fit_column(proportion, kind="proportion")
-
-    assert p_cont["kind"] == "continuous"
-    assert p_bin["kind"] == "binary"
-    assert p_prop["kind"] == "proportion"
-
-    assert p_cont["quantiles"] is not None
-    assert p_bin["quantiles"] is None
-    assert p_prop["quantiles"] is not None
-
-
-def test_scaler_schema_version_stamped():
-    rng = np.random.default_rng(5)
-    params, _ = _fit_type_aware(rng.normal(0.0, 1.0, 100), kind="continuous")
-    assert params["scaler_schema_version"] == 2
+def test_transform_before_fit_raises():
+    pipeline = PreprocessPipeline(schema=_schema_for(["a"]))
+    try:
+        pipeline.transform(pd.DataFrame({"a": [1.0, 2.0]}))
+    except RuntimeError:
+        return
+    raise AssertionError("transform() before fit_transform() should raise.")

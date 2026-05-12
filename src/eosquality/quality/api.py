@@ -212,13 +212,9 @@ class ErsiliaQuality:
             f"Reference: {len(reference):,} samples · {len(schema.columns)} features"
         )
 
-        # 3. Preprocessing
+        # 3. Preprocessing (eosframes scaler — auto-classifies kinds internally)
         t0 = time.perf_counter()
-        column_kinds = {
-            col: chars.kind
-            for col, chars in metadata.column_characteristics.items()
-        }
-        pipeline = PreprocessPipeline(schema=schema, column_kinds=column_kinds)
+        pipeline = PreprocessPipeline(schema=schema)
         ref_repr = pipeline.fit_transform(reference)
         t_preprocess = time.perf_counter() - t0
         logger.debug(f"Preprocessing done | repr shape={ref_repr.shape}")
@@ -241,19 +237,14 @@ class ErsiliaQuality:
         )
 
         # Reference typicality: the mean aggregate typicality of the reference
-        # under its own CDF. Calibration baseline rather than a pass/fail
-        # metric — a random reference sample has expected per-feature
-        # typicality = E[2·min(U, 1−U)] = 0.5 (U uniform on [0,1]), and the
-        # geomean across features lands below that. Compare query
-        # typicality_score values against this baseline to judge magnitude.
+        # under its own eosframes scaler. Calibration baseline — compare query
+        # typicality_score values against this to judge magnitude.
         pipeline_state = pipeline.get_state()
-        reference_raw = pipeline.raw_numeric_values(reference)
         _, ref_typ = compute_typicality(
-            raw_values=reference_raw,
-            scalers=pipeline_state["scalers"],
+            scaled_values=ref_repr,
+            scaler_params=pipeline_state["scaler_params"],
             column_names=list(schema.column_names),
             n_reference=len(reference),
-            quantile_levels=pipeline_state.get("quantile_levels"),
         )
         reference_report.reference_typicality = float(np.mean(ref_typ))
         t_diagnostics = time.perf_counter() - t0
@@ -326,7 +317,6 @@ class ErsiliaQuality:
 
         pipeline = PreprocessPipeline.from_state(self._fit_state.preprocess_state)
         query_repr = pipeline.transform(query)
-        query_raw = pipeline.raw_numeric_values(query)
         logger.debug(f"Query repr shape={query_repr.shape}")
 
         k = self.config.neighbors.k
@@ -347,7 +337,6 @@ class ErsiliaQuality:
 
         result = score_queries(
             query_repr=query_repr,
-            query_raw=query_raw,
             query_knn_distances_raw=knn_distances,
             query_knn_indices_raw=vi_indices,
             fit_state=self._fit_state,

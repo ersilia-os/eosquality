@@ -376,18 +376,6 @@ def test_run_scores_bounded(reference_df_vi, query_df_vi, vector_index_dir):
         assert (result.scores[col] <= 1.0).all(), f"{col} has values > 1"
 
 
-def test_anchor_equals_normalized_median():
-    """A value at the reference median normalizes to the stored anchor."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-
-    rng = np.random.default_rng(7)
-    values = rng.normal(50.0, 10.0, 200)
-    params, _ = _fit_type_aware(values)
-    p50_raw = float(np.median(values))
-    p50_norm = np.clip((p50_raw - params["p1"]) / (params["p99"] - params["p1"]), 0.0, 1.0)
-    assert abs(p50_norm - params["anchor"]) < 1e-6
-
-
 def test_run_preserves_index(reference_df_vi, query_df_vi, vector_index_dir):
     eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
                                   vector_index=vector_index_dir, ignore_size=True)
@@ -447,7 +435,7 @@ def test_save_load_roundtrip(reference_df_vi, query_df_vi, vector_index_dir, tmp
     assert artifact_folder.is_dir()
     expected_files = {
         "config.json", "schema.json", "reference_report.json", "metadata.json",
-        "reference_ids.joblib", "scalers.joblib",
+        "scaler.json", "reference_ids.joblib",
         "reference_repr.npy", "reference_knn_distances.npy", "reference_knn_indices.npy",
     }
     assert expected_files == {f.name for f in artifact_folder.iterdir()}
@@ -583,15 +571,15 @@ def test_type_aware_column_kinds_detected(mixed_reference_df_vi, vector_index_di
     assert chars["feat_continuous"].kind == "continuous"
 
 
-def test_type_aware_repr_in_unit_interval(mixed_reference_df_vi, vector_index_dir):
-    """After fit, the stored reference_repr should be in [0, 1] for type_aware."""
+def test_type_aware_repr_in_documented_range(mixed_reference_df_vi, vector_index_dir):
+    """After fit, the stored reference_repr should stay in eosframes' [-1, 1] regions."""
     eq = ErsiliaQuality(k=10).fit(
         mixed_reference_df_vi, eos_id=EOS_ID, version=VERSION,
         vector_index=vector_index_dir, ignore_size=True,
     )
     arr = eq._fit_state.reference_repr
-    assert arr.min() >= 0.0 - 1e-9
-    assert arr.max() <= 1.0 + 1e-9
+    assert arr.min() >= -1.0 - 1e-6
+    assert arr.max() <= 1.0 + 1e-6
 
 
 def test_type_aware_save_load_roundtrip(
@@ -614,11 +602,13 @@ def test_type_aware_save_load_roundtrip(
     )
 
 
-def test_type_aware_normalizer_params_persisted(
-    mixed_reference_df_vi, vector_index_dir, tmp_path
-):
-    """scalers.joblib must contain use_log1p/p1/p99/anchor for every feature column."""
-    import joblib
+# ---------------------------------------------------------------------------
+# eosframes scaler persistence
+# ---------------------------------------------------------------------------
+
+
+def test_scaler_json_persisted(mixed_reference_df_vi, vector_index_dir, tmp_path):
+    """scaler.json carries the eosframes params dict for every feature column."""
     eq = ErsiliaQuality(k=10).fit(
         mixed_reference_df_vi, eos_id=EOS_ID, version=VERSION,
         vector_index=vector_index_dir, ignore_size=True,
@@ -626,105 +616,24 @@ def test_type_aware_normalizer_params_persisted(
     folder = tmp_path / "ta_params"
     eq.save(folder)
 
-    scalers = joblib.load(folder / "scalers.joblib")
+    with open(folder / "scaler.json") as f:
+        params = json.load(f)
+    assert params["method"] == "robust_typed"
     for col in ["feat_binary", "feat_count", "feat_continuous"]:
-        assert col in scalers
-        p = scalers[col]
-        assert "use_log1p" in p
-        assert "p1" in p
-        assert "p99" in p
-        assert "anchor" in p
-        assert isinstance(p["use_log1p"], bool)
-        assert isinstance(p["p1"], float)
-        assert isinstance(p["p99"], float)
-        assert 0.0 <= p["anchor"] <= 1.0
+        assert col in params["columns"]
+        entry = params["columns"][col]
+        assert "transform" in entry
+        assert "kind" in entry["transform"]
+        assert "impute_value" in entry
 
 
-# ---------------------------------------------------------------------------
-# distribution-based normalization: anchor and log1p trigger
-# ---------------------------------------------------------------------------
-
-
-def test_scaler_params_have_anchor(reference_df_vi, vector_index_dir):
-    """Every scaler entry includes an 'anchor' key in [0, 1]."""
+def test_scaler_roundtrip_preserves_params(reference_df_vi, vector_index_dir, tmp_path):
+    """save/load preserves the eosframes scaler params byte-for-byte."""
     eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
                                   vector_index=vector_index_dir, ignore_size=True)
-    state = eq._fit_state.preprocess_state
-    for col, params in state["scalers"].items():
-        assert "anchor" in params, f"Missing anchor for column {col}"
-        assert 0.0 <= params["anchor"] <= 1.0
-
-
-def test_scaler_params_have_use_log1p(reference_df_vi, vector_index_dir):
-    """Every scaler entry includes a 'use_log1p' boolean key."""
-    eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
-                                  vector_index=vector_index_dir, ignore_size=True)
-    state = eq._fit_state.preprocess_state
-    for col, params in state["scalers"].items():
-        assert "use_log1p" in params, f"Missing use_log1p for column {col}"
-        assert isinstance(params["use_log1p"], bool)
-
-
-def test_log1p_trigger_sparse_large_range():
-    """Distribution-based trigger fires for sparse high-range data."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    rng = np.random.default_rng(42)
-    values = np.zeros(100)
-    values[10:] = rng.uniform(1.0, 1000.0, 90)  # 10% zeros, range ~1000x
-    params, _ = _fit_type_aware(values)
-    assert params["use_log1p"] is True
-
-
-def test_log1p_trigger_not_sparse():
-    """Distribution-based trigger does not fire for non-sparse data."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    rng = np.random.default_rng(42)
-    values = rng.uniform(1.0, 1000.0, 100)  # no zeros
-    params, _ = _fit_type_aware(values)
-    assert params["use_log1p"] is False
-
-
-def test_log1p_trigger_small_range():
-    """Distribution-based trigger does not fire when range ratio <= 10."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    # 50% zeros but non-zero values only span 1–5 (ratio = 5)
-    values = np.array([0.0] * 50 + [1.0, 2.0, 3.0, 4.0, 5.0] * 10)
-    params, _ = _fit_type_aware(values)
-    assert params["use_log1p"] is False
-
-
-def test_anchor_bell_shaped():
-    """Bell-shaped distribution → anchor near 0.5."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    rng = np.random.default_rng(42)
-    values = rng.normal(500.0, 50.0, 1000)  # symmetric bell
-    params, _ = _fit_type_aware(values)
-    assert 0.35 <= params["anchor"] <= 0.65, (
-        f"Expected anchor ~0.5 for bell-shaped data, got {params['anchor']:.3f}"
-    )
-
-
-def test_anchor_right_skewed():
-    """Right-skewed / sparse distribution → anchor significantly below 0.5."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    rng = np.random.default_rng(42)
-    values = np.zeros(800)
-    values[200:] = rng.exponential(1.0, 600)  # 80% zeros + exponential tail
-    params, _ = _fit_type_aware(values)
-    assert params["anchor"] < 0.4, (
-        f"Expected anchor < 0.4 for right-skewed data, got {params['anchor']:.3f}"
-    )
-
-
-def test_scaler_roundtrip_preserves_anchor(reference_df_vi, vector_index_dir, tmp_path):
-    """save/load preserves anchor and use_log1p in scalers."""
-    eq = ErsiliaQuality(k=10).fit(reference_df_vi, eos_id=EOS_ID, version=VERSION,
-                                  vector_index=vector_index_dir, ignore_size=True)
-    folder = tmp_path / "anchor_model"
+    folder = tmp_path / "params_model"
     eq.save(folder)
     loaded = ErsiliaQuality.load(folder)
-    orig_scalers = eq._fit_state.preprocess_state["scalers"]
-    load_scalers = loaded._fit_state.preprocess_state["scalers"]
-    for col in orig_scalers:
-        assert orig_scalers[col]["anchor"] == load_scalers[col]["anchor"]
-        assert orig_scalers[col]["use_log1p"] == load_scalers[col]["use_log1p"]
+    orig = eq._fit_state.preprocess_state["scaler_params"]
+    after = loaded._fit_state.preprocess_state["scaler_params"]
+    assert orig == after

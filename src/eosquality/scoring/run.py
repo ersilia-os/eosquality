@@ -34,7 +34,6 @@ class RunResult:
 
 def score_queries(
     query_repr: np.ndarray,
-    query_raw: np.ndarray,
     query_knn_distances_raw: np.ndarray,
     query_knn_indices_raw: np.ndarray,
     fit_state: FitState,
@@ -45,11 +44,9 @@ def score_queries(
     Parameters
     ----------
     query_repr:
-        Scaled query feature array in [0, 1] (n_query, n_features). Drives
-        the neighbor distance and consistency signals.
-    query_raw:
-        Raw query feature values (n_query, n_features). Drives typicality
-        via the stored per-column empirical CDF.
+        Scaled query feature array (n_query, n_features) — output of the
+        eosframes scaler. Drives the neighbor distance, consistency, and
+        typicality signals (the last via int8 re-quantization).
     query_knn_distances_raw:
         Neighbor distances returned by the index. Shape (n_query, k+1).
         The first column may or may not be self; we use k columns only.
@@ -83,19 +80,16 @@ def score_queries(
         knn_distances.std(axis=1), scale=median_k_dist
     )
 
-    # Typicality: per-column tail probability under the reference CDF,
-    # aggregated by geometric mean. Measures whether each individual feature
-    # value is plausible on its own — complements support (which measures
-    # whether the whole sample sits near a structural neighbor).
-    scalers = fit_state.preprocess_state["scalers"]
+    # Typicality from the int8-quantized eosframes scaled output: values near
+    # the per-kind body anchor (int8 ≈ 0) are typical; values near the region
+    # bounds (|int8| = 127, the Tukey-fence-ish edge) are atypical.
+    scaler_params = fit_state.preprocess_state["scaler_params"]
     schema = fit_state.preprocess_state["schema"]
-    quantile_levels = fit_state.preprocess_state.get("quantile_levels")
     typicality_per_feature, typicality_score = compute_typicality(
-        raw_values=query_raw,
-        scalers=scalers,
+        scaled_values=query_repr,
+        scaler_params=scaler_params,
         column_names=list(schema.column_names),
         n_reference=n_ref,
-        quantile_levels=quantile_levels,
     )
 
     quality_score = np.array(

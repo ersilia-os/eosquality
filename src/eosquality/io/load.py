@@ -72,11 +72,14 @@ def load(path: str | pathlib.Path) -> FitState:
 
     _check_artifacts_compatibility(metadata)
 
+    # eosframes scaler params
+    with open(folder / "scaler.json") as f:
+        scaler_params = json.load(f)
+    logger.debug(f"  scaler.json | {len(scaler_params.get('columns', {}))} columns")
+
     # Joblib artifacts
     reference_ids = joblib.load(folder / "reference_ids.joblib")
     logger.debug(f"  reference_ids.joblib | {len(reference_ids):,} ids")
-    scalers = joblib.load(folder / "scalers.joblib")
-    logger.debug(f"  scalers.joblib | {len(scalers)} columns")
 
     # Numpy arrays
     reference_repr = np.load(folder / "reference_repr.npy")
@@ -91,8 +94,7 @@ def load(path: str | pathlib.Path) -> FitState:
         schema=schema,
         preprocess_state={
             "schema": schema,
-            "scalers": scalers,
-            "strategy": config.distance.numeric_scaler,
+            "scaler_params": scaler_params,
         },
         reference_ids=reference_ids,
         reference_repr=reference_repr,

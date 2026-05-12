@@ -50,7 +50,7 @@ eosquality run --input query.csv --artifacts artifacts/ --output scores.csv --ve
 |---|---|
 | `quality_score` | Geometric mean of `support_score`, `typicality_score`, and `consistency_score` (0–1) |
 | `support_score` | Proximity to the reference — exp-decay on mean k-distance to fingerprint-selected neighbors (0–1) |
-| `typicality_score` | Plausibility of each individual feature value under the reference empirical CDF, aggregated by geometric mean across features (0–1) |
+| `typicality_score` | Plausibility of each individual feature value under the [eosframes](https://github.com/ersilia-os/eosframes) int8-quantized scaled output, aggregated by geometric mean across features (0–1) |
 | `consistency_score` | Uniformity of the neighbor distances — tight neighborhoods score higher (0–1) |
 | `distance_k_mean` | Mean L1 distance to the k nearest reference neighbors |
 | `distance_k_max` | Max L1 distance to the k nearest reference neighbors |
@@ -92,7 +92,7 @@ result2 = eq2.run(query_df)
 
 **Support** — how close a query sits to its k nearest reference neighbors in the normalized output space. A low value means the sample sits far from anything similar in the reference.
 
-**Typicality** — how plausible each individual feature value is on its own, under the reference's per-column empirical distribution. For continuous/count/proportion columns, typicality = `2·min(CDF, 1−CDF)`, so a value at the reference median scores 1.0 and a value in the extreme tail scores near 0. For binary columns, typicality = `min(1, 2·class_freq)`, so a 90/10 imbalance gives the majority class 1.0 and the minority class 0.2. Aggregated across features by geometric mean, with an eps floor of `1/(2·n_ref)` so a single off-chart feature can't collapse the score to zero. A sample can have high support yet low typicality (near structural neighbors, but individual values are unusual) or vice versa — the two signals complement each other.
+**Typicality** — how plausible each individual feature value is on its own, under the reference distribution. Per-column typicality reads the [eosframes](https://github.com/ersilia-os/eosframes) scaler's int8-quantized output: every column lands in a kind-specific region inside `[-1, 1]`, where values near the body anchor (int8 ≈ 0) sit in the typical bulk and values near the region edges (`|int8| = 127`, Tukey-fence territory) are atypical. Per-column typicality = `1 - |int8| / 127`. `constant` and `binary` columns contribute 1.0 unconditionally (the int8 magnitude alone can't tell majority from minority on a binary column). Aggregated across features by geometric mean, with an eps floor of `1/(2·n_ref)` so a single off-chart feature can't collapse the score to zero. A sample can have high support yet low typicality (near structural neighbors, but individual values are unusual) or vice versa — the two signals complement each other.
 
 **Consistency** — how uniform the k neighbor distances are. A tight cluster of neighbors gives high consistency; scattered distances give low consistency.
 
@@ -100,18 +100,11 @@ result2 = eq2.run(query_df)
 
 ## Normalization
 
-Normalization is **kind-aware**. Each column's kind is auto-detected from the reference data (`binary`, `count`, `continuous`, `proportion`) and drives two parallel artifacts:
+Normalization is delegated to [eosframes](https://github.com/ersilia-os/eosframes), which auto-classifies each numeric feature column into one of seven kinds (`constant`, `binary`, `count_zero_mode`, `count_shifted`, `continuous_right_skew`, `continuous_left_skew`, `continuous_centered`) and applies a kind-specific robust transform. Every column lands in a documented per-kind region inside `[-1, 1]` so columns are commensurable for distance computation.
 
-**Distance representation** (what feeds the kNN distance):
-- `binary` / `proportion` → pass-through; values are already in `[0, 1]`.
-- `count` / `continuous` → clip to the `[1st, 99th]` percentile range and scale to `[0, 1]`. An optional log1p pre-transform kicks in when the column is sparse (>5% exact zeros) *and* heavy-tailed (non-zero range ratio >10×).
+Distances are mean L1 (`mean |v_i − w_i|`) on the eosframes-scaled values. NaN inputs propagate as NaN through the scaler; downstream consumers handle them per metric.
 
-**Quantile grid** (what feeds typicality):
-- `count` / `continuous` / `proportion` → a 101-point empirical CDF over the raw (pre-log1p) values, linearly interpolated at query time.
-- `binary` → class frequencies `{0: p0, 1: p1}`; no grid needed.
-- Constant columns are flagged and contribute 1.0 to typicality (no information either way).
-
-The **anchor** (normalized reference median) is stored per column and used as the fallback for NaN query inputs in distance computations. Distances are mean L1 (`mean |v_i − w_i|`) on the `[0, 1]` normalized values.
+The fitted scaler is persisted as a human-readable `scaler.json` file inside the artifact folder — see the eosframes scaler docs for the per-kind schema. Typicality reads the same persisted params and re-quantizes scaled values to int8 levels (see *Typicality* under *Concepts*).
 
 ## Reference library & versioning
 

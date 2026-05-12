@@ -19,8 +19,8 @@ def save(fit_state: FitState, path: str | pathlib.Path) -> pathlib.Path:
     - ``schema.json``               — Schema column specs (human-readable)
     - ``reference_report.json``     — ReferenceReport diagnostics (human-readable)
     - ``metadata.json``             — FitMetadata provenance
+    - ``scaler.json``               — eosframes scaler params (human-readable)
     - ``reference_ids.joblib``      — Reference row index labels
-    - ``scalers.joblib``            — Fitted sklearn RobustScaler objects
     - ``reference_repr.npy``        — Scaled reference feature array
     - ``reference_knn_distances.npy`` — Self-kNN output-space distances (n_ref, k)
     - ``reference_knn_indices.npy`` — Self-kNN FP-selected indices (n_ref, k)
@@ -60,11 +60,14 @@ def save(fit_state: FitState, path: str | pathlib.Path) -> pathlib.Path:
         json.dump(dataclasses.asdict(fit_state.metadata), f, indent=2)
     logger.debug("  metadata.json")
 
-    # Arbitrary Python objects (index labels, scalers)
+    # eosframes scaler params: a plain dict that round-trips through JSON.
+    with open(folder / "scaler.json", "w") as f:
+        json.dump(fit_state.preprocess_state["scaler_params"], f, indent=2)
+    logger.debug("  scaler.json")
+
+    # Arbitrary Python objects (index labels)
     joblib.dump(fit_state.reference_ids, folder / "reference_ids.joblib")
     logger.debug("  reference_ids.joblib")
-    joblib.dump(fit_state.preprocess_state["scalers"], folder / "scalers.joblib")
-    logger.debug("  scalers.joblib")
 
     # Numpy arrays
     np.save(folder / "reference_repr.npy", fit_state.reference_repr)

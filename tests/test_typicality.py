@@ -1,4 +1,9 @@
-"""Tests for per-column and aggregate typicality."""
+"""Tests for per-column and aggregate typicality.
+
+Typicality is now derived from the eosframes int8 quantization:
+typicality = 1 - |int8| / 127 per column, kind-aware (constant and binary
+contribute 1.0 unconditionally).
+"""
 
 from __future__ import annotations
 
@@ -7,9 +12,7 @@ import pandas as pd
 import pytest
 
 from eosquality import ErsiliaQuality
-from eosquality.preprocess.pipeline import PreprocessPipeline
 from eosquality.scoring.typicality import compute_typicality
-from eosquality.schema.models import ColumnSpec, Schema
 
 EOS_ID = "eos4e40"
 VERSION = "v1"
@@ -20,121 +23,108 @@ VERSION = "v1"
 # ---------------------------------------------------------------------------
 
 
-def _make_scaler_continuous(ref_values: np.ndarray) -> dict:
-    """Build a scaler dict mirroring what PreprocessPipeline would produce."""
-    from eosquality.preprocess.pipeline import _fit_type_aware
-    params, _ = _fit_type_aware(ref_values, kind="continuous")
-    return params
+def _params(kind: str, cols: list[str]) -> dict:
+    """Build a minimal eosframes-style params dict for the given kinds."""
+    return {
+        "method": "robust_typed",
+        "columns": {
+            c: {"transform": {"kind": kind}, "impute_value": 0.0}
+            for c in cols
+        },
+    }
 
 
-def _levels() -> np.ndarray:
-    return np.linspace(0.0, 1.0, 101)
-
-
-def test_typicality_at_reference_median_is_one():
-    rng = np.random.default_rng(0)
-    ref = rng.normal(0.0, 1.0, 500)
-    scaler = _make_scaler_continuous(ref)
-    query = np.array([[float(np.median(ref))]])
+def test_typicality_at_body_anchor_is_one():
+    """Scaled value at 0 (body anchor) → int8 0 → typicality 1.0."""
+    scaled = np.array([[0.0]])
     per_feat, agg = compute_typicality(
-        raw_values=query,
-        scalers={"x": scaler},
+        scaled_values=scaled,
+        scaler_params=_params("continuous_centered", ["x"]),
         column_names=["x"],
-        n_reference=len(ref),
-        quantile_levels=_levels(),
+        n_reference=500,
     )
-    assert per_feat.shape == (1, 1)
-    assert per_feat[0, 0] > 0.98  # right at the median → tail prob ≈ 0.5 → typ ≈ 1.0
-    assert agg[0] > 0.98
+    assert per_feat[0, 0] == pytest.approx(1.0, abs=1e-9)
+    assert agg[0] == pytest.approx(1.0, abs=1e-9)
 
 
-def test_typicality_at_extreme_drops_to_eps_floor():
-    rng = np.random.default_rng(1)
-    ref = rng.normal(0.0, 1.0, 500)
-    scaler = _make_scaler_continuous(ref)
-    far = float(ref.max() + 100.0)
-    query = np.array([[far]])
+def test_typicality_at_region_edge_drops_to_eps_floor():
+    """Scaled value at ±1 (Tukey-fence edge) → |int8|=127 → typicality 0 → eps floor."""
+    n_ref = 500
+    eps = 1.0 / (2.0 * n_ref)
+    scaled = np.array([[1.0], [-1.0]])
     _, agg = compute_typicality(
-        raw_values=query,
-        scalers={"x": scaler},
+        scaled_values=scaled,
+        scaler_params=_params("continuous_centered", ["x"]),
         column_names=["x"],
-        n_reference=len(ref),
-        quantile_levels=_levels(),
+        n_reference=n_ref,
     )
-    eps = 1.0 / (2.0 * len(ref))
-    # Beyond the max reference value, np.interp clamps cdf to 1, tail_prob=0,
-    # and we floor to eps.
     assert agg[0] == pytest.approx(eps, rel=1e-6)
+    assert agg[1] == pytest.approx(eps, rel=1e-6)
 
 
-def test_typicality_constant_column_is_one():
-    """Constant columns carry no information — typicality is vacuously 1.0."""
-    const_ref = np.zeros(200)
-    scaler = _make_scaler_continuous(const_ref)
-    assert scaler["is_constant"] is True
+def test_typicality_constant_kind_is_one():
+    """Constant kind carries no information — typicality is vacuously 1.0."""
+    scaled = np.array([[0.0], [0.5], [-0.5]])
     _, agg = compute_typicality(
-        raw_values=np.array([[0.0], [100.0], [-50.0]]),
-        scalers={"x": scaler},
+        scaled_values=scaled,
+        scaler_params=_params("constant", ["x"]),
         column_names=["x"],
-        n_reference=len(const_ref),
-        quantile_levels=_levels(),
+        n_reference=200,
     )
     np.testing.assert_allclose(agg, 1.0)
 
 
-def test_typicality_binary_imbalanced():
-    """90/10 class freq: majority class → typicality 1.0, minority → 0.2."""
-    ref = np.array([0.0] * 90 + [1.0] * 10)
-    from eosquality.preprocess.pipeline import _fit_binary
-    scaler, _ = _fit_binary(ref)
-
-    query = np.array([[0.0], [1.0]])
+def test_typicality_binary_kind_is_one_for_both_classes():
+    """Binary kind: eosframes int8 doesn't encode class freq, so typicality
+    is 1.0 for both classes by design."""
+    scaled = np.array([[0.0], [1.0]])
     per_feat, _ = compute_typicality(
-        raw_values=query,
-        scalers={"x": scaler},
+        scaled_values=scaled,
+        scaler_params=_params("binary", ["x"]),
         column_names=["x"],
-        n_reference=len(ref),
-        quantile_levels=_levels(),
+        n_reference=200,
     )
-    assert per_feat[0, 0] == pytest.approx(1.0, abs=1e-6)   # majority: min(1, 2*0.9) = 1
-    assert per_feat[1, 0] == pytest.approx(0.2, abs=1e-6)   # minority: 2*0.1
+    np.testing.assert_allclose(per_feat, 1.0, atol=1e-9)
 
 
-def test_typicality_binary_balanced_both_classes_typical():
-    ref = np.array([0.0, 1.0] * 50)
-    from eosquality.preprocess.pipeline import _fit_binary
-    scaler, _ = _fit_binary(ref)
-    query = np.array([[0.0], [1.0]])
+def test_typicality_nan_maps_to_one():
+    """NaN scaled values carry no information → typicality 1.0."""
+    scaled = np.array([[np.nan]])
     per_feat, _ = compute_typicality(
-        raw_values=query,
-        scalers={"x": scaler},
+        scaled_values=scaled,
+        scaler_params=_params("continuous_centered", ["x"]),
         column_names=["x"],
-        n_reference=len(ref),
-        quantile_levels=_levels(),
+        n_reference=200,
     )
-    np.testing.assert_allclose(per_feat, 1.0, atol=1e-6)
+    assert per_feat[0, 0] == pytest.approx(1.0, abs=1e-9)
 
 
 def test_typicality_aggregate_geomean_penalizes_single_outlier():
-    """One wildly atypical feature should drag the aggregate well below 1.0,
-    even if the other columns are perfectly typical."""
-    rng = np.random.default_rng(2)
-    ref_a = rng.normal(0.0, 1.0, 300)
-    ref_b = rng.normal(10.0, 2.0, 300)
-    scalers = {"a": _make_scaler_continuous(ref_a), "b": _make_scaler_continuous(ref_b)}
-    query = np.array([[float(np.median(ref_a)), float(ref_b.max()) + 100.0]])
+    """One column at the body anchor and one at the edge → geomean pulled way down."""
+    scaled = np.array([[0.0, 1.0]])
     per_feat, agg = compute_typicality(
-        raw_values=query,
-        scalers=scalers,
+        scaled_values=scaled,
+        scaler_params=_params("continuous_centered", ["a", "b"]),
         column_names=["a", "b"],
         n_reference=300,
-        quantile_levels=_levels(),
     )
-    # per_feat[0, 0] ≈ 1 (at median), per_feat[0, 1] at eps floor.
-    assert per_feat[0, 0] > 0.95
+    assert per_feat[0, 0] == pytest.approx(1.0, abs=1e-9)
     assert per_feat[0, 1] < 0.01
-    # geomean pulls way down
     assert agg[0] < 0.1
+
+
+def test_typicality_one_sided_kind_treats_zero_as_typical():
+    """For one-sided kinds (right-skew, count_zero_mode), the body anchor is
+    still 0 in the scaled space; values approaching +1 are atypical."""
+    scaled = np.array([[0.0], [1.0]])
+    per_feat, _ = compute_typicality(
+        scaled_values=scaled,
+        scaler_params=_params("continuous_right_skew", ["x"]),
+        column_names=["x"],
+        n_reference=500,
+    )
+    assert per_feat[0, 0] == pytest.approx(1.0, abs=1e-9)
+    assert per_feat[1, 0] < 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +163,10 @@ def test_reference_typicality_is_sensible_baseline(
 ):
     """The reference's aggregate typicality is a calibration baseline.
 
-    Per-feature typicality averages ~0.5 on a random reference sample
-    (E[2·min(U, 1−U)] = 0.5 for uniform U), and the geomean across features
-    pulls that lower. We only assert the value is in (0, 1] — the precise
-    magnitude depends on n_features and the empirical distribution shape.
+    With int8-based typicality the magnitude depends on how the eosframes
+    scaler shapes the reference: values near the body anchor (≈ 0) score
+    near 1, and Tukey-fence-territory values score near 0. We only assert
+    the value is in (0, 1].
     """
     eq = ErsiliaQuality(k=10).fit(
         reference_df_vi, eos_id=EOS_ID, version=VERSION,
