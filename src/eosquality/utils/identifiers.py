@@ -8,17 +8,19 @@ import os
 import re
 
 # eos<digit><3 alphanumeric> — exactly 7 characters
-EOS_ID_RE = re.compile(r'^eos\d[A-Za-z0-9]{3}$')
+EOS_ID_RE = re.compile(r"^eos\d[A-Za-z0-9]{3}$")
 
 # v followed by one or more digits
-VERSION_RE = re.compile(r'^v\d+$')
+VERSION_RE = re.compile(r"^v\d+$")
 
 # Matches both eos_id and version anywhere in a filename stem,
 # allowing an optional leading prefix (e.g. "project_eos4e40_v1")
-_STEM_RE = re.compile(r'(?:^|_)(eos\d[A-Za-z0-9]{3})_(v\d+)$')
+_STEM_RE = re.compile(r"(?:^|_)(eos\d[A-Za-z0-9]{3})_(v\d+)$")
 
 # Matches eos_id alone anywhere in a filename stem (no version required)
-_EOS_ID_ANYWHERE_RE = re.compile(r'(?<![A-Za-z0-9])(eos\d[A-Za-z0-9]{3})(?![A-Za-z0-9])')
+_EOS_ID_ANYWHERE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(eos\d[A-Za-z0-9]{3})(?![A-Za-z0-9])"
+)
 
 
 def validate_eos_id(eos_id: str) -> None:

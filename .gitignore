@@ -220,3 +220,6 @@ __marimo__/
 # Large data files — too big for GitHub; store externally
 data/examples/*.csv
 data/libraries/*.csv
+
+# Diagnostic script outputs (plots, caches)
+outputs/

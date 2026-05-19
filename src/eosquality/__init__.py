@@ -4,9 +4,18 @@ import importlib.metadata as _importlib_metadata
 
 from packaging.version import Version as _Version
 
-from eosquality._library import LIBRARY_ID, library_major
-from eosquality.quality.api import ErsiliaQuality
-from eosquality.scoring.run import RunResult
+from eosquality.library.identity import LIBRARY_ID, library_major
+from eosquality.quality import ErsiliaQuality, RunResult
+from eosquality.scores import (
+    Consistency,
+    ConsistencyRunResult,
+    Extremity,
+    ExtremityRunResult,
+    Support,
+    SupportRunResult,
+    Typicality,
+    TypicalityRunResult,
+)
 from eosquality.utils.logging import logger as _logger
 
 
@@ -20,8 +29,6 @@ def _check_library_matches_package_major() -> None:
     try:
         pkg_version = _importlib_metadata.version("eosquality")
     except _importlib_metadata.PackageNotFoundError:
-        # Running from an un-installed checkout (e.g. `python -c 'import eosquality'`
-        # with PYTHONPATH pointing at src/). Skip — the pytest guardrail covers this.
         return
     pkg_major = _Version(pkg_version).major
     lib_major = library_major()
@@ -38,15 +45,20 @@ _check_library_matches_package_major()
 
 
 def set_verbosity(verbose: bool) -> None:
-    """Enable or disable informative log output globally.
-
-    Parameters
-    ----------
-    verbose:
-        ``True`` to enable progress logs and diagnostic tables.
-        ``False`` (default) to suppress all output.
-    """
+    """Enable or disable informative log output globally."""
     _logger.set_verbosity(verbose)
 
 
-__all__ = ["ErsiliaQuality", "RunResult", "set_verbosity"]
+__all__ = [
+    "ErsiliaQuality",
+    "RunResult",
+    "Typicality",
+    "TypicalityRunResult",
+    "Support",
+    "SupportRunResult",
+    "Consistency",
+    "ConsistencyRunResult",
+    "Extremity",
+    "ExtremityRunResult",
+    "set_verbosity",
+]

@@ -66,9 +66,7 @@ def validate_against_schema(df: pd.DataFrame, schema: Schema) -> None:
         raise SchemaError(f"Columns present at fit time are missing: {missing}")
 
     non_numeric = [
-        c
-        for c in schema.column_names
-        if not pd.api.types.is_numeric_dtype(df[c])
+        c for c in schema.column_names if not pd.api.types.is_numeric_dtype(df[c])
     ]
     if non_numeric:
         raise SchemaError(f"Expected numeric columns, got non-numeric: {non_numeric}")

@@ -29,10 +29,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "pytest-cov",
   "black",
   "ruff",
+]
+viz = [
+  "matplotlib>=3.7",
 ]
 
 [project.scripts]
@@ -40,9 +41,6 @@ eosquality = "eosquality.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88

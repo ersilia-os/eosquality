@@ -16,11 +16,7 @@ _loguru.level("ERROR", color="<white><bold><bg red>")
 _loguru.level("CRITICAL", color="<white><bold><bg red>")
 _loguru.level("SUCCESS", color="<black><bold><bg green>")
 
-_FORMAT = (
-    "<green>{time:HH:mm:ss}</green> "
-    "<level>{level: <8}</level> "
-    "{message}"
-)
+_FORMAT = "<green>{time:HH:mm:ss}</green> <level>{level: <8}</level> {message}"
 
 
 class Logger:
@@ -111,25 +107,39 @@ class Logger:
 
         table.add_row("Samples", f"{n_samples:,}")
         table.add_row("Features", f"{n_features:,}")
-        table.add_row("Columns", ", ".join(column_names[:8]) + ("…" if len(column_names) > 8 else ""))
+        table.add_row(
+            "Columns",
+            ", ".join(column_names[:8]) + ("…" if len(column_names) > 8 else ""),
+        )
 
         self._console.print(table)
         self._console.line()
 
     def reference_report_table(
         self,
-        reference_quality: float,
-        cohesion_score: float,
-        fragmentation_score: float,
-        median_k_distance: float,
-        notes: list[str],
+        reference_support: float | None = None,
         reference_typicality: float | None = None,
+        reference_extremity: float | None = None,
     ) -> None:
-        """Display reference quality diagnostics computed during fit."""
+        """Display per-score reference baselines computed during fit.
+
+        Only baselines that were fit (non-``None``) are shown.
+        """
         if not self._verbose:
             return
+        rows = [
+            (name, value)
+            for name, value in (
+                ("reference_support", reference_support),
+                ("reference_typicality", reference_typicality),
+                ("reference_extremity", reference_extremity),
+            )
+            if value is not None
+        ]
+        if not rows:
+            return
         table = Table(
-            title="[bold]Reference quality diagnostics[/bold]",
+            title="[bold]Reference baselines[/bold]",
             box=box.SIMPLE_HEAVY,
             show_header=True,
             header_style="bold magenta",
@@ -146,29 +156,17 @@ class Logger:
                 return "yellow"
             return "red"
 
-        table.add_row(
-            "reference_quality",
-            f"[{_quality_style(reference_quality)}]{reference_quality:.4f}[/]",
-        )
-        if reference_typicality is not None:
-            table.add_row(
-                "reference_typicality",
-                f"[{_quality_style(reference_typicality)}]{reference_typicality:.4f}[/]",
-            )
-        table.add_row("cohesion_score", f"{cohesion_score:.4f}")
-        table.add_row("fragmentation_score", f"{fragmentation_score:.4f}")
-        table.add_row("median_k_distance", f"{median_k_distance:.4f}")
+        for name, value in rows:
+            table.add_row(name, f"[{_quality_style(value)}]{value:.4f}[/]")
 
         self._console.print(table)
-        for note in notes:
-            self._console.print(f"  [dim yellow]⚠ {note}[/dim yellow]")
         self._console.line()
 
     def scores_summary_table(self, scores_df) -> None:
         """Display a summary of score distributions from a run() call."""
         if not self._verbose:
             return
-        score_cols = ["quality_score", "support_score", "typicality_score", "consistency_score"]
+        score_cols = ["typicality", "extremity", "support", "consistency"]
         present = [c for c in score_cols if c in scores_df.columns]
 
         table = Table(
@@ -254,7 +252,9 @@ class Logger:
         self._console.print(table)
         self._console.line()
 
-    def timing_table(self, steps: list[tuple[str, float, bool]], title: str = "Fit timing breakdown") -> None:
+    def timing_table(
+        self, steps: list[tuple[str, float, bool]], title: str = "Fit timing breakdown"
+    ) -> None:
         """Print a per-step timing breakdown.
 
         Parameters
@@ -284,7 +284,9 @@ class Logger:
 
         for name, t, is_subtask in steps:
             label = f"  {name}" if is_subtask else name
-            pct_str = "" if is_subtask else (f"{100 * t / total:.0f}%" if total > 0 else "—")
+            pct_str = (
+                "" if is_subtask else (f"{100 * t / total:.0f}%" if total > 0 else "—")
+            )
             style = "dim" if is_subtask else ""
             table.add_row(label, f"{t:.2f}", pct_str, style=style)
 

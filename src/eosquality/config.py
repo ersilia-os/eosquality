@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 class DistanceConfig:
     """Configuration for distance computation."""
 
-    numeric_scaler: str = "type_aware"  # type-aware percentile normalization (only supported value)
+    numeric_scaler: str = (
+        "type_aware"  # type-aware percentile normalization (only supported value)
+    )
     mixed_strategy: str = "weighted_mean"
     vector_metric: str = "cosine"
 
@@ -14,9 +16,9 @@ class DistanceConfig:
 class NeighborConfig:
     """Configuration for nearest-neighbor search."""
 
-    k: int = 20
+    k: int = 5
     backend: str = "sklearn"  # "sklearn" | "faiss" (faiss requires optional dep)
-    algorithm: str = "auto"   # passed to sklearn NearestNeighbors
+    algorithm: str = "auto"  # passed to sklearn NearestNeighbors
 
 
 @dataclass
