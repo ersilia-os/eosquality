@@ -13,6 +13,7 @@ import sys
 import pandas as pd
 
 from eosquality import set_verbosity
+from eosquality.basic_descriptors import BasicDescriptors
 from eosquality.vectorindex import VectorIndex
 
 
@@ -40,6 +41,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     smiles = list(df["smiles"])
     print(f"Building vector index for {len(smiles):,} molecules → {args.output}")
 
+    if args.max_samples is not None:
+        smiles_for_basics = smiles[: args.max_samples]
+    else:
+        smiles_for_basics = smiles
+
     try:
         VectorIndex.build(
             smiles=smiles,
@@ -51,6 +57,14 @@ def cmd_build(args: argparse.Namespace) -> int:
             library_name=pathlib.Path(args.input).stem,
             max_samples=args.max_samples,
         )
+        BasicDescriptors.build_physchem(
+            smiles=smiles_for_basics,
+            output_dir=args.output,
+        )
+        BasicDescriptors.build_maccs(
+            smiles=smiles_for_basics,
+            output_dir=args.output,
+        )
     except Exception as exc:
         print(f"error: index build failed: {exc}", file=sys.stderr)
         return 1
@@ -61,7 +75,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def register_subparsers(subparsers) -> None:
-    """Attach the ``index`` subcommand to *subparsers*."""
+    """Attach the ``build`` subcommand to *subparsers*."""
     build_p = subparsers.add_parser(
         "build",
         help="(release tool) Build a vector index from a reference library CSV.",

@@ -1,4 +1,4 @@
-"""Typicality score: per-feature + aggregate, no vector index needed.
+"""Typicality score: per-feature + CDF-calibrated aggregate, no vector index needed.
 
 Typicality is **density-based**: for each query value, look up its int8
 quantization in the per-column count LUT built on the reference and
@@ -10,10 +10,13 @@ scores typicality 1.0, every other int8 scores in proportion to how
 often it appears in the reference, and unseen int8 values score 0.
 NaN queries return typicality 1.0 (no information).
 
-The aggregate per query is the **arithmetic mean** of the per-feature
-typicality values. The single ``typicality`` column is the user-facing
-output; per-feature values are retained on :class:`TypicalityRunResult`
-for diagnostic tools but not surfaced by :class:`ErsiliaQuality`.
+The per-row aggregate is the **66th percentile** of per-feature values
+(``AGGREGATE_QUANTILE``), then mapped through the reference's own sorted
+distribution of Q66 aggregates via :func:`_score_from_aggregates`. The
+calibrated score is uniform-under-reference: the reference's median row
+scores ~0.5 by construction, and the score is comparable across models
+with different feature counts. Per-feature values are retained on
+:class:`TypicalityRunResult` for diagnostics.
 """
 
 from __future__ import annotations
@@ -29,7 +32,12 @@ import numpy as np
 import pandas as pd
 
 from eosquality.schema.infer import validate_against_schema
-from eosquality.scores._helpers import _component_metadata, _make_pipeline
+from eosquality.scores._helpers import (
+    AGGREGATE_QUANTILE,
+    _component_metadata,
+    _make_query_repr,
+    _score_from_aggregates,
+)
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
@@ -43,13 +51,15 @@ _LUT_OFFSET = 128  # lut index = int8 + offset; the slot at index 0 is the NaN s
 SUBFOLDER = "typicality"
 STATE_FILE = "state.json"
 METADATA_FILE = "metadata.json"
+SELF_AGGREGATES_FILE = "reference_self_aggregates.npy"
 
 
 @dataclass
 class TypicalityRunResult:
     """Result returned by :meth:`Typicality.run`."""
 
-    score: pd.Series  # (n_query,) aggregate typicality
+    score: pd.Series  # (n_query,) calibrated aggregate typicality in [0, 1]
+    score_raw: pd.Series  # (n_query,) Q66 aggregate before CDF lookup, in [0, 1]
     per_feature: pd.DataFrame  # (n_query, n_features)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -57,13 +67,16 @@ class TypicalityRunResult:
 class Typicality:
     """Density-based per-feature typicality scorer.
 
-    Holds two pieces of fitted state:
+    Holds three pieces of fitted state:
 
     - ``count_luts_`` — ``(256, n_features)`` int array of reference counts
       per int8 level per column. Built once at fit time and consulted at
       query time.
-    - ``reference_typicality_`` — mean aggregate typicality of the reference
-      under its own LUTs. A calibration anchor for downstream readers.
+    - ``sorted_self_aggregates_`` — ``(n_ref,)`` ascending array of
+      reference per-row Q66 aggregates. The CDF lookup table that maps
+      raw aggregates to calibrated scores.
+    - ``reference_typicality_`` — mean reference-as-query calibrated
+      typicality. ≈ 0.5 by construction; a sanity-check anchor.
 
     Depends only on :class:`SharedFitState` — no vector index required.
     """
@@ -71,6 +84,7 @@ class Typicality:
     def __init__(self) -> None:
         self._shared: SharedFitState | None = None
         self._count_luts: np.ndarray | None = None  # (256, n_features)
+        self._sorted_self_aggregates: np.ndarray | None = None  # (n_ref,)
         self._reference_typicality: float | None = None
         self._fit_duration_seconds: float | None = None
         self._fit_timestamp: str | None = None
@@ -112,16 +126,23 @@ class Typicality:
         else:
             validate_against_schema(reference, shared.schema)
 
-        ref_scaled = _make_pipeline(shared).transform(reference)
+        ref_scaled = _make_query_repr(shared, reference)
         count_luts = fit_typicality_luts(ref_scaled)
         _, ref_agg = compute_typicality(
             scaled_values=ref_scaled,
             count_luts=count_luts,
         )
+        sorted_self_aggregates = np.sort(ref_agg).astype(np.float64)
+        reference_typicality = float(
+            np.mean(
+                _score_from_aggregates(ref_agg, sorted_self_aggregates, len(ref_agg))
+            )
+        )
 
         self._shared = shared
         self._count_luts = count_luts
-        self._reference_typicality = float(np.mean(ref_agg))
+        self._sorted_self_aggregates = sorted_self_aggregates
+        self._reference_typicality = reference_typicality
         self._fit_duration_seconds = float(time.perf_counter() - t0)
         self._fit_timestamp = datetime.now(tz=timezone.utc).isoformat()
         logger.debug(
@@ -155,28 +176,37 @@ class Typicality:
         self._check_fitted()
         assert self._shared is not None
         assert self._count_luts is not None
+        assert self._sorted_self_aggregates is not None
 
         validate_against_schema(query, self._shared.schema)
 
         if query_repr is None:
-            query_repr = _make_pipeline(self._shared).transform(query)
+            query_repr = _make_query_repr(self._shared, query)
 
-        per_feature, score = compute_typicality(
+        per_feature, raw_aggregate = compute_typicality(
             scaled_values=query_repr,
             count_luts=self._count_luts,
+        )
+        n_ref = len(self._shared.reference_ids)
+        score = _score_from_aggregates(
+            raw_aggregate, self._sorted_self_aggregates, n_ref
         )
         per_feature_df = pd.DataFrame(
             per_feature,
             index=list(query.index),
-            columns=list(self._shared.schema.column_names),
+            columns=list(self._shared.selected_columns),
         )
         score_series = pd.Series(score, index=list(query.index), name="typicality")
+        score_raw_series = pd.Series(
+            raw_aggregate, index=list(query.index), name="typicality_raw"
+        )
         return TypicalityRunResult(
             score=score_series,
+            score_raw=score_raw_series,
             per_feature=per_feature_df,
             metadata={
                 "reference_typicality": self._reference_typicality,
-                "n_reference": len(self._shared.reference_ids),
+                "n_reference": n_ref,
             },
         )
 
@@ -187,12 +217,13 @@ class Typicality:
     def save(self, root: str | pathlib.Path) -> pathlib.Path:
         """Persist into ``<root>/shared/`` and ``<root>/typicality/``.
 
-        Writes two files under ``typicality/``:
+        Writes three files under ``typicality/``:
 
         - ``state.json`` — the ``reference_typicality`` baseline and the
           per-column ``count_luts`` keyed by column name.
-        - ``metadata.json`` — fit timestamp, fit duration, n_samples,
-          n_features, eosquality_version.
+        - ``reference_self_aggregates.npy`` — sorted reference per-row
+          Q66 aggregates; the CDF lookup table.
+        - ``metadata.json`` — fit timestamp, fit duration.
 
         Also writes the shared subfolder via :func:`save_shared` so the
         artifact is self-contained.
@@ -200,10 +231,12 @@ class Typicality:
         self._check_fitted()
         assert self._shared is not None
         assert self._count_luts is not None
+        assert self._sorted_self_aggregates is not None
         save_shared(self._shared, root)
         folder = pathlib.Path(root) / SUBFOLDER
         folder.mkdir(parents=True, exist_ok=True)
-        column_names = list(self._shared.schema.column_names)
+        np.save(folder / SELF_AGGREGATES_FILE, self._sorted_self_aggregates)
+        column_names = list(self._shared.selected_columns)
         payload = {
             "reference_typicality": self._reference_typicality,
             "column_names": column_names,
@@ -231,20 +264,30 @@ class Typicality:
 
     @classmethod
     def load(cls, root: str | pathlib.Path) -> "Typicality":
-        """Reconstruct from ``<root>/shared/`` + ``<root>/typicality/state.json``."""
+        """Reconstruct from ``<root>/shared/`` + ``<root>/typicality/``."""
         shared = load_shared(root)
         folder = pathlib.Path(root) / SUBFOLDER
         with open(folder / STATE_FILE) as f:
             payload = json.load(f)
 
-        column_names = list(shared.schema.column_names)
+        column_names = list(shared.selected_columns)
         if payload["column_names"] != column_names:
             raise ValueError(
-                f"typicality/{STATE_FILE} column_names do not match shared schema."
+                f"typicality/{STATE_FILE} column_names do not match "
+                "shared selected columns."
             )
         count_luts = np.zeros((_LUT_SIZE, len(column_names)), dtype=np.int64)
         for j, col in enumerate(column_names):
             count_luts[:, j] = np.asarray(payload["count_luts"][col], dtype=np.int64)
+
+        aggregates_path = folder / SELF_AGGREGATES_FILE
+        if not aggregates_path.is_file():
+            raise FileNotFoundError(
+                f"Missing {aggregates_path}. This artifact predates the "
+                "Q66 + CDF-calibrated typicality format and must be refit "
+                "with the current eosquality version."
+            )
+        sorted_self_aggregates = np.load(aggregates_path)
 
         meta_path = folder / METADATA_FILE
         fit_duration = None
@@ -258,6 +301,7 @@ class Typicality:
         instance = cls()
         instance._shared = shared
         instance._count_luts = count_luts
+        instance._sorted_self_aggregates = sorted_self_aggregates
         instance._reference_typicality = float(payload["reference_typicality"])
         instance._fit_duration_seconds = fit_duration
         instance._fit_timestamp = fit_timestamp
@@ -272,6 +316,7 @@ class Typicality:
         return (
             self._shared is not None
             and self._count_luts is not None
+            and self._sorted_self_aggregates is not None
             and self._reference_typicality is not None
         )
 
@@ -286,6 +331,12 @@ class Typicality:
         self._check_fitted()
         assert self._count_luts is not None
         return self._count_luts
+
+    @property
+    def sorted_self_aggregates_(self) -> np.ndarray:
+        self._check_fitted()
+        assert self._sorted_self_aggregates is not None
+        return self._sorted_self_aggregates
 
     @property
     def reference_typicality_(self) -> float:
@@ -369,7 +420,12 @@ def compute_typicality(
     per_feature:
         ``(n_query, n_features)`` typicality in ``[0, 1]``.
     aggregate:
-        ``(n_query,)`` arithmetic mean of ``per_feature`` across features.
+        ``(n_query,)`` 66th-percentile of ``per_feature`` across features
+        (see ``AGGREGATE_QUANTILE``). The shift away from the mean
+        prevents the aggregate from collapsing to the per-feature
+        expectation as ``n_features`` grows; downstream CDF calibration
+        in :meth:`Typicality.run` further re-spreads it to uniform under
+        the reference.
     """
     n_query = scaled_values.shape[0]
     n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
@@ -393,5 +449,5 @@ def compute_typicality(
         typ = col_lut[q_col + _LUT_OFFSET] / max_count
         per_feature[:, j] = np.where(nan_q, 1.0, typ)
 
-    aggregate = per_feature.mean(axis=1)
+    aggregate = np.quantile(per_feature, AGGREGATE_QUANTILE, axis=1)
     return per_feature, aggregate

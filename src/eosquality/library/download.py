@@ -5,12 +5,15 @@ is downloaded lazily on first use into a user cache (``~/.eosquality/``).
 The maintainer side uses ``eosvc`` to push updates to S3, but at runtime we
 do not depend on ``eosvc`` — plain HTTPS is enough for public objects.
 
-One function is public: :func:`ensure_library_downloaded`. It either returns
-the local cache path if it's already present and valid, or fetches the five
-known files (``vector_index.h5``, ``knn_distances.npy``, ``knn_indices.npy``,
-``smiles.csv``, ``metadata.json``), writes them to a temp directory, and then
-atomically moves them into the final cache location. Partial downloads never
-leave a half-populated cache folder.
+Two public functions:
+
+- :func:`ensure_library_downloaded` fetches the index folder (five files:
+  ``vector_index.h5``, ``knn_distances.npy``, ``knn_indices.npy``,
+  ``smiles.csv``, ``metadata.json``) into a temp directory and atomically
+  moves it into the cache. Partial downloads never leave a half-populated
+  cache folder.
+- :func:`ensure_single_file_downloaded` does the same atomic-fetch for one
+  file (used for the source SMILES CSV).
 
 Progress output goes to stderr via ``rich`` (already a dep) — a per-file
 progress bar with byte counts, transfer speed, and ETA. Cached hits and
@@ -38,13 +41,21 @@ from rich.progress import (
 )
 
 # Files that make up a complete reference library folder. Must stay in sync
-# with what ``eosquality build`` emits (see vectorindex/backend.py::build).
+# with what ``eosquality build`` emits — the FP index (``VectorIndex.build``)
+# plus the basic-descriptor matrices (``BasicDescriptors.build_physchem`` /
+# ``BasicDescriptors.build_maccs``). The physchem files are required by the
+# Signal score's default ``physchem`` backend; ``maccs.npy`` is currently
+# unused by fit-time code but is shipped for consumers of the canonical
+# library folder.
 _LIBRARY_FILES: tuple[str, ...] = (
     "vector_index.h5",
     "knn_distances.npy",
     "knn_indices.npy",
     "smiles.csv",
     "metadata.json",
+    "physchem_scaler.json",
+    "physchem_scaled.npy",
+    "maccs.npy",
 )
 
 # Chunk size for streamed copy. 256 KB is the sweet spot for progress

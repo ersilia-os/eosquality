@@ -2,7 +2,7 @@
 
 Each subcommand lives in its own module under this package:
 
-- :mod:`eosquality.cli.build` registers ``index``.
+- :mod:`eosquality.cli.build` registers ``build``.
 - :mod:`eosquality.cli.download` registers ``download``.
 - :mod:`eosquality.cli.fit` registers ``fit``.
 - :mod:`eosquality.cli.run` registers ``run``.

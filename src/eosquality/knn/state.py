@@ -11,9 +11,8 @@ import numpy as np
 class KnnFitState:
     """Shared kNN artifacts for index-aware scores.
 
-    Two fields are always present (and persisted):
+    One field is always present (and persisted):
 
-    - ``ref_repr`` — scaled reference array ``(n_ref, n_features)``.
     - ``k`` — number of neighbors used.
 
     The vector index itself is *not* persisted as a path. It is
@@ -22,6 +21,12 @@ class KnnFitState:
     ``shared.metadata.library_id`` as the key. This keeps saved
     artifacts portable across machines.
 
+    The scaled reference matrix (``ref_repr``) used to live here too,
+    but is now sourced from ``SharedFitState.ref_repr`` to avoid a
+    duplicated 100MB-scale ``.npy`` on disk. Consistency reads
+    ``shared.ref_repr`` directly when computing output-space neighbor
+    distances.
+
     Two more fields are populated at fit time and dropped on save/load:
 
     - ``mean_fp_distances`` — ``(n_ref,)`` mean Tanimoto distance from
@@ -29,13 +34,12 @@ class KnnFitState:
       baseline.
     - ``reference_knn_indices`` — ``(n_ref, k)`` FP-selected neighbor
       indices. Consistency uses these to compute output-space distances
-      against ``ref_repr`` in its own fit.
+      against ``shared.ref_repr`` in its own fit.
 
     Both fit-only fields are ``None`` after save/load — re-fit if you
     need them.
     """
 
-    ref_repr: np.ndarray
     k: int
     mean_fp_distances: np.ndarray | None = None
     reference_knn_indices: np.ndarray | None = None

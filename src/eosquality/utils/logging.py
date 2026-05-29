@@ -31,27 +31,37 @@ class Logger:
         self._console = Console(stderr=True, highlight=False)
         self._sink_id: Optional[int] = None
         self._verbose: bool = False
+        # INFO sink is on by default so users see progress without -v.
+        # ``set_verbosity(True)`` bumps the level to DEBUG and enables the
+        # Rich diagnostic tables.
+        self._install_sink("INFO")
+
+    def _install_sink(self, level: str) -> None:
+        if self._sink_id is not None:
+            try:
+                self.logger.remove(self._sink_id)
+            except Exception:
+                pass
+        self._sink_id = self.logger.add(
+            sys.stderr,
+            format=_FORMAT,
+            colorize=True,
+            level=level,
+        )
 
     @property
     def verbose(self) -> bool:
         return self._verbose
 
     def set_verbosity(self, verbose: bool) -> None:
-        """Enable or disable log output."""
+        """Toggle DEBUG-level output and Rich diagnostic tables.
+
+        INFO-level output is always on; ``verbose=True`` adds DEBUG
+        messages and unlocks the Rich tables (``reference_table``,
+        ``reference_report_table``, etc.).
+        """
         self._verbose = verbose
-        if verbose and self._sink_id is None:
-            self._sink_id = self.logger.add(
-                sys.stderr,
-                format=_FORMAT,
-                colorize=True,
-                level="DEBUG",
-            )
-        elif not verbose and self._sink_id is not None:
-            try:
-                self.logger.remove(self._sink_id)
-            except Exception:
-                pass
-            self._sink_id = None
+        self._install_sink("DEBUG" if verbose else "INFO")
 
     # ------------------------------------------------------------------
     # Standard log levels
@@ -120,6 +130,8 @@ class Logger:
         reference_support: float | None = None,
         reference_typicality: float | None = None,
         reference_extremity: float | None = None,
+        reference_consistency: float | None = None,
+        reference_signal: float | None = None,
     ) -> None:
         """Display per-score reference baselines computed during fit.
 
@@ -133,6 +145,8 @@ class Logger:
                 ("reference_support", reference_support),
                 ("reference_typicality", reference_typicality),
                 ("reference_extremity", reference_extremity),
+                ("reference_consistency", reference_consistency),
+                ("reference_signal", reference_signal),
             )
             if value is not None
         ]
@@ -166,7 +180,7 @@ class Logger:
         """Display a summary of score distributions from a run() call."""
         if not self._verbose:
             return
-        score_cols = ["typicality", "extremity", "support", "consistency"]
+        score_cols = ["typicality", "extremity", "support", "consistency", "signal"]
         present = [c for c in score_cols if c in scores_df.columns]
 
         table = Table(

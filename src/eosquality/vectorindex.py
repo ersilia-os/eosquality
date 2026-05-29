@@ -15,8 +15,20 @@ import numpy as np
 from FPSim2 import FPSim2Engine
 from FPSim2.io import create_db_file
 from rdkit import __version__ as _RDKIT_VERSION
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from eosquality.utils.logging import logger
+
+_PROGRESS_THRESHOLD = 25  # show the FP kNN bar once n_query is at least this
 
 MAX_K_DEFAULT = 50
 RADIUS_DEFAULT = 2
@@ -44,9 +56,20 @@ class VectorIndex:
     Parameters
     ----------
     index_dir:
-        Folder produced by :meth:`build`. Contains ``vector_index.h5``,
-        ``knn_indices.npy``, ``knn_distances.npy``, ``smiles.csv``,
-        and ``metadata.json``.
+        Folder produced by :meth:`build`. Contains the Morgan-FP files
+        consumed by the loader — ``vector_index.h5`` (FPSim2 database),
+        ``knn_indices.npy`` and ``knn_distances.npy`` (precomputed
+        ``(n_ref, max_k)`` self-kNN, identity neighbor already
+        stripped), ``smiles.csv`` (one SMILES per reference row), and
+        ``metadata.json`` (library name, radius, n_bits, max_k, RDKit
+        version). The same folder also typically holds the auxiliary
+        per-molecule descriptor matrices written by
+        :class:`eosquality.basic_descriptors.BasicDescriptors`
+        (``physchem_scaled.npy``, ``physchem_scaler.json``,
+        ``maccs.npy``) — those files are not loaded by :meth:`load`
+        and are not consumed by the fit/run scores in this package;
+        they exist so consumers of the canonical index folder can use
+        them without recomputing.
     """
 
     def __init__(
@@ -416,7 +439,13 @@ class VectorIndex:
     # Query (used at run time)
     # ------------------------------------------------------------------
 
-    def query(self, smiles_list: list[str], k: int) -> tuple[np.ndarray, np.ndarray]:
+    def query(
+        self,
+        smiles_list: list[str],
+        k: int,
+        *,
+        show_progress: bool | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Query the FPSim2 index for each SMILES; return top-k neighbors.
 
         Parameters
@@ -425,6 +454,11 @@ class VectorIndex:
             Query SMILES strings.
         k:
             Number of neighbors to return.
+        show_progress:
+            Whether to render a rich progress bar on stderr while the
+            per-SMILES loop runs. ``None`` (default) shows the bar when
+            ``len(smiles_list) >= 25``; pass ``True`` / ``False`` to
+            force it on or off.
 
         Returns
         -------
@@ -443,17 +477,92 @@ class VectorIndex:
         all_dists = np.zeros((n_query, k), dtype=np.float32)
         all_idx = np.zeros((n_query, k), dtype=np.int32)
 
-        for i, smi in enumerate(smiles_list):
-            result = self._engine.top_k(smi, k=k, threshold=0.0)
-            got = len(result)
-            if got < k:
-                raise ValueError(
-                    f"Query SMILES at row {i} returned only {got} neighbors "
-                    f"(k={k} requested). The reference index has {n_ref} molecules."
-                )
-            mol_ids = result["mol_id"].astype(np.int32)
-            sims = result["coeff"].astype(np.float32)
-            all_idx[i] = mol_ids[:k]
-            all_dists[i] = 1.0 - sims[:k]
+        if show_progress is None:
+            show_progress = n_query >= _PROGRESS_THRESHOLD
+
+        progress = _build_query_progress() if show_progress else None
+        task_id = None
+        if progress is not None:
+            progress.start()
+            task_id = progress.add_task("FP kNN query", total=n_query)
+
+        try:
+            for i, smi in enumerate(smiles_list):
+                result = self._engine.top_k(smi, k=k, threshold=0.0)
+                got = len(result)
+                if got < k:
+                    raise ValueError(
+                        f"Query SMILES at row {i} returned only {got} neighbors "
+                        f"(k={k} requested). The reference index has {n_ref} molecules."
+                    )
+                mol_ids = result["mol_id"].astype(np.int32)
+                sims = result["coeff"].astype(np.float32)
+                all_idx[i] = mol_ids[:k]
+                all_dists[i] = 1.0 - sims[:k]
+                if progress is not None:
+                    progress.advance(task_id)
+        finally:
+            if progress is not None:
+                progress.stop()
 
         return all_dists, all_idx
+
+    def compute_query_fps(self, smiles_list: list[str]) -> np.ndarray:
+        """Return ``(n_query, n_bits)`` uint8 bit matrix for query SMILES.
+
+        The bit layout matches the reference matrix produced by
+        :func:`eosquality.scores.signal._load_fp_matrix` — same Morgan
+        radius / nBits, same uint64 packing, same byteswap + big-bit-endian
+        unpack. Built by piggy-backing on FPSim2's own ``build_fp`` so the
+        XGBoost-based Signal score can predict on queries using exactly
+        the bit ordering it was trained on.
+
+        Raises
+        ------
+        ValueError
+            If any SMILES fails to parse, with the offending row index.
+        """
+        from FPSim2.io.chem import build_fp, load_molecule
+
+        self._check_rdkit_version(self._config)
+
+        n_bits = int(self._config["n_bits"])
+        n_words = n_bits // 64
+        if n_bits % 64 != 0:
+            raise ValueError(
+                f"n_bits={n_bits} is not a multiple of 64; FPSim2 layout assumes "
+                "whole 64-bit words."
+            )
+        radius = int(self._config["radius"])
+        fp_params = {"radius": radius, "fpSize": n_bits}
+
+        n_query = len(smiles_list)
+        out = np.zeros((n_query, n_bits), dtype=np.uint8)
+        for i, smi in enumerate(smiles_list):
+            try:
+                mol = load_molecule(smi)
+            except Exception as e:
+                raise ValueError(
+                    f"Query SMILES at row {i} ({smi!r}) failed to parse: {e}"
+                )
+            packed = build_fp(mol, "Morgan", fp_params, 0)
+            words = np.array(packed[1 : 1 + n_words], dtype=np.uint64)
+            bytes_be = words.byteswap().view(np.uint8)
+            out[i] = np.unpackbits(bytes_be, bitorder="big")
+        return out
+
+
+def _build_query_progress() -> Progress:
+    """Rich progress bar matching the style used by ``library/download.py``."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
+        BarColumn(bar_width=None),
+        MofNCompleteColumn(),
+        "•",
+        TimeElapsedColumn(),
+        "•",
+        TimeRemainingColumn(),
+        console=Console(stderr=True),
+        transient=False,
+    )

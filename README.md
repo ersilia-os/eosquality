@@ -28,15 +28,17 @@ The typical workflow is two commands: `fit` once per Ersilia model against its r
 
 The input CSV must hold the model's predictions on the **exact** molecules of the canonical Ersilia reference library shipped with your installed `eosquality` version: a `key` column, an `input` (SMILES) column, and one numeric column per model output. The filename encodes the model and version (e.g., `eos4e40_v1.csv`). The output folder stores the fitted artifacts.
 
-There is one and only one reference library per major version of `eosquality`, so the molecule set is fixed by your install. If the SMILES in the input CSV don't match that library, `fit` refuses with an error.
+There is one and only one reference library per major version of `eosquality`, so the molecule set is fixed by your install. If the SMILES entries in the input CSV don't match that library, `fit` refuses with an error.
 
 ```bash
 eosquality fit --input reference_eos4e40_v1.csv --output artifacts_eos4e40_v1/
 ```
 
+Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
+
 ### Running against new samples
 
-At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for a given model. The output CSV is written with `key`, `input`, and the four score columns described below.
+At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for a given model. The output CSV is written with `key`, `input`, and the score columns described below.
 
 ```bash
 eosquality run --input query_eos4e40_v1.csv --artifacts artifacts_eos4e40_v1/ --output quality_eos4e40_v1.csv
@@ -52,7 +54,9 @@ For each query, `eosquality` reports component scores measuring how its predicte
 
 - **Support** — neighborhood-based, in fingerprint space. The mean Tanimoto distance from the query to its *k* FP-nearest reference molecules is looked up in the reference's own self-distance CDF. Closer to the reference than every reference point → ~1.0; farther than every reference point → ~eps.
 
-- **Consistency** — neighborhood-based, in output space. After picking the query's *k* FP-nearest reference neighbors, `score = exp(-mean_output_distance)`. High when those structural neighbors' predicted values sit close to the query's predicted values; low when the local neighborhood is jagged.
+- **Consistency** — neighborhood-based, in output space. After picking the query's *k* FP-nearest reference neighbors, the mean output-space L1 distance to those neighbors is looked up in the reference's own self-distance CDF. Quieter than the reference's typical neighborhood → ~1.0; jaggier → ~eps. Mirrors Support's calibration, in output space rather than FP space.
+
+- **Signal** — attribution-based, on a chemical descriptor. An XGBoost regressor is fit once at fit time on a chosen feature backend → eosframes-scaled model outputs. At run time, per-query `|SHAP|` attributions are reduced to the **Gini coefficient** of the attribution distribution: high (→ 1) when one or a few features carry most of the attribution ("focused" chemistry), low (→ 0) when attribution is spread roughly uniformly across many features ("scattered" chemistry). The raw Gini is calibrated through the reference val slice's own distribution. The feature backend is chosen at fit time via `--signal-descriptor`: `physchem` (default, 217 RDKit physicochemical descriptors) or `maccs` (167-bit RDKit MACCS structural fingerprint). The choice is baked into the saved artifact and used unchanged at run time. *Provisional and opt-in: not in the default score set; request via `--scores ...,signal` on the CLI or `scores=DEFAULT_SCORES + ("signal",)` in Python.*
 
 ## For maintainers
 
@@ -73,6 +77,13 @@ Uploading to S3 happens with [eosvc](https://github.com/ersilia-os/eosvc). The r
 eosvc upload --path data/libraries/ersilia_reference_library_v1.csv
 eosvc upload --path data/indices/ersilia_reference_library_v1/
 ```
+
+# TODO
+
+- [ ] Column subsampling is currently doing only 10 columns. Maybe increase to 30.
+- [ ] In the signal score, the validation set is very small. Maybe increase size to 10,000.
+- [ ] In the signal score, the training set is very small. Maybe increase size to 100,000.
+- [ ] For the training set selection, it may make sense to selecte high quality compounds, based on low typicality, high extremity, consistency, etc.
 
 ## About the Ersilia Open Source Initiative
 

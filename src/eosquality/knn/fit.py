@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from eosquality.knn.state import KnnFitState
@@ -12,7 +14,6 @@ from eosquality.vectorindex import VectorIndex
 
 def fit_knn(
     shared: SharedFitState,
-    ref_repr: np.ndarray,
     vector_index: VectorIndex,
     k: int,
 ) -> KnnFitState:
@@ -30,29 +31,28 @@ def fit_knn(
     Parameters
     ----------
     shared:
-        Pre-fit shared state (only used for logging context).
-    ref_repr:
-        Scaled reference array from :func:`fit_shared` (``(n_ref, n_features)``).
-        Persisted on the returned state for Consistency / run-time use.
+        Pre-fit shared state (only used for logging context). Consumers
+        that need the scaled reference matrix read ``shared.ref_repr``
+        directly.
     vector_index:
-        Loaded VectorIndex aligned row-for-row with ``ref_repr``. The
+        Loaded VectorIndex aligned row-for-row with the reference. The
         VectorIndex is *not* persisted on the returned state — only
         ``k`` is. At load time the index is re-resolved via the
         canonical library resolver using ``shared.metadata.library_id``.
     k:
         Number of neighbors.
     """
+    t0 = time.perf_counter()
+    logger.info(f"fit_knn | loading FP self-kNN | k={k}")
     knn_indices = vector_index.self_knn_indices(k)
     fp_distances = vector_index.self_knn_distances(k).astype(np.float64)
     mean_fp_distances = fp_distances.mean(axis=1)
-
-    logger.debug(
-        f"FP self-kNN loaded | k={k} | n_ref={knn_indices.shape[0]:,}"
-        f" | median mean_fp_dist={float(np.median(mean_fp_distances)):.4f}"
+    logger.info(
+        f"fit_knn | done | n_ref={knn_indices.shape[0]:,} k={k} | "
+        f"{time.perf_counter() - t0:.1f}s"
     )
 
     return KnnFitState(
-        ref_repr=ref_repr,
         k=k,
         mean_fp_distances=mean_fp_distances,
         reference_knn_indices=knn_indices,

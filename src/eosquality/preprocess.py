@@ -9,12 +9,12 @@ and emits a per-kind robust transform into a documented float region inside
 
 This module keeps the eosquality-facing surface (``fit_transform``,
 ``transform``, ``raw_numeric_values``, ``get_state``, ``from_state``) so the
-quality API and scoring code don't need to change. State persists as the
-plain JSON-serialisable dict returned by ``eosframes.fit`` — see
-:mod:`eosquality.fit.save` / :mod:`eosquality.run.load`.
+quality API and per-score code don't need to change. State persists as the
+plain JSON-serialisable dict returned by ``eosframes.fit`` — see the
+``shared/`` save/load helpers.
 
 Typicality consumes the int8-quantized output of the same scaler (see
-:mod:`eosquality.scoring.typicality`) so no separate CDF artifact is fit
+:mod:`eosquality.scores.typicality`), so no separate CDF artifact is fit
 or persisted here.
 """
 

@@ -25,6 +25,8 @@ dependencies = [
   "rdkit>=2022.03",
   "packaging>=21.0",
   "eosframes>=1.0",
+  "xgboost>=3.0",
+  "tables>=3.8",
 ]
 
 [project.optional-dependencies]

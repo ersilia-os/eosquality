@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import pathlib
 
-from eosquality.shared.metadata import ColumnCharacteristics, FitMetadata
+import numpy as np
+
 from eosquality.schema.models import ColumnSpec, Schema
+from eosquality.shared.metadata import ColumnCharacteristics, FitMetadata
+from eosquality.shared.splitter import Split
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
@@ -32,14 +35,39 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
         metadata = _metadata_from_dict(json.load(f))
     with open(folder / "reference_ids.json") as f:
         reference_ids = json.load(f)
+    with open(folder / "splits.json") as f:
+        splits_payload = json.load(f)
+    splits = Split(
+        train_indices=np.asarray(splits_payload["train_indices"], dtype=np.int64),
+        val_indices=np.asarray(splits_payload["val_indices"], dtype=np.int64),
+        test_indices=np.asarray(splits_payload["test_indices"], dtype=np.int64),
+    )
 
-    logger.debug(f"  shared/ | {len(schema.columns)} columns")
+    selected_columns_path = folder / "selected_columns.json"
+    if selected_columns_path.is_file():
+        with open(selected_columns_path) as f:
+            selected_columns = list(json.load(f)["selected_columns"])
+    else:
+        selected_columns = list(schema.column_names)
+
+    ref_repr_path = folder / "reference_repr.npy"
+    ref_repr = np.load(ref_repr_path) if ref_repr_path.is_file() else None
+
+    logger.debug(
+        f"  shared/ | {len(schema.columns)} columns"
+        f" | selected {len(selected_columns)}"
+        f" | splits {splits.train_indices.size:,}/"
+        f"{splits.val_indices.size:,}/{splits.test_indices.size:,}"
+    )
     return SharedFitState(
         schema=schema,
         scaler_params=scaler_params,
         binary_class_freq=binary_class_freq,
         metadata=metadata,
         reference_ids=reference_ids,
+        splits=splits,
+        selected_columns=selected_columns,
+        ref_repr=ref_repr,
     )
 
 

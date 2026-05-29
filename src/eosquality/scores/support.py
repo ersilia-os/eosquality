@@ -25,6 +25,7 @@ from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
 from eosquality.knn.state import KnnFitState
 from eosquality.scores._helpers import (
+    _cdf_score,
     _component_metadata,
     _query_fp_distances,
     _resolve_shared_and_knn,
@@ -47,7 +48,8 @@ METADATA_FILE = "metadata.json"
 class SupportRunResult:
     """Result returned by :meth:`Support.run`."""
 
-    score: pd.Series  # (n_query,) support
+    score: pd.Series  # (n_query,) calibrated support in [0, 1]
+    score_raw: pd.Series  # (n_query,) raw mean FP Tanimoto distance (= distance_k_mean)
     distance_k_mean: pd.Series  # mean FP (Tanimoto) distance to k neighbors
     distance_k_max: pd.Series  # max FP (Tanimoto) distance to k neighbors
     nearest_reference_ids: list[list[Any]]
@@ -63,12 +65,14 @@ class Support:
       FP (Tanimoto) k-distances. The CDF lookup table.
     - ``reference_support_`` — mean reference-as-query support under that
       CDF. A calibration anchor for downstream readers.
-    - ``knn_`` — the shared :class:`KnnFitState` (``ref_repr`` and
-      ``k``).
+    - ``knn_`` — the shared :class:`KnnFitState` (just ``k`` after
+      save/load; the fit-only ``mean_fp_distances`` and
+      ``reference_knn_indices`` are dropped).
 
     Depends on both :class:`SharedFitState` and :class:`KnnFitState`; loads
     the underlying :class:`VectorIndex` lazily on first call to
-    :meth:`run`.
+    :meth:`run`. Support never reads ``shared.ref_repr`` — it operates
+    on Tanimoto distances only.
     """
 
     def __init__(self) -> None:
@@ -212,6 +216,7 @@ class Support:
         ]
         return SupportRunResult(
             score=pd.Series(support_score, index=idx, name="support"),
+            score_raw=pd.Series(distance_k_mean, index=idx, name="support_raw"),
             distance_k_mean=pd.Series(
                 distance_k_mean, index=idx, name="distance_k_mean"
             ),
@@ -273,8 +278,21 @@ class Support:
         shared = load_shared(root)
         knn = load_knn(root)
         folder = pathlib.Path(root) / SUBFOLDER
-        sorted_self_distances = np.load(folder / DISTANCES_FILE)
-        with open(folder / STATE_FILE) as f:
+        distances_path = folder / DISTANCES_FILE
+        if not distances_path.is_file():
+            raise FileNotFoundError(
+                f"Missing {distances_path}. The support artifact is incomplete "
+                "(or predates the current support format) and must be refit "
+                "with the current eosquality version."
+            )
+        state_path = folder / STATE_FILE
+        if not state_path.is_file():
+            raise FileNotFoundError(
+                f"Missing {state_path}. The support artifact is incomplete "
+                "and must be refit."
+            )
+        sorted_self_distances = np.load(distances_path)
+        with open(state_path) as f:
             payload = json.load(f)
         meta_path = folder / METADATA_FILE
         fit_duration = None
@@ -361,14 +379,14 @@ def _support_from_distances(
 ) -> np.ndarray:
     """Map per-row mean k-distances to support scores via the CDF.
 
-    ``support = clip(1 − searchsorted(sorted_self_distances, d) / n_reference,
-    eps, 1.0)`` with ``eps = 1 / (2·n_reference)``. Shared by
-    :meth:`Support.fit` (for the ``reference_support_`` baseline) and
-    :meth:`Support.run` so the two paths cannot drift.
+    Thin distance-direction wrapper around :func:`_cdf_score` with
+    ``higher_is_higher=False``: smaller FP distance → closer to the
+    reference → higher support. Shared by :meth:`Support.fit` (for the
+    ``reference_support_`` baseline) and :meth:`Support.run`.
     """
-    eps = 1.0 / (2.0 * max(n_reference, 1))
-    cdf = (
-        np.searchsorted(sorted_self_distances, distance_k_mean, side="right")
-        / n_reference
+    return _cdf_score(
+        distance_k_mean,
+        sorted_self_distances,
+        n_reference,
+        higher_is_higher=False,
     )
-    return np.clip(1.0 - cdf, eps, 1.0)
