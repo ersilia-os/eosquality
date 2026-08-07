@@ -56,7 +56,7 @@ For each query, `eosquality` reports component scores measuring how its predicte
 
 - **Consistency** — neighborhood-based, in output space. After picking the query's *k* FP-nearest reference neighbors, the mean output-space L1 distance to those neighbors is looked up in the reference's own self-distance CDF. Quieter than the reference's typical neighborhood → ~1.0; jaggier → ~eps. Mirrors Support's calibration, in output space rather than FP space.
 
-- **Signal** — attribution-based, on a chemical descriptor. An XGBoost regressor is fit once at fit time on a chosen feature backend → eosframes-scaled model outputs. At run time, per-query `|SHAP|` attributions are reduced to the **Gini coefficient** of the attribution distribution: high (→ 1) when one or a few features carry most of the attribution ("focused" chemistry), low (→ 0) when attribution is spread roughly uniformly across many features ("scattered" chemistry). The raw Gini is calibrated through the reference val slice's own distribution. The feature backend is chosen at fit time via `--signal-descriptor`: `physchem` (default, 217 RDKit physicochemical descriptors) or `maccs` (167-bit RDKit MACCS structural fingerprint). The choice is baked into the saved artifact and used unchanged at run time. *Provisional and opt-in: not in the default score set; request via `--scores ...,signal` on the CLI or `scores=DEFAULT_SCORES + ("signal",)` in Python.*
+- **Signal** — attribution-based, on a chemical descriptor. An XGBoost regressor is fit once at fit time on a chosen feature backend → eosframes-scaled model outputs. At run time, per-query `|SHAP|` attributions are reduced to the **Gini coefficient** of the attribution distribution: high (→ 1) when one or a few features carry most of the attribution ("focused" chemistry), low (→ 0) when attribution is spread roughly uniformly across many features ("scattered" chemistry). The raw Gini is calibrated through the reference val slice's own distribution. The feature backend is chosen at fit time via `--signal-descriptor`: `physchem` (default, 217 RDKit physicochemical descriptors) or `maccs` (167-bit RDKit MACCS structural fingerprint).
 
 ## For maintainers
 
@@ -83,7 +83,8 @@ eosvc upload --path data/indices/ersilia_reference_library_v1/
 - [ ] Column subsampling is currently doing only 10 columns. Maybe increase to 30.
 - [ ] In the signal score, the validation set is very small. Maybe increase size to 10,000.
 - [ ] In the signal score, the training set is very small. Maybe increase size to 100,000.
-- [ ] For the training set selection, it may make sense to selecte high quality compounds, based on low typicality, high extremity, consistency, etc.
+- [ ] For the training set selection, it may make sense to selecte high quality compounds, based on low typicality, high extremity, high consistency, diversity, etc.
+- [ ] For the signal score, maybe bin the reference so that we also allow for everything to be near one in, for example, molecular weight and other trivial models.
 
 ## About the Ersilia Open Source Initiative
 
