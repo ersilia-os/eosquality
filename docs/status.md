@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 2. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 3. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
 
 ## Example results
 
@@ -26,7 +26,7 @@ The query sets:
 
 ![Reference calibration](figures/reference_calibration.png)
 
-**Library sample.** Library molecules should score roughly Uniform(0, 1) on every score. For every model and score, the KS distance to uniform is at most 0.04, against a 95% band of about 0.043 for n = 1,000.
+**Library sample.** Library molecules should score roughly Uniform(0, 1) on every score. For every model and score, the KS distance to uniform is at most 0.044, against a 95% critical value of 0.043 for n = 1,000. That is within sampling noise for 25 tests.
 
 **Full reference.** The `reference_<score>` anchors are exactly 0.500, thanks to mid-rank calibration. Format 1 had 0.505–0.509 for typicality on the one-output models.
 
@@ -37,11 +37,30 @@ The query sets:
 ![Score distributions](figures/score_distributions.png)
 
 - **Library sample:** flat for every score, as expected.
-- **Support:** separates chemistry cleanly. Synthetic and natural-product molecules sit at about 0, drugs are spread out, and the library sample is uniform. Support depends on chemistry only, so it is identical across models.
+- **Support:** separates chemistry cleanly. Synthetic and most natural-product molecules sit at about 0, drugs and inert molecules lean high, and the library sample is uniform. Support depends on chemistry only, so it is identical across models.
 - **Output-based scores** react per model:
   - The MW model gives natural products and synthetic molecules extreme, atypical predictions and very low consistency.
   - The Cytotox model treats synthetic molecules as typical but noisy.
-- **Inert set:** looks almost exactly like the library sample on every score, including support, even though only 0.4% of it is in the library. Open question: what is this set, and is that expected?
+- **Inert set:** looks like the library sample on the output scores. That is expected: its median distance to the library (0.36) equals the library's own, so these molecules are chemically library-like even though only 0.4% of them are in it.
+
+### Support far from the library
+
+![Support on linear and log scale](figures/support_log.png)
+
+| Query set | support median | `support_log` median (p90) |
+|---|---|---|
+| Library sample | 0.48 | 0.32 (1.05) |
+| Drugs | 0.65 | 0.18 (1.50) |
+| Natural products | 0.06 | 1.22 (5.17) |
+| Synthetic | 0.001 | 3.11 (3.92) |
+| Inert | 0.61 | 0.22 (0.74) |
+
+Every synthetic molecule is further from the library than 99% of library molecules are from their own neighbours. This holds even when they are compared only with library molecules of the same size (they are small, median 30 set bits). They are generated, strained ring systems unlike the drug-like library. On the 0–1 scale they all collapse onto 0, while `support_log` separates them from natural products (about 1.2) and from each other.
+
+**Size conditioning.** Since format 3, support is calibrated per fingerprint-size bin, which removes Tanimoto's size bias:
+- the correlation of support with size on library molecules drops from ρ = 0.32 to −0.02;
+- large natural products lose their size advantage (median 0.17 → 0.06);
+- small drugs gain (0.54 → 0.65).
 
 ### Redundancy
 
@@ -50,16 +69,17 @@ The query sets:
 Spearman correlations between calibrated scores, pooled over all queries of a model:
 - **Typicality vs extremity:** ρ = −0.56 to −0.95 (−0.85 to −0.95 for the one-output models). For single-output models the two are nearly redundant: a value far from the centre is almost always a rare value.
 - **Typicality vs consistency:** moderately correlated (0.21–0.61).
-- **Support** is roughly independent of the output scores except for MW (0.6 with typicality), where molecular weight is itself a chemical-space proxy.
+- **Support** is roughly independent of the output scores except for MW (0.57 with typicality), where molecular weight is itself a chemical-space proxy.
 - **Signal** is weakly correlated with everything (|ρ| ≤ 0.54).
 
-### What changed between artifact formats 1 and 2
+### What changed since the previous artifacts
 
-Comparing re-fitted against previous scores on the 25 example sets (old CSVs kept in `output/format1/`; the old calibration plot is `figures/reference_calibration_format1.png`):
+Comparing the current scores on the 25 example sets with format 1 (old CSVs in `output/format1/`; old calibration plot `figures/reference_calibration_format1.png`). Format-2 outputs are kept in `output/format2/`.
 - **Extremity and signal:** unchanged.
 - **Typicality:** shifted by at most 0.017 (mid-rank ties).
 - **Missing values:** none of the five example models have NaN outputs, so the NaN-policy fixes do not affect these examples. They matter for models with missing outputs.
-- **Support and consistency:** unchanged for most queries, but about 25% of drugs gained support (mean +0.22). These are molecules not in the library as written whose stereo-free form is. See the decision below.
+- **Self-match rule:** about 25% of drugs gained support and consistency changed for them. These are molecules not in the library as written whose stereo-free form is (see Decisions to review).
+- **Support:** now size-conditioned (format 3; see above).
 
 ## Decisions to review
 
@@ -90,6 +110,6 @@ Carried over from the previous README TODO list:
 
 New:
 
-- [ ] Characterise the "inert" query set (see Distributions).
 - [ ] Decide on the self-match rule and on typicality/extremity redundancy (see Decisions to review).
+- [ ] Consider a log-scale companion for the other scores if their tails also matter.
 - [ ] Before pushing, check that CI passes on GitHub (`.github/workflows/ci.yml`).
