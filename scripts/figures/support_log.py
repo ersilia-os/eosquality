@@ -1,9 +1,11 @@
-"""Support on two scales: calibrated support (0–1) vs support_log = −log10(support).
+"""Support three ways: nearest-analogue similarity, calibrated support, support_log.
 
-Support depends only on chemistry, so one model's CSVs are enough. Left:
-calibrated support per query set — far-out sets collapse onto 0. Right:
-the same values as support_log, where they separate; dashed lines mark
-the 1%, 0.1% tails of same-size library molecules.
+Support depends only on chemistry, so one model's CSVs are enough.
+A: raw nearest-analogue Tanimoto similarity per query set, with the 0.4 /
+0.6 / 0.8 "related / close / near-identical" thresholds. B: calibrated
+support (0–1) — far-out sets collapse onto 0. C: the same as
+support_log = −log10(support), where they separate; dashed lines mark the
+1% and 0.1% tails of the library.
 
     python scripts/figures/support_log.py [--scores-dir output/]
 """
@@ -37,40 +39,52 @@ def main():
     df = load_scores(args.scores_dir)
     if "support_log" not in df.columns:
         raise SystemExit(
-            "These score CSVs have no support_log column (artifact format < 3)."
+            "These score CSVs have no support_log column (artifact format < 4)."
         )
     df = df[df["model"] == sorted(df["model"].unique())[0]]
     sets = present(QUERY_SETS, df["query_set"].unique())
     colors = stylia.CategoricalPalette("ersilia").get(len(sets))
     labels = [QUERY_SET_LABELS.get(s, s) for s in sets]
 
-    fig, axs = stylia.create_figure(1, 2)
+    gray = stylia.ErsiliaColors().gray
+
+    def column(name):
+        return [df.loc[df.query_set == s, name].to_numpy(float) for s in sets]
+
+    fig, axs = stylia.create_figure(1, 3)
     ax = axs.next()
-    plot_violins(
-        ax,
-        [df.loc[df.query_set == s, "support"].to_numpy(float) for s in sets],
-        colors,
-        0,
-        1,
-    )
+    plot_violins(ax, column("support_raw"), colors, 0, 1)
+    for x in (0.4, 0.6, 0.8):
+        ax.axvline(x, color=gray, linestyle="--")
     ax.set_yticklabels(labels)
     stylia.label(
-        ax, xlabel="Support (calibrated)", ylabel="", title="Linear scale", abc="A"
+        ax,
+        xlabel="Nearest-analogue Tanimoto similarity",
+        ylabel="",
+        title="Raw",
+        abc="A",
     )
 
     ax = axs.next()
-    values = [df.loc[df.query_set == s, "support_log"].to_numpy(float) for s in sets]
+    plot_violins(ax, column("support"), colors, 0, 1)
+    ax.set_yticklabels([])
+    stylia.label(
+        ax, xlabel="Support (calibrated)", ylabel="", title="Linear scale", abc="B"
+    )
+
+    ax = axs.next()
+    values = column("support_log")
     hi = float(np.ceil(np.nanmax(np.concatenate(values))))
     plot_violins(ax, values, colors, 0, hi)
     for x in (2, 3):
-        ax.axvline(x, color=stylia.ErsiliaColors().gray, linestyle="--")
+        ax.axvline(x, color=gray, linestyle="--")
     ax.set_yticklabels([])
     stylia.label(
         ax,
         xlabel="support_log = −log10(support)",
         ylabel="",
         title="Log scale",
-        abc="B",
+        abc="C",
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

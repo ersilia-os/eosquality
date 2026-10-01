@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 3. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 4. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
 
 ## Example results
 
@@ -43,24 +43,31 @@ The query sets:
   - The Cytotox model treats synthetic molecules as typical but noisy.
 - **Inert set:** looks like the library sample on the output scores. That is expected: its median distance to the library (0.36) equals the library's own, so these molecules are chemically library-like even though only 0.4% of them are in it.
 
-### Support far from the library
+### Support: closest library analogue
 
-![Support on linear and log scale](figures/support_log.png)
+![Support: raw similarity, linear and log scale](figures/support_log.png)
 
-| Query set | support median | `support_log` median (p90) |
-|---|---|---|
-| Library sample | 0.48 | 0.32 (1.05) |
-| Drugs | 0.65 | 0.18 (1.50) |
-| Natural products | 0.06 | 1.22 (5.17) |
-| Synthetic | 0.001 | 3.11 (3.92) |
-| Inert | 0.61 | 0.22 (0.74) |
+Since format 4, support asks whether the library contains a close analogue of the molecule. The raw value is the Tanimoto similarity of the nearest library molecule; the dashed lines in panel A mark 0.4 (related chemistry), 0.6 (close analogue) and 0.8 (near-identical).
 
-Every synthetic molecule is further from the library than 99% of library molecules are from their own neighbours. This holds even when they are compared only with library molecules of the same size (they are small, median 30 set bits). They are generated, strained ring systems unlike the drug-like library. On the 0–1 scale they all collapse onto 0, while `support_log` separates them from natural products (about 1.2) and from each other.
+| Query set | nearest-analogue similarity (median) | support median | `support_log` median (p90) |
+|---|---|---|---|
+| Library sample | 0.73 | 0.51 | 0.30 (1.10) |
+| Drugs | 0.74 | 0.55 | 0.26 (1.72) |
+| Natural products | 0.59 | 0.15 | 0.83 (4.52) |
+| Synthetic | 0.26 | < 0.001 | 4.07 (4.83) |
+| Inert | 0.72 | 0.50 | 0.30 (0.93) |
 
-**Size conditioning.** Since format 3, support is calibrated per fingerprint-size bin, which removes Tanimoto's size bias:
-- the correlation of support with size on library molecules drops from ρ = 0.32 to −0.02;
-- large natural products lose their size advantage (median 0.17 → 0.06);
-- small drugs gain (0.54 → 0.65).
+What the panels show:
+- **Synthetic molecules.** 99% have no library analogue at Tanimoto ≥ 0.4. They are generated, strained ring systems unlike the drug-like library.
+- **Natural products** split into two groups: those with real analogues in the library (around 0.7) and novel scaffolds (0.2–0.4).
+- **Drugs.** The spike of drugs at 1.0 consists of drugs with a fingerprint-identical stereoisomer in the library (see the self-match rule under Decisions to review).
+- **The 0–1 scale** collapses everything far from the library onto 0; `support_log` keeps those molecules apart.
+
+**How the definition was chosen.** These options were compared on the five query sets:
+- **Nearest-analogue similarity (chosen).** It calibrates as well as the previous definition (KS 0.024) and separates natural products from library molecules best (AUC 0.79).
+- **Mean distance to the 5 nearest neighbours (format 1–2).** AUC 0.72 for natural products.
+- **Analogue counts above 0.4 or 0.6.** Too many ties to calibrate (KS up to 0.25).
+- **Calibration within fingerprint-size bins (format 3).** Removed the size bias, but tracked neighbour output disagreement no better on average and hid size effects that matter for property models such as MW and ADMET.
 
 ### Redundancy
 
@@ -69,17 +76,17 @@ Every synthetic molecule is further from the library than 99% of library molecul
 Spearman correlations between calibrated scores, pooled over all queries of a model:
 - **Typicality vs extremity:** ρ = −0.56 to −0.95 (−0.85 to −0.95 for the one-output models). For single-output models the two are nearly redundant: a value far from the centre is almost always a rare value.
 - **Typicality vs consistency:** moderately correlated (0.21–0.61).
-- **Support** is roughly independent of the output scores except for MW (0.57 with typicality), where molecular weight is itself a chemical-space proxy.
+- **Support** is roughly independent of the output scores except for MW (0.64 with typicality), where molecular weight is itself a chemical-space proxy.
 - **Signal** is weakly correlated with everything (|ρ| ≤ 0.54).
 
 ### What changed since the previous artifacts
 
-Comparing the current scores on the 25 example sets with format 1 (old CSVs in `output/format1/`; old calibration plot `figures/reference_calibration_format1.png`). Format-2 outputs are kept in `output/format2/`.
+Comparing the current scores on the 25 example sets with format 1 (old CSVs in `output/format1/`; old calibration plot `figures/reference_calibration_format1.png`). 
 - **Extremity and signal:** unchanged.
 - **Typicality:** shifted by at most 0.017 (mid-rank ties).
 - **Missing values:** none of the five example models have NaN outputs, so the NaN-policy fixes do not affect these examples. They matter for models with missing outputs.
 - **Self-match rule:** about 25% of drugs gained support and consistency changed for them. These are molecules not in the library as written whose stereo-free form is (see Decisions to review).
-- **Support:** now size-conditioned (format 3; see above).
+- **Support:** redefined as nearest-analogue similarity (format 4; see above). Format-2 and format-3 outputs are kept in `output/format2/` and `output/format3/`.
 
 ## Decisions to review
 
