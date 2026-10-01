@@ -73,7 +73,7 @@ eq = ErsiliaQuality.load("artifacts/")
 |---|---|---|
 | `typicality`, `typicality_raw` | (0, 1], [0, 1] | calibrated score, Q66 density aggregate |
 | `extremity`, `extremity_raw` | (0, 1], [0, 1] | calibrated score, Q66 position aggregate |
-| `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | size-conditioned calibrated score, mean Tanimoto distance to k neighbours, −log10(support) |
+| `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `consistency`, `consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to k neighbours |
 | `signal`, `signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
 
@@ -84,7 +84,6 @@ Scores that were not fit are left out. A row with no usable output feature has N
 `metadata` is a dict containing `n_reference` plus each component's run metadata, with keys prefixed by component name. Examples:
 - `typicality_reference_typicality`
 - `support_k`
-- `support_n_size_bins`
 - `consistency_n_fp_bins`
 - `signal_descriptor`
 - `signal_formula_version`
@@ -103,7 +102,7 @@ Typicality.load("art/").run(query).score
 
 - **Support and Consistency** take `vector_index=` and `k=` when fitting.
 - **Signal** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `vector_index=`.
-- **Run results.** Each component's run result has `score`, `score_raw` and `metadata`. Typicality and extremity also expose `per_feature`. Support also exposes `score_log`, `distance_k_mean`, `distance_k_max`, `nearest_reference_ids` and `fingerprint_size`.
+- **Run results.** Each component's run result has `score`, `score_raw` and `metadata`. Typicality and extremity also expose `per_feature`. Support also exposes `score_log`, `distance_k_mean` (mean Tanimoto distance to the k neighbours) and `nearest_reference_ids` (closest first).
 
 ## Logging
 

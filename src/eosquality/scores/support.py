@@ -1,22 +1,25 @@
-"""Support score: how close the query is to the reference, for its fingerprint size.
+"""Support score: does the reference library contain a close analogue of the query?
 
-The raw value is the mean Tanimoto distance from the query to its k
-FP-nearest reference molecules (``support_raw``). Tanimoto distance on
-Morgan bits is size-biased — molecules with few set bits sit farther from
-everything — so the calibration is **conditioned on fingerprint size**: the
-reference is split into quantile bins of its set-bit count, each bin keeps
-its own CDF of self-distances, and a query is scored against the bin of its
-own size. Within each bin (and therefore overall) reference molecules score
-~Uniform(0, 1): closer than every same-size reference molecule → ~1.0, at
-the median → ~0.5, farther than all → eps.
+The raw value is the Tanimoto similarity (Morgan, radius 2, 2048 bits) of
+the query's **nearest library analogue** — the most similar library molecule
+other than the query itself (``support_raw``, in [0, 1], higher = closer).
+It is calibrated through the library's own nearest-analogue similarities
+(each library molecule vs its closest *other* molecule), so library
+molecules score ~Uniform(0, 1): a nearer analogue than any library molecule
+has → ~1.0, the library median → ~0.5, farther than all → eps.
 
 ``support_log = −log10(support)`` re-expresses the same tail probability on
-a log scale, so queries far outside the reference (where ``support`` is
-squeezed into 0–0.01) remain distinguishable: ~0.3 for a typical reference
-molecule, 2 means "farther than 99% of same-size reference molecules".
+a log scale, so queries far outside the library (where ``support`` is
+squeezed into 0–0.01) remain distinguishable.
 
-Operates in fingerprint space only. Consistency is the sibling that lives
-in output space.
+The raw similarity also reads directly in chemists' terms: below ~0.4 the
+library holds no related chemistry, ~0.6 is a close analogue, ≥ 0.8 a
+near-identical one. Tanimoto similarity is lower for small molecules (few
+set bits), so small fragments look somewhat more novel; this is not
+corrected for.
+
+Operates in fingerprint space only. Neighbourhood quality in output space
+is Consistency's job (it uses the k nearest neighbours, not just one).
 """
 
 from __future__ import annotations
@@ -32,17 +35,8 @@ import pandas as pd
 
 from eosquality.knn.state import KnnFitState
 from eosquality.scores._base import ScoreComponent, read_json, require_file
-from eosquality.scores._binning import (
-    binned_cdf_score,
-    decode_edges,
-    encode_edges,
-    load_per_bin,
-    min_bin_size,
-    partition_and_sort,
-    quantile_bin_edges,
-    save_per_bin,
-)
 from eosquality.scores._helpers import (
+    _cdf_score,
     _query_fp_distances,
     _resolve_shared_and_knn,
     _resolve_vector_index,
@@ -53,7 +47,7 @@ from eosquality.vectorindex import VectorIndex
 
 SUBFOLDER = "support"
 STATE_FILE = "state.json"
-DISTANCES_FILE = "reference_self_distances_per_bin.npz"
+SIMILARITIES_FILE = "reference_nearest_similarities.npy"
 
 
 @dataclass
@@ -61,25 +55,22 @@ class SupportRunResult:
     """Result returned by :meth:`Support.run`."""
 
     score: pd.Series  # (n_query,) calibrated support in (0, 1]
-    score_raw: pd.Series  # (n_query,) raw mean FP Tanimoto distance (= distance_k_mean)
+    score_raw: (
+        pd.Series
+    )  # (n_query,) Tanimoto similarity of the nearest library analogue
     score_log: pd.Series  # (n_query,) −log10(support), ≥ 0
-    distance_k_mean: pd.Series  # mean FP (Tanimoto) distance to k neighbors
-    distance_k_max: pd.Series  # max FP (Tanimoto) distance to k neighbors
-    nearest_reference_ids: list[list[Any]]
-    fingerprint_size: pd.Series  # set Morgan bits of the query (the conditioning key)
+    distance_k_mean: pd.Series  # mean FP (Tanimoto) distance to the k neighbors
+    nearest_reference_ids: list[list[Any]]  # k nearest, closest first
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Support(ScoreComponent):
-    """Size-conditioned CDF support scorer (FP-space Tanimoto distances).
+    """Nearest-analogue support scorer (FP-space Tanimoto similarity).
 
     Fitted state on top of the shared and kNN states:
 
-    - ``size_bin_edges_`` — ascending edges over the reference's set-bit
-      counts (outer edges ``±inf``), up to ``N_SIZE_BINS`` bins after
-      merging ties and small bins.
-    - ``sorted_self_distances_per_bin_`` — per bin, the sorted mean FP
-      k-distances of the reference molecules of that size.
+    - ``sorted_self_similarities_`` — ``(n_ref,)`` ascending nearest-analogue
+      similarities of the library; the CDF lookup table.
     - ``reference_support_`` — mean reference-as-query support (≈ 0.5).
 
     Loads the underlying :class:`VectorIndex` lazily on first :meth:`run`.
@@ -87,12 +78,10 @@ class Support(ScoreComponent):
 
     NAME = SUBFOLDER
     USES_KNN = True
-    N_SIZE_BINS = 10  # target number of quantile bins on fingerprint size
 
     def __init__(self) -> None:
         super().__init__()
-        self._size_bin_edges: np.ndarray | None = None
-        self._sorted_self_distances_per_bin: list[np.ndarray] | None = None
+        self._sorted_self_similarities: np.ndarray | None = None
         self._reference_support: float | None = None
         self._vector_index_cache: VectorIndex | None = None
 
@@ -113,10 +102,9 @@ class Support(ScoreComponent):
     ) -> Support:
         """Fit on a reference DataFrame.
 
-        Reads the reference's FP self-kNN Tanimoto distances (identity
-        neighbor already stripped at index build time) and the set-bit count
-        of every reference fingerprint, bins the reference by size, and sorts
-        each bin's mean FP distances into its own CDF.
+        Reads each library molecule's nearest *other* molecule from the
+        precomputed self-kNN (identity already stripped at index build time)
+        and sorts those similarities into the calibration CDF.
 
         Either pass pre-fit ``shared=`` / ``knn=`` (when composed by
         :class:`ErsiliaQuality`), or pass ``eos_id`` + ``version`` +
@@ -132,36 +120,20 @@ class Support(ScoreComponent):
             shared=shared,
             knn=knn,
         )
-        if knn.mean_fp_distances is None:
-            raise RuntimeError(
-                "Support.fit requires a KnnFitState that still carries fit-time "
-                "mean_fp_distances (i.e., produced by fit_knn in this pass)."
-            )
-        distances = knn.mean_fp_distances.astype(np.float64)
-        sizes = vi.fingerprint_sizes().astype(np.float64)
-        edges = quantile_bin_edges(
-            sizes,
-            self.N_SIZE_BINS,
-            min_bin_size=min_bin_size(len(sizes), self.N_SIZE_BINS),
-        )
-        per_bin = partition_and_sort(distances, sizes, edges)
+        similarities = 1.0 - vi.self_knn_distances(1)[:, 0].astype(np.float64)
+        sorted_self = np.sort(similarities)
 
         self._shared = shared
         self._knn = knn
-        self._size_bin_edges = edges
-        self._sorted_self_distances_per_bin = per_bin
+        self._sorted_self_similarities = sorted_self
         self._reference_support = float(
-            np.nanmean(
-                binned_cdf_score(
-                    distances, sizes, edges, per_bin, higher_is_higher=False
-                )
-            )
+            np.mean(_cdf_score(similarities, sorted_self, higher_is_higher=True))
         )
         self._vector_index_cache = vi
         self._finish_fit(t0)
         logger.debug(
-            f"Support fit | k={knn.k} | n_ref={len(distances):,} | "
-            f"size bins={len(per_bin)} | reference_support={self._reference_support:.4f}"
+            f"Support fit | n_ref={len(similarities):,} | "
+            f"reference_support={self._reference_support:.4f}"
             f" | duration={self._fit_duration_seconds:.3f}s"
         )
         return self
@@ -193,52 +165,40 @@ class Support(ScoreComponent):
         self._check_fitted()
         assert self._shared is not None
         assert self._knn is not None
-        assert self._size_bin_edges is not None
-        assert self._sorted_self_distances_per_bin is not None
+        assert self._sorted_self_similarities is not None
 
         if "input" not in query.columns:
             raise ValueError(
                 "Support.run requires an 'input' column with SMILES for the vector index."
             )
-        vi = self._get_vector_index()
         if query_fp_indices is None or query_fp_distances is None:
             query_fp_distances, query_fp_indices = _query_fp_distances(
-                query, vi, self._knn.k
+                query, self._get_vector_index(), self._knn.k
             )
 
-        distance_k_mean = query_fp_distances.mean(axis=1)
-        sizes = vi.query_fingerprint_sizes(list(query["input"]))
-        support_score = binned_cdf_score(
-            distance_k_mean,
-            sizes,
-            self._size_bin_edges,
-            self._sorted_self_distances_per_bin,
-            higher_is_higher=False,
+        nearest_similarity = 1.0 - query_fp_distances.min(axis=1)
+        support_score = _cdf_score(
+            nearest_similarity, self._sorted_self_similarities, higher_is_higher=True
         )
 
         idx = list(query.index)
         reference_ids = self._shared.reference_ids
         return SupportRunResult(
             score=pd.Series(support_score, index=idx, name="support"),
-            score_raw=pd.Series(distance_k_mean, index=idx, name="support_raw"),
+            score_raw=pd.Series(nearest_similarity, index=idx, name="support_raw"),
             score_log=pd.Series(
                 -np.log10(support_score), index=idx, name="support_log"
             ),
             distance_k_mean=pd.Series(
-                distance_k_mean, index=idx, name="distance_k_mean"
-            ),
-            distance_k_max=pd.Series(
-                query_fp_distances.max(axis=1), index=idx, name="distance_k_max"
+                query_fp_distances.mean(axis=1), index=idx, name="distance_k_mean"
             ),
             nearest_reference_ids=[
                 [reference_ids[j] for j in row] for row in query_fp_indices
             ],
-            fingerprint_size=pd.Series(sizes, index=idx, name="fingerprint_size"),
             metadata={
                 "reference_support": self._reference_support,
                 "n_reference": len(reference_ids),
                 "k": int(self._knn.k),
-                "n_size_bins": self.n_bins_,
             },
         )
 
@@ -247,31 +207,17 @@ class Support(ScoreComponent):
     # ------------------------------------------------------------------
 
     def _save_own(self, folder: pathlib.Path) -> None:
-        """Write ``state.json`` (baseline, size bins) and the per-bin CDFs."""
-        assert self._size_bin_edges is not None
-        assert self._sorted_self_distances_per_bin is not None
-        save_per_bin(folder / DISTANCES_FILE, self._sorted_self_distances_per_bin)
-        payload = {
-            "reference_support": self._reference_support,
-            "n_bins": self.n_bins_,
-            "size_bin_edges": encode_edges(self._size_bin_edges),
-        }
+        """Write ``state.json`` (baseline) and the sorted CDF array."""
+        assert self._sorted_self_similarities is not None
+        np.save(folder / SIMILARITIES_FILE, self._sorted_self_similarities)
         with open(folder / STATE_FILE, "w") as f:
-            json.dump(payload, f)
+            json.dump({"reference_support": self._reference_support}, f)
 
     def _load_own(self, folder: pathlib.Path) -> None:
-        payload = read_json(folder / STATE_FILE, self.NAME)
-        n_bins = int(payload["n_bins"])
-        edges = decode_edges(payload["size_bin_edges"])
-        if len(edges) != n_bins + 1:
-            raise ValueError(
-                f"support/{STATE_FILE} declares n_bins={n_bins} but has "
-                f"{len(edges)} bin edges."
-            )
-        self._sorted_self_distances_per_bin = load_per_bin(
-            require_file(folder / DISTANCES_FILE, self.NAME), n_bins
+        self._sorted_self_similarities = np.load(
+            require_file(folder / SIMILARITIES_FILE, self.NAME)
         )
-        self._size_bin_edges = edges
+        payload = read_json(folder / STATE_FILE, self.NAME)
         self._reference_support = float(payload["reference_support"])
 
     # ------------------------------------------------------------------
@@ -283,29 +229,15 @@ class Support(ScoreComponent):
         return (
             self._shared is not None
             and self._knn is not None
-            and self._size_bin_edges is not None
-            and self._sorted_self_distances_per_bin is not None
+            and self._sorted_self_similarities is not None
             and self._reference_support is not None
         )
 
     @property
-    def n_bins_(self) -> int:
-        """Number of fingerprint-size bins in the fitted calibration."""
+    def sorted_self_similarities_(self) -> np.ndarray:
         self._check_fitted()
-        assert self._sorted_self_distances_per_bin is not None
-        return len(self._sorted_self_distances_per_bin)
-
-    @property
-    def size_bin_edges_(self) -> np.ndarray:
-        self._check_fitted()
-        assert self._size_bin_edges is not None
-        return self._size_bin_edges
-
-    @property
-    def sorted_self_distances_per_bin_(self) -> list[np.ndarray]:
-        self._check_fitted()
-        assert self._sorted_self_distances_per_bin is not None
-        return self._sorted_self_distances_per_bin
+        assert self._sorted_self_similarities is not None
+        return self._sorted_self_similarities
 
     @property
     def reference_support_(self) -> float:

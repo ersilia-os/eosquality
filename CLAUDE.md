@@ -43,8 +43,8 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
 
 - **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
 - **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
-- **`scores/support.py`** — `Support`. Mean Tanimoto distance to the k FP neighbours, calibrated **per fingerprint-size bin**: up to `N_SIZE_BINS = 10` quantile bins on the set-bit count, from `VectorIndex.fingerprint_sizes()` / `query_fingerprint_sizes()`. This removes Tanimoto's size bias. Also emits `support_log = −log10(support)`. Needs `SharedFitState` + `KnnFitState`.
-- **`scores/_binning.py`** — conditional (binned) CDF calibration shared by Support and Consistency: `quantile_bin_edges` (merges ties and small bins), `assign_bins`, `partition_and_sort`, `binned_cdf_score`, and edge/npz save-load helpers.
+- **`scores/support.py`** — `Support`. The raw value is the Tanimoto similarity of the **nearest library analogue** (`support_raw`). It is calibrated against the library's own nearest-other-molecule similarities (`vi.self_knn_distances(1)`). Also emits `support_log = −log10(support)`. Needs `SharedFitState` + `KnnFitState`.
+- **`scores/_binning.py`** — conditional (binned) CDF calibration used by Consistency: `quantile_bin_edges` (merges ties and small bins), `assign_bins`, `partition_and_sort`, `binned_cdf_score`, and edge/npz save-load helpers.
 - **`scores/consistency.py`** — `Consistency`. Output-space L1 distance to the k FP neighbours, calibrated **per FP-distance bin**. The bins start as up to `N_FP_BINS = 10` quantile bins on `mean_fp_distances`. Duplicate edges are merged, and bins smaller than `min(1000, n/20)` are merged into a neighbour. `n_bins_` is the number of bins actually used.
 - **`scores/signal.py`** — `Signal` + `SignalLearner`. **Provisional, opt-in** (not in `DEFAULT_SCORES`).
   - **Model.** One XGBoost regressor from a descriptor (`physchem` default, or `maccs`) to the scaled, selected outputs.
@@ -65,7 +65,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
   - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, and `ref_repr` (the scaled, feature-selected reference matrix, read by Consistency at run time).
-  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 3). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 4). `load_shared` rejects other format versions with `ArtifactVersionError`.
   - **`splitter.py`.** Fixed 80/10/10 split with seed 0.
   - **`feature_selection.py`.** Correlation-cluster medoids, capped at `max_features`.
 - **`knn/`** — `KnnFitState` holds `k`, plus the fit-time-only `mean_fp_distances` and `reference_knn_indices`. `fit_knn` slices the precomputed self-kNN from the index. Only `{"k": …}` is persisted.

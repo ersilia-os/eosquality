@@ -84,11 +84,22 @@ def test_reference_anchors_near_half(fitted):
         assert value == pytest.approx(0.5, abs=0.02)
 
 
-def test_in_library_queries_do_not_match_themselves(fitted, query, reference):
-    # The last 40 query rows are reference molecules: their support must be
-    # computed against 5 *other* molecules, like the reference's own CDF.
-    support = fitted.run(query).scores["support_raw"].to_numpy()[-40:]
-    assert (support > 0).all()
+def test_in_library_queries_do_not_match_themselves(fitted, query, library):
+    # The last 40 query rows are reference rows 0–39: as queries they must get
+    # exactly the nearest-*other*-molecule similarity the library records.
+    from eosquality.vectorindex import VectorIndex
+
+    nearest = fitted.run(query).scores["support_raw"].to_numpy()[-40:]
+    expected = 1.0 - VectorIndex.load(library).self_knn_distances(1)[:40, 0]
+    np.testing.assert_allclose(nearest, expected, atol=1e-6)
+
+
+def test_support_raw_is_nearest_analogue_similarity(fitted, query):
+    support = fitted.support.run(query)
+    assert ((support.score_raw >= 0) & (support.score_raw <= 1)).all()
+    # Higher similarity never gives lower support.
+    order = np.argsort(support.score_raw.to_numpy())
+    assert np.all(np.diff(support.score.to_numpy()[order]) >= -1e-12)
 
 
 def test_old_format_is_rejected(fitted, tmp_path):
@@ -126,17 +137,3 @@ def test_typicality_only_fit_needs_no_index(reference, query):
         "extremity",
         "extremity_raw",
     ]
-
-
-def test_support_is_calibrated_within_each_size_bin(fitted, reference, library):
-    from eosquality.scores._binning import assign_bins
-    from eosquality.vectorindex import VectorIndex
-
-    support = fitted.support
-    sizes = VectorIndex.load(library).fingerprint_sizes()
-    distances = np.concatenate(support.sorted_self_distances_per_bin_)
-    assert distances.size == len(reference)
-    bins = assign_bins(sizes, support.size_bin_edges_)
-    for b, sorted_arr in enumerate(support.sorted_self_distances_per_bin_):
-        assert sorted_arr.size == (bins == b).sum()
-    assert support.n_bins_ > 1

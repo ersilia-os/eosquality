@@ -1,8 +1,8 @@
-"""Conditional (binned) CDF calibration shared by Support and Consistency.
+"""Conditional (binned) CDF calibration, used by Consistency.
 
-Both scores calibrate a raw value against the reference *within a stratum*
-of a conditioning variable: Consistency conditions on mean FP distance,
-Support on fingerprint size. The reference is split into quantile bins of
+The raw value is calibrated against the reference *within a stratum* of a
+conditioning variable (for Consistency, the mean FP distance to the k
+neighbours). The reference is split into quantile bins of
 the conditioning key; each bin keeps its own sorted reference values; a
 query is scored against the bin its own key falls in. Because each bin is
 calibrated on itself, reference rows still score ~Uniform(0, 1) overall.

@@ -39,7 +39,7 @@ The same rule applies to every score:
 |---|---|---|---|
 | Typicality | output | Q66 over features of per-feature density | outputs sit where the reference's outputs are dense |
 | Extremity | output | Q66 over features of `min(\|scaled\|, 1)` | outputs sit far from the column centres |
-| Support | fingerprint, size-conditioned | mean Tanimoto distance to the k FP neighbours | the molecule is chemically close to library molecules of its size |
+| Support | fingerprint | Tanimoto similarity of the nearest library molecule | the library contains a close analogue of the molecule |
 | Consistency | output, FP-conditioned | mean output L1 distance to the k FP neighbours | the outputs agree with those of chemically similar molecules |
 | Signal *(opt-in)* | descriptor | Gini of per-feature \|SHAP\| | the model's output is driven by a few descriptors |
 
@@ -51,25 +51,36 @@ At fit time, each selected column is quantised to int8 (`round(scaled × 127)`),
 
 Per-feature extremity is `min(|scaled|, 1)`: 0 at the column centre, 1 at the rails. The row aggregate is Q66, which is then calibrated. Extremity is position-based where typicality is density-based, and the two are complementary. In practice they are strongly anti-correlated for most models (see `docs/figures/score_correlations.png`).
 
-### Support (chemical neighbourhood)
+### Support (closest library analogue)
 
-Morgan fingerprints (radius 2, 2048 bits) are queried with FPSim2. The raw value is the mean Tanimoto distance to the query's k nearest library molecules (default k = 5).
+Support asks whether the library contains a close analogue of the query. The raw value (`support_raw`) is the Tanimoto similarity of the query's **nearest library molecule**, using Morgan fingerprints (radius 2, 2048 bits) queried with FPSim2. It is calibrated through the library's own nearest-analogue similarities, i.e. each library molecule against its closest *other* molecule.
 
-**Size conditioning.** Tanimoto distance on bits is size-biased: molecules with few set bits sit further from everything. In the library, the median distance is 0.44 for 20–30 bits and 0.31 for 60–80 bits. So calibration is **conditioned on fingerprint size**:
-1. The library is split into up to 10 quantile bins of its set-bit count (same merging rules as consistency).
-2. Each bin gets its own CDF.
-3. A query is scored against the bin of its own size.
+The raw similarity reads directly in chemists' terms. Here is the share of each example set with no library analogue at a given threshold:
 
-The question support answers is: how close is this molecule to the library, compared with library molecules of the same size? It stays uniform on the library, and its correlation with size drops from ρ = 0.32 to −0.02.
+| | none ≥ 0.4 (no related chemistry) | none ≥ 0.6 (no close analogue) | none ≥ 0.8 (no near-identical) |
+|---|---|---|---|
+| Library molecules | 0.5% | 16% | 76% |
+| Drugs | 5% | 24% | 62% |
+| Natural products | 28% | 51% | 97% |
+| Synthetic scaffolds | 99% | 100% | 100% |
 
-**Self-matches.** The calibration CDF uses each library molecule's distance to its k nearest **other** molecules. So that queries are comparable, a query that is itself in the library has its own entry removed from its neighbours. The entry removed is the neighbour with the same SMILES or the same canonical SMILES. A different molecule with an identical fingerprint, such as a stereoisomer, is kept.
+**Self-matches.** A query that is itself in the library drops its own entry before the nearest analogue is taken. The entry dropped is the neighbour with the same SMILES or the same canonical SMILES; a different molecule with an identical fingerprint, such as a stereoisomer, counts as an analogue.
 
-**Log scale.** `support_log = −log10(support)` expresses the same tail probability on a log scale:
+**Log scale.** `support_log = −log10(support)` expresses the calibrated tail probability on a log scale:
 - about 0.3 for a typical library molecule;
-- 2 means further than 99% of same-size library molecules;
-- 3 means further than 99.9%.
+- 2 means a more distant nearest analogue than 99% of library molecules have;
+- 3 means more distant than 99.9%.
 
-On the 0–1 scale, queries far outside the library (e.g. generated synthetic scaffolds) are all squeezed into 0–0.01; `support_log` keeps them apart.
+On the 0–1 scale, molecules far outside the library are all squeezed into 0–0.01; `support_log` keeps them apart.
+
+**Size.** Tanimoto similarity is lower for small molecules (few set bits), so small fragments look somewhat more novel. This is not corrected for.
+
+**Alternatives tested.** These definitions were compared on the five example query sets:
+- **Mean distance to the 5 nearest neighbours (the previous definition).** It separated natural products from library molecules less well (AUC 0.72 vs 0.79).
+- **Analogue counts above a threshold.** They have too many ties to calibrate (KS up to 0.25).
+- **Calibration within fingerprint-size bins.** It tracked neighbour output disagreement no better on average.
+
+How much a molecule's neighbourhood can be trusted to describe the model is left to consistency, which uses all k neighbours.
 
 Support depends only on chemistry, so it is identical across models.
 

@@ -15,7 +15,7 @@ flowchart LR
 
     SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>CDF of Q66"]
     SH --> EXT["<b>Extremity</b><br/>|scaled| position<br/>CDF of Q66"]
-    KNN --> SUP["<b>Support</b><br/>mean Tanimoto distance<br/>CDF per FP-size bin"]
+    LIB -- "nearest analogue" --> SUP["<b>Support</b><br/>Tanimoto similarity of<br/>nearest library analogue · CDF"]
     KNN --> CON["<b>Consistency</b><br/>output L1 to FP neighbours<br/>CDF per FP-distance bin"]
     SH --> CON
     SH --> SIG["<b>Signal</b> (opt-in)<br/>XGBoost descriptor → outputs<br/>CDF of |SHAP| Gini on val"]
@@ -48,7 +48,7 @@ flowchart LR
   knn/state.json                        # {"k": …}; iff support or consistency
   typicality/   state.json  reference_self_aggregates.npy  metadata.json
   extremity/    state.json  reference_self_aggregates.npy  metadata.json
-  support/      state.json  reference_self_distances_per_bin.npz  metadata.json
+  support/      state.json  reference_nearest_similarities.npy  metadata.json
   consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
   signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
                 physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json

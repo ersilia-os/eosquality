@@ -52,7 +52,7 @@ Each score compares a query against the model's own predictions on the reference
 |---|---|
 | **Typicality** | Are the predicted values ones the model commonly produces? |
 | **Extremity** | Are the predicted values far from the centre of the model's output range? |
-| **Support** | Is the molecule chemically close to the reference library, compared with library molecules of the same size? |
+| **Support** | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
 

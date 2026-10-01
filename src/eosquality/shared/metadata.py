@@ -62,8 +62,10 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
 # instead of producing silently different scores.
 #   2 — mid-rank CDF calibration, NaN-ignoring aggregates, merged
 #       consistency FP bins, signal CDF as .npy, custom index paths.
-#   3 — support calibrated per fingerprint-size bin.
-ARTIFACT_FORMAT_VERSION = 3
+#   3 — support calibrated per fingerprint-size bin (reverted in 4).
+#   4 — support = nearest-analogue similarity, one reference CDF;
+#       support_log output column.
+ARTIFACT_FORMAT_VERSION = 4
 
 
 @dataclass
