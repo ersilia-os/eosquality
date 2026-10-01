@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Union
 
 import numpy as np
 import pandas as pd
+
 from eosquality.exceptions import ArtifactVersionError
 from eosquality.library.maccs import MACCS_FILE, N_MACCS, compute_maccs
 from eosquality.library.physchem import (
@@ -94,7 +94,7 @@ class PhyschemBackend:
             json.dump(self._scaler_params, f)
 
     @classmethod
-    def from_library(cls, vi: VectorIndex) -> "PhyschemBackend":
+    def from_library(cls, vi: VectorIndex) -> PhyschemBackend:
         library_dir = vi.index_dir
         scaler_path = library_dir / PHYSCHEM_SCALER_FILE
         matrix_path = library_dir / PHYSCHEM_REF_MATRIX_FILE
@@ -117,7 +117,7 @@ class PhyschemBackend:
         )
 
     @classmethod
-    def load_state(cls, folder: pathlib.Path) -> "PhyschemBackend":
+    def load_state(cls, folder: pathlib.Path) -> PhyschemBackend:
         path = folder / PHYSCHEM_SCALER_FILE
         if not path.is_file():
             raise FileNotFoundError(
@@ -164,7 +164,7 @@ class MaccsBackend:
         return None
 
     @classmethod
-    def from_library(cls, vi: VectorIndex) -> "MaccsBackend":
+    def from_library(cls, vi: VectorIndex) -> MaccsBackend:
         path = vi.index_dir / MACCS_FILE
         if not path.is_file():
             raise FileNotFoundError(
@@ -180,12 +180,12 @@ class MaccsBackend:
         return cls(reference_matrix=matrix)
 
     @classmethod
-    def load_state(cls, folder: pathlib.Path) -> "MaccsBackend":
+    def load_state(cls, folder: pathlib.Path) -> MaccsBackend:
         del folder
         return cls()
 
 
-DescriptorBackend = Union[PhyschemBackend, MaccsBackend]
+DescriptorBackend = PhyschemBackend | MaccsBackend
 
 
 def make_backend(name: str, vi: VectorIndex) -> DescriptorBackend:

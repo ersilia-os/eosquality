@@ -332,7 +332,7 @@ def _query_fp_distances(
     # Column to drop per row: the self match if present, else the furthest.
     drop_col = np.full(n_query, k, dtype=np.int64)
     rows, cols = np.nonzero(fp_distances < _SELF_MATCH_DISTANCE_THRESHOLD)
-    for i, j in zip(rows, cols):
+    for i, j in zip(rows, cols, strict=True):
         if drop_col[i] != k:
             continue  # already found this row's self match
         if _is_same_molecule(query_smiles[i], library_smiles[vi_indices[i, j]]):

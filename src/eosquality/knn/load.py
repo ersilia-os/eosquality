@@ -15,13 +15,8 @@ STATE_FILE = "state.json"
 def load_knn(root: str | pathlib.Path) -> KnnFitState:
     """Read the persisted fields of KnnFitState from ``<root>/knn/``.
 
-    The fit-only fields are returned as ``None``. The scaled reference
-    matrix is no longer stored here; consumers read it from
-    ``shared.ref_repr`` (loaded by :func:`load_shared`). The underlying
-    vector index is not loaded here either — it is resolved on demand
-    at run time via
-    :func:`eosquality.library.identity.reference_library_path` using
-    ``shared.metadata.library_id`` as the key.
+    The fit-only fields are returned as ``None``. The vector index is
+    resolved on demand at run time from ``shared.metadata``.
     """
     folder = pathlib.Path(root) / SUBFOLDER
     if not folder.is_dir():

@@ -121,7 +121,7 @@ class Consistency(ScoreComponent):
         version: str | None = None,
         shared: SharedFitState | None = None,
         knn: KnnFitState | None = None,
-    ) -> "Consistency":
+    ) -> Consistency:
         """Fit on a reference DataFrame.
 
         Computes the reference's per-row mean output-space L1 distance to

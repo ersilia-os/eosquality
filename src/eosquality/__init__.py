@@ -5,12 +5,14 @@ import importlib.metadata as _importlib_metadata
 from packaging.version import Version as _Version
 
 from eosquality.library.identity import LIBRARY_ID, library_major
-from eosquality.quality import ErsiliaQuality, RunResult
+from eosquality.quality import ALL_SCORES, DEFAULT_SCORES, ErsiliaQuality, RunResult
 from eosquality.scores import (
     Consistency,
     ConsistencyRunResult,
     Extremity,
     ExtremityRunResult,
+    Signal,
+    SignalRunResult,
     Support,
     SupportRunResult,
     Typicality,
@@ -55,6 +57,8 @@ def set_log_level(level: str) -> None:
 
 
 __all__ = [
+    "ALL_SCORES",
+    "DEFAULT_SCORES",
     "ErsiliaQuality",
     "RunResult",
     "Typicality",
@@ -65,5 +69,8 @@ __all__ = [
     "ConsistencyRunResult",
     "Extremity",
     "ExtremityRunResult",
+    "Signal",
+    "SignalRunResult",
+    "set_log_level",
     "set_verbosity",
 ]

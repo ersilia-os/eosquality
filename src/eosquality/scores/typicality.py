@@ -97,7 +97,7 @@ class Typicality(ScoreComponent):
         eos_id: str | None = None,
         version: str | None = None,
         shared: SharedFitState | None = None,
-    ) -> "Typicality":
+    ) -> Typicality:
         """Fit on a reference DataFrame.
 
         Builds the per-column int8 count LUTs (:func:`fit_typicality_luts`)

@@ -35,10 +35,8 @@ def fit_knn(
         that need the scaled reference matrix read ``shared.ref_repr``
         directly.
     vector_index:
-        Loaded VectorIndex aligned row-for-row with the reference. The
-        VectorIndex is *not* persisted on the returned state — only
-        ``k`` is. At load time the index is re-resolved via the
-        canonical library resolver using ``shared.metadata.library_id``.
+        Loaded VectorIndex aligned row-for-row with the reference. Not
+        persisted on the returned state — only ``k`` is.
     k:
         Number of neighbors.
     """

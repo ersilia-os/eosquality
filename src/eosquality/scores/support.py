@@ -91,7 +91,7 @@ class Support(ScoreComponent):
         version: str | None = None,
         shared: SharedFitState | None = None,
         knn: KnnFitState | None = None,
-    ) -> "Support":
+    ) -> Support:
         """Fit on a reference DataFrame.
 
         Reads the reference's FP self-kNN Tanimoto distances (already

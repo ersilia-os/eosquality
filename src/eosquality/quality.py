@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -36,10 +37,9 @@ from eosquality.scores._helpers import (
 )
 from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
-from eosquality.scores.signal import Signal
+from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
 from eosquality.scores.support import Support
 from eosquality.scores.typicality import Typicality
-from eosquality.scores.signal import SIGNAL_FORMULA_VERSION
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES, fit_shared
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
@@ -156,7 +156,7 @@ class ErsiliaQuality:
         max_features: int | None = DEFAULT_MAX_FEATURES,
         max_signal_train_samples: int | None = 1000,
         signal_descriptor: str = "physchem",
-    ) -> "ErsiliaQuality":
+    ) -> ErsiliaQuality:
         """Fit the selected scores on a reference DataFrame.
 
         Parameters
@@ -485,7 +485,7 @@ class ErsiliaQuality:
             json.dump(manifest, f, indent=2)
 
     @classmethod
-    def load(cls, path: str | pathlib.Path) -> "ErsiliaQuality":
+    def load(cls, path: str | pathlib.Path) -> ErsiliaQuality:
         """Reconstruct an orchestrator from a saved folder.
 
         Reads ``shared/`` (and ``knn/`` if present) once, then loads every

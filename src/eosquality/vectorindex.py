@@ -16,6 +16,7 @@ import numpy as np
 from FPSim2 import FPSim2Engine
 from FPSim2.io import create_db_file
 from rdkit import __version__ as _RDKIT_VERSION
+
 from eosquality.utils.logging import logger
 from eosquality.utils.progress import make_progress
 
@@ -103,7 +104,7 @@ class VectorIndex:
         verbose: bool = False,
         library_name: str = "",
         max_samples: int | None = None,
-    ) -> "VectorIndex":
+    ) -> VectorIndex:
         """Build a VectorIndex from a list of SMILES and persist to ``output_dir``.
 
         Parameters
@@ -341,7 +342,7 @@ class VectorIndex:
     # ------------------------------------------------------------------
 
     @classmethod
-    def load(cls, index_dir: str | pathlib.Path) -> "VectorIndex":
+    def load(cls, index_dir: str | pathlib.Path) -> VectorIndex:
         """Load a VectorIndex from a folder produced by :meth:`build`.
 
         Parameters

@@ -18,7 +18,6 @@ dependencies = [
   "pandas>=1.5",
   "scipy>=1.9",
   "scikit-learn>=1.1",
-  "joblib>=1.2",
   "loguru>=0.7",
   "rich>=13.0",
   "FPSim2>=0.4",
@@ -32,10 +31,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "black",
+  "pytest>=7",
   "ruff",
 ]
+# Figure scripts under scripts/figures/
 viz = [
   "matplotlib>=3.7",
+  "stylia>=1.0",
 ]
 
 [project.scripts]
@@ -47,6 +49,16 @@ where = ["src"]
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # line length is black's job
+
+[tool.ruff.lint.isort]
+known-first-party = ["eosquality"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.black]
 line-length = 88

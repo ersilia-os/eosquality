@@ -10,7 +10,7 @@ computes query rows with the same :func:`compute_maccs`.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 from rdkit import Chem

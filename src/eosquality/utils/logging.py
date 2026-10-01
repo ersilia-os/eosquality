@@ -13,7 +13,6 @@ by default and DEBUG with ``-v``.
 """
 
 import sys
-from typing import Optional
 
 from loguru import logger as _root_logger
 from rich import box
@@ -41,7 +40,7 @@ class Logger:
     def __init__(self) -> None:
         self.logger = _loguru
         self._console = Console(stderr=True, highlight=False)
-        self._sink_id: Optional[int] = None
+        self._sink_id: int | None = None
         self._verbose: bool = False
         self.set_level(DEFAULT_LEVEL)
 

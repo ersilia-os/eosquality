@@ -89,7 +89,7 @@ class Extremity(ScoreComponent):
         eos_id: str | None = None,
         version: str | None = None,
         shared: SharedFitState | None = None,
-    ) -> "Extremity":
+    ) -> Extremity:
         """Fit on a reference DataFrame.
 
         Builds the sorted reference Q66 aggregates used as the calibration

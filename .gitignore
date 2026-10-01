@@ -222,5 +222,3 @@ __marimo__/
 data/examples/*.csv
 data/libraries/*.csv
 
-# Diagnostic script outputs (plots, caches)
-outputs/

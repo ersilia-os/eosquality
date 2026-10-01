@@ -20,10 +20,9 @@ or persisted here.
 
 from __future__ import annotations
 
+import eosframes
 import numpy as np
 import pandas as pd
-
-import eosframes
 
 from eosquality.schema.models import Schema
 from eosquality.utils.logging import logger
@@ -92,7 +91,7 @@ class PreprocessPipeline:
         }
 
     @classmethod
-    def from_state(cls, state: dict) -> "PreprocessPipeline":
+    def from_state(cls, state: dict) -> PreprocessPipeline:
         """Reconstruct a fitted pipeline from a persisted state dict."""
         pipeline = cls(schema=state["schema"])
         pipeline._params = state["scaler_params"]

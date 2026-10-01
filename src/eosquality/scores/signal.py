@@ -50,6 +50,8 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import r2_score
 
+from eosquality.exceptions import ArtifactVersionError
+from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._descriptors import (
     DEFAULT_DESCRIPTOR,
     DESCRIPTOR_NAMES,
@@ -57,8 +59,6 @@ from eosquality.scores._descriptors import (
     load_backend,
     make_backend,
 )
-from eosquality.exceptions import ArtifactVersionError
-from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import _reference_repr, _score_from_aggregates
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
@@ -257,7 +257,7 @@ class SignalLearner:
         learning_rate: float = 0.1,
         max_depth: int = 6,
         random_state: int = 0,
-    ) -> "SignalLearner":
+    ) -> SignalLearner:
         """Train an XGBoost regressor from already-prepared X/Y arrays.
 
         Parameters
@@ -413,7 +413,7 @@ class SignalLearner:
         self._model.save_model(str(folder / LEARNER_MODEL_FILE))
 
     @classmethod
-    def load(cls, folder: pathlib.Path) -> "SignalLearner":
+    def load(cls, folder: pathlib.Path) -> SignalLearner:
         """Reconstruct from ``learner.json`` + ``learner.ubj`` in ``folder``."""
         payload = read_json(folder / LEARNER_STATE_FILE, "signal")
         model = xgb.XGBRegressor()
@@ -532,7 +532,7 @@ class Signal(ScoreComponent):
         descriptor: str = DEFAULT_DESCRIPTOR,
         max_train_samples: int | None = None,
         **learner_kwargs: Any,
-    ) -> "Signal":
+    ) -> Signal:
         """Fit the XGBoost regressor + calibrate via val-slice SHAP.
 
         Parameters

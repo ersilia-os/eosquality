@@ -25,7 +25,7 @@ Large inputs (library builds) are computed with a process pool; small ones
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import sklearn
