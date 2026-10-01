@@ -10,10 +10,14 @@ against reference rows whose neighborhood is also far, so "is my prediction
 surprising for the FP-distance regime I'm in?" replaces the old
 "is my prediction surprising vs. a globally in-distribution null?".
 
-The reference is partitioned into ``N_FP_BINS`` quantile bins on
-``knn.mean_fp_distances``; each bin gets its own sorted ``self_output_distance``
-CDF. At run time, queries are routed to the bin whose FP-distance interval
-contains their own mean FP-distance.
+The reference is partitioned into (up to) ``N_FP_BINS`` quantile bins on
+``knn.mean_fp_distances``; duplicate quantile edges are merged and bins
+smaller than a minimum size are merged into a neighbor. Each bin gets its
+own sorted ``self_output_distance`` CDF. At run time, queries are routed to
+the bin whose FP-distance interval contains their own mean FP-distance.
+
+Output-space distances average |difference| over the features that are
+finite on both sides; a query with no usable feature scores NaN.
 
 Closer than every reference point *in the same bin* → ~1.0; at that bin's
 median → ~0.5; farther than every reference point in that bin → eps.
@@ -27,6 +31,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -152,12 +157,18 @@ class Consistency(ScoreComponent):
 
         # Output-space self-kNN distances — same arithmetic as run() so the
         # two paths cannot drift.
-        mean_self_output_distances = _query_output_distances(
-            shared.ref_repr, shared.ref_repr, knn.reference_knn_indices
-        ).mean(axis=1)
+        mean_self_output_distances = _mean_over_neighbors(
+            _query_output_distances(
+                shared.ref_repr, shared.ref_repr, knn.reference_knn_indices
+            )
+        )
         mean_self_fp_distances = knn.mean_fp_distances.astype(np.float64)
 
-        fp_bin_edges = _compute_fp_bin_edges(mean_self_fp_distances, self.N_FP_BINS)
+        fp_bin_edges = _compute_fp_bin_edges(
+            mean_self_fp_distances,
+            self.N_FP_BINS,
+            min_bin_size=_min_bin_size(len(mean_self_fp_distances), self.N_FP_BINS),
+        )
         sorted_self_distances_per_bin = _partition_and_sort(
             values=mean_self_output_distances,
             keys=mean_self_fp_distances,
@@ -169,7 +180,7 @@ class Consistency(ScoreComponent):
         self._fp_bin_edges = fp_bin_edges
         self._sorted_self_distances_per_bin = sorted_self_distances_per_bin
         self._reference_consistency = float(
-            np.mean(
+            np.nanmean(
                 _consistency_from_distances_binned(
                     distance_k_mean=mean_self_output_distances,
                     fp_distance_k_mean=mean_self_fp_distances,
@@ -251,7 +262,7 @@ class Consistency(ScoreComponent):
                 query_repr, self._shared.ref_repr, query_fp_indices
             )
 
-        distance_k_mean = query_output_distances.mean(axis=1).astype(np.float64)
+        distance_k_mean = _mean_over_neighbors(query_output_distances)
         score = _consistency_from_distances_binned(
             distance_k_mean=distance_k_mean,
             fp_distance_k_mean=query_fp_distances.mean(axis=1).astype(np.float64),
@@ -364,38 +375,66 @@ class Consistency(ScoreComponent):
 # ---------------------------------------------------------------------------
 
 
-def _compute_fp_bin_edges(mean_fp_distances: np.ndarray, n_bins: int) -> np.ndarray:
-    """Return ``(n_bins + 1,)`` ascending quantile bin edges over FP distance.
+# A bin's CDF needs enough rows to resolve scores: at least this many, or
+# half the nominal bin size for small references.
+_MIN_BIN_ROWS = 1_000
 
-    Outer edges are forced to ``±inf`` so out-of-range queries clip
-    cleanly to the topmost (or bottommost) bin. Interior edges are the
-    quantiles at ``1/n_bins, 2/n_bins, …, (n_bins − 1)/n_bins``.
 
-    Ties in the quantile values are collapsed via ``np.unique`` and then
-    re-expanded (with tiny ``1e-12`` jitter) to preserve a strictly
-    increasing edge sequence — important when many reference rows have
-    the same mean FP distance.
+def _min_bin_size(n_reference: int, n_bins: int) -> int:
+    return max(1, min(_MIN_BIN_ROWS, n_reference // (2 * n_bins)))
+
+
+def _mean_over_neighbors(distances: np.ndarray) -> np.ndarray:
+    """Per-row mean over the k neighbors, ignoring NaN; all-NaN rows → NaN."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return np.nanmean(distances, axis=1).astype(np.float64)
+
+
+def _compute_fp_bin_edges(
+    mean_fp_distances: np.ndarray, n_bins: int, *, min_bin_size: int = 1
+) -> np.ndarray:
+    """Return ascending FP-distance bin edges ``[-inf, e_1, …, e_m, +inf]``.
+
+    Starts from the ``n_bins`` quantile bins, then (1) collapses duplicate
+    interior quantiles (heavy ties in the reference's mean FP distance) and
+    (2) repeatedly merges the smallest bin into its smaller neighbor until
+    every bin holds at least ``min_bin_size`` reference rows. Rows equal to
+    an edge fall in the bin above it (same ``side="right"`` routing as
+    :func:`_assign_fp_bins`). Outer edges are ``±inf`` so any query distance
+    lands in a bin. The result can therefore have fewer than ``n_bins``
+    bins; :attr:`Consistency.n_bins_` reports the actual count.
     """
     if n_bins < 1:
         raise ValueError(f"n_bins must be >= 1; got {n_bins}.")
-    if n_bins == 1:
-        return np.array([-np.inf, np.inf], dtype=np.float64)
     interior_q = np.linspace(0.0, 1.0, n_bins + 1)[1:-1]
-    interior = np.quantile(mean_fp_distances, interior_q)
-    # Disambiguate tied interior edges so searchsorted lands every row in
-    # exactly one bin.
-    for i in range(1, len(interior)):
-        if interior[i] <= interior[i - 1]:
-            interior[i] = interior[i - 1] + 1e-12
+    interior = np.unique(np.quantile(mean_fp_distances, interior_q))
+    while interior.size:
+        edges = np.concatenate(([-np.inf], interior, [np.inf]))
+        counts = np.bincount(
+            _assign_fp_bins(mean_fp_distances, edges), minlength=edges.size - 1
+        )
+        smallest = int(np.argmin(counts))
+        if counts[smallest] >= min_bin_size:
+            break
+        # Remove the edge shared with the smaller neighbor (interior edge
+        # i separates bins i and i+1).
+        if smallest == 0:
+            drop = 0
+        elif smallest == counts.size - 1:
+            drop = smallest - 1
+        else:
+            drop = (
+                smallest - 1
+                if counts[smallest - 1] <= counts[smallest + 1]
+                else smallest
+            )
+        interior = np.delete(interior, drop)
     return np.concatenate(([-np.inf], interior.astype(np.float64), [np.inf]))
 
 
 def _assign_fp_bins(fp_distances: np.ndarray, fp_bin_edges: np.ndarray) -> np.ndarray:
-    """Return per-row bin index (0..n_bins-1) for each FP distance value.
-
-    Uses the interior edges only and clips to the valid bin range so
-    out-of-range FP distances land in the bottommost or topmost bin.
-    """
+    """Return per-row bin index (0..n_bins-1) for each FP distance value."""
     n_bins = len(fp_bin_edges) - 1
     bin_idx = np.searchsorted(fp_bin_edges[1:-1], fp_distances, side="right")
     return np.clip(bin_idx, 0, n_bins - 1).astype(np.int64)
@@ -406,17 +445,14 @@ def _partition_and_sort(
     keys: np.ndarray,
     bin_edges: np.ndarray,
 ) -> list[np.ndarray]:
-    """Partition ``values`` by ``keys``'s bin and sort each partition ascending."""
+    """Per bin of ``keys``, the ascending finite ``values`` (one CDF per bin)."""
     n_bins = len(bin_edges) - 1
     bin_idx = _assign_fp_bins(keys, bin_edges)
-    sorted_per_bin: list[np.ndarray] = []
-    for b in range(n_bins):
-        mask = bin_idx == b
-        if mask.any():
-            sorted_per_bin.append(np.sort(values[mask]).astype(np.float64))
-        else:
-            sorted_per_bin.append(np.array([], dtype=np.float64))
-    return sorted_per_bin
+    finite = np.isfinite(values)
+    return [
+        np.sort(values[(bin_idx == b) & finite]).astype(np.float64)
+        for b in range(n_bins)
+    ]
 
 
 def _consistency_from_distances_binned(
@@ -427,28 +463,20 @@ def _consistency_from_distances_binned(
 ) -> np.ndarray:
     """Map per-row output-space k-distances to consistency via per-bin CDFs.
 
-    For each row, look up its mean FP distance in ``fp_bin_edges`` to
-    pick a bin, then compute ``clip(1 − searchsorted(bin_sorted, d) /
-    n_bin, eps, 1.0)`` against that bin's sorted self-distance array.
-    Rows whose target bin is empty (degenerate fit) fall back to a
-    neutral 0.5.
+    Each row is routed to its FP-distance bin and scored with
+    :func:`_cdf_score` (distance direction) against that bin's sorted
+    reference distances. NaN distances score NaN, as do rows routed to a bin
+    with no finite reference distance (only possible if the reference
+    outputs are almost entirely missing).
     """
-    n_bins = len(sorted_self_distances_per_bin)
     bin_idx = _assign_fp_bins(fp_distance_k_mean, fp_bin_edges)
-    score = np.full(distance_k_mean.shape, 0.5, dtype=np.float64)
-    for b in range(n_bins):
+    score = np.full(distance_k_mean.shape, np.nan, dtype=np.float64)
+    for b, sorted_arr in enumerate(sorted_self_distances_per_bin):
         mask = bin_idx == b
-        if not mask.any():
-            continue
-        sorted_arr = sorted_self_distances_per_bin[b]
-        if sorted_arr.size == 0:
-            continue
-        score[mask] = _cdf_score(
-            distance_k_mean[mask],
-            sorted_arr,
-            sorted_arr.size,
-            higher_is_higher=False,
-        )
+        if mask.any() and sorted_arr.size:
+            score[mask] = _cdf_score(
+                distance_k_mean[mask], sorted_arr, higher_is_higher=False
+            )
     return score
 
 

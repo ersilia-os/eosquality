@@ -7,8 +7,13 @@ import pathlib
 
 import numpy as np
 
+from eosquality.exceptions import ArtifactVersionError
 from eosquality.schema.models import ColumnSpec, Schema
-from eosquality.shared.metadata import ColumnCharacteristics, FitMetadata
+from eosquality.shared.metadata import (
+    ARTIFACT_FORMAT_VERSION,
+    ColumnCharacteristics,
+    FitMetadata,
+)
 from eosquality.shared.splitter import Split
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
@@ -24,14 +29,20 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
             f"Expected shared fit state at {folder}, but the folder does not exist."
         )
 
+    with open(folder / "metadata.json") as f:
+        metadata = _metadata_from_dict(json.load(f))
+    if metadata.format_version != ARTIFACT_FORMAT_VERSION:
+        raise ArtifactVersionError(
+            f"Artifacts at {root} use format version {metadata.format_version}; "
+            f"this eosquality install reads format {ARTIFACT_FORMAT_VERSION}. "
+            "Refit with the current version."
+        )
     with open(folder / "schema.json") as f:
         schema = Schema(columns=[ColumnSpec(**c) for c in json.load(f)["columns"]])
     with open(folder / "scaler.json") as f:
         scaler_params = json.load(f)
     with open(folder / "binary_class_freq.json") as f:
         binary_class_freq = json.load(f)
-    with open(folder / "metadata.json") as f:
-        metadata = _metadata_from_dict(json.load(f))
     with open(folder / "reference_ids.json") as f:
         reference_ids = json.load(f)
     with open(folder / "splits.json") as f:
@@ -42,15 +53,9 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
         test_indices=np.asarray(splits_payload["test_indices"], dtype=np.int64),
     )
 
-    selected_columns_path = folder / "selected_columns.json"
-    if selected_columns_path.is_file():
-        with open(selected_columns_path) as f:
-            selected_columns = list(json.load(f)["selected_columns"])
-    else:
-        selected_columns = list(schema.column_names)
-
-    ref_repr_path = folder / "reference_repr.npy"
-    ref_repr = np.load(ref_repr_path) if ref_repr_path.is_file() else None
+    with open(folder / "selected_columns.json") as f:
+        selected_columns = list(json.load(f)["selected_columns"])
+    ref_repr = np.load(folder / "reference_repr.npy")
 
     logger.debug(
         f"  shared/ | {len(schema.columns)} columns"
@@ -90,4 +95,6 @@ def _metadata_from_dict(d: dict) -> FitMetadata:
         library_id=d.get("library_id", ""),
         fit_duration_seconds=float(d.get("fit_duration_seconds", 0.0)),
         vector_index_path=d.get("vector_index_path", ""),
+        # Artifacts written before format versioning have no field: format 1.
+        format_version=int(d.get("format_version", 1)),
     )

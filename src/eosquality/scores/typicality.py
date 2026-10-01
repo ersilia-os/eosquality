@@ -8,15 +8,15 @@ This handles every distribution shape uniformly — unimodal, multimodal,
 constant, binary — with no kind dispatch: the most common int8 always
 scores typicality 1.0, every other int8 scores in proportion to how
 often it appears in the reference, and unseen int8 values score 0.
-NaN queries return typicality 1.0 (no information).
 
-The per-row aggregate is the **66th percentile** of per-feature values
-(``AGGREGATE_QUANTILE``), then mapped through the reference's own sorted
-distribution of Q66 aggregates via :func:`_score_from_aggregates`. The
-calibrated score is uniform-under-reference: the reference's median row
-scores ~0.5 by construction, and the score is comparable across models
-with different feature counts. Per-feature values are retained on
-:class:`TypicalityRunResult` for diagnostics.
+Missing values carry no information: a NaN feature stays NaN per feature
+and is ignored by the aggregate; a row whose every feature is NaN scores
+NaN. The per-row aggregate is the **66th percentile** of the finite
+per-feature values (``AGGREGATE_QUANTILE``), mapped through the
+reference's own sorted Q66 distribution via :func:`_score_from_aggregates`
+(mid-rank CDF), so the reference scores ~Uniform(0, 1) and the score is
+comparable across models with different feature counts. Per-feature
+values are retained on :class:`TypicalityRunResult` for diagnostics.
 """
 
 from __future__ import annotations
@@ -33,11 +33,12 @@ import pandas as pd
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
-    AGGREGATE_QUANTILE,
     _make_query_repr,
+    _nan_aggregate,
     _reference_repr,
     _resolve_shared,
     _score_from_aggregates,
+    _sorted_finite,
 )
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
@@ -118,15 +119,13 @@ class Typicality(ScoreComponent):
         ref_scaled = _reference_repr(shared, reference)
         count_luts = fit_typicality_luts(ref_scaled)
         _, ref_agg = compute_typicality(scaled_values=ref_scaled, count_luts=count_luts)
-        sorted_self_aggregates = np.sort(ref_agg).astype(np.float64)
+        sorted_self_aggregates = _sorted_finite(ref_agg, "Typicality")
 
         self._shared = shared
         self._count_luts = count_luts
         self._sorted_self_aggregates = sorted_self_aggregates
         self._reference_typicality = float(
-            np.mean(
-                _score_from_aggregates(ref_agg, sorted_self_aggregates, len(ref_agg))
-            )
+            np.nanmean(_score_from_aggregates(ref_agg, sorted_self_aggregates))
         )
         self._finish_fit(t0)
         logger.debug(
@@ -171,9 +170,7 @@ class Typicality(ScoreComponent):
             count_luts=self._count_luts,
         )
         n_ref = len(self._shared.reference_ids)
-        score = _score_from_aggregates(
-            raw_aggregate, self._sorted_self_aggregates, n_ref
-        )
+        score = _score_from_aggregates(raw_aggregate, self._sorted_self_aggregates)
         idx = list(query.index)
         return TypicalityRunResult(
             score=pd.Series(score, index=idx, name="typicality"),
@@ -270,13 +267,14 @@ class Typicality(ScoreComponent):
 def _quantize_to_int8(scaled: np.ndarray) -> np.ndarray:
     """Mirror the eosframes int8 quantization. NaN → sentinel -128.
 
-    Returns int64 values in ``[-128, 127]`` (one wider than the int8 range
-    because we use ``-128`` as the NaN sentinel). Use ``+ 128`` to index the
-    256-slot LUT.
+    Finite values are rounded to ``[-127, 127]``; ``-128`` is reserved for
+    NaN, so an out-of-range finite value can never be mistaken for a
+    missing one. Use ``+ 128`` to index the 256-slot LUT.
     """
-    nan_mask = np.isnan(scaled)
-    q = np.where(nan_mask, -_LUT_OFFSET, np.round(scaled * _INT8_MAX_VAL))
-    q = np.clip(q, -_LUT_OFFSET, _INT8_MAX_VAL)
+    q = np.clip(
+        np.round(np.nan_to_num(scaled) * _INT8_MAX_VAL), -_INT8_MAX_VAL, _INT8_MAX_VAL
+    )
+    q = np.where(np.isnan(scaled), -_LUT_OFFSET, q)
     return q.astype(np.int64)
 
 
@@ -323,19 +321,19 @@ def compute_typicality(
     Returns
     -------
     per_feature:
-        ``(n_query, n_features)`` typicality in ``[0, 1]``.
+        ``(n_query, n_features)`` typicality in ``[0, 1]``; NaN where the
+        input is NaN.
     aggregate:
-        ``(n_query,)`` 66th-percentile of ``per_feature`` across features
-        (see ``AGGREGATE_QUANTILE``). The shift away from the mean
-        prevents the aggregate from collapsing to the per-feature
-        expectation as ``n_features`` grows; downstream CDF calibration
-        in :meth:`Typicality.run` further re-spreads it to uniform under
-        the reference.
+        ``(n_query,)`` 66th-percentile of the finite ``per_feature`` values
+        (see ``AGGREGATE_QUANTILE``); NaN for all-NaN rows. The shift away
+        from the mean prevents the aggregate from collapsing to the
+        per-feature expectation as ``n_features`` grows; downstream CDF
+        calibration re-spreads it to uniform under the reference.
     """
     n_query = scaled_values.shape[0]
     n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
     if n_features == 0:
-        return np.ones((n_query, 0)), np.ones(n_query)
+        return np.ones((n_query, 0)), np.full(n_query, np.nan)
     if count_luts.shape != (_LUT_SIZE, n_features):
         raise ValueError(
             f"count_luts must have shape ({_LUT_SIZE}, {n_features}); "
@@ -347,7 +345,5 @@ def compute_typicality(
     col_max[col_max <= 0] = 1.0
     counts = count_luts[q_int8 + _LUT_OFFSET, np.arange(n_features)[None, :]]
     per_feature = counts / col_max[None, :]
-    per_feature[q_int8 == -_LUT_OFFSET] = 1.0
-
-    aggregate = np.quantile(per_feature, AGGREGATE_QUANTILE, axis=1)
-    return per_feature, aggregate
+    per_feature[q_int8 == -_LUT_OFFSET] = np.nan
+    return per_feature, _nan_aggregate(per_feature)

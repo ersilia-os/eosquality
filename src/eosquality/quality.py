@@ -470,6 +470,7 @@ class ErsiliaQuality:
                 "n_features": int(self.signal.backend_.n_features),
             }
         manifest = {
+            "format_version": self._shared.metadata.format_version,
             "scores": list(self._components()),
             "n_samples": self._shared.metadata.n_samples,
             "n_features": self._shared.metadata.n_features,

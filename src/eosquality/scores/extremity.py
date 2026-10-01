@@ -7,13 +7,14 @@ score 1. Complementary to typicality (which is density-based, not
 position-based) — the pair (extremity, typicality) describes a query
 better than either alone.
 
-NaN queries carry no information about extremity, so they are dropped
-from the aggregate (per-feature stays NaN). The per-row aggregate is the
-**66th percentile** of per-feature values (``AGGREGATE_QUANTILE``), then
+Missing values carry no information: a NaN feature stays NaN per feature
+and is ignored by the aggregate; a row whose every feature is NaN scores
+NaN (same policy as typicality). The per-row aggregate is the **66th
+percentile** of the finite per-feature values (``AGGREGATE_QUANTILE``),
 mapped through the reference's own sorted Q66 distribution via
-:func:`_score_from_aggregates`. The calibrated score is uniform under
-the reference: a query at the reference median scores ~0.5, and the
-score is comparable across models with different feature counts.
+:func:`_score_from_aggregates` (mid-rank CDF). The calibrated score is
+uniform under the reference and comparable across models with different
+feature counts.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from __future__ import annotations
 import json
 import pathlib
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,11 +31,12 @@ import pandas as pd
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
-    AGGREGATE_QUANTILE,
     _make_query_repr,
+    _nan_aggregate,
     _reference_repr,
     _resolve_shared,
     _score_from_aggregates,
+    _sorted_finite,
 )
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
@@ -108,25 +109,12 @@ class Extremity(ScoreComponent):
         )
         _, ref_agg = compute_extremity(scaled_values=_reference_repr(shared, reference))
 
-        # CDF calibration is built only over reference rows whose aggregate
-        # is finite. An all-NaN reference row carries no information and
-        # would corrupt np.sort + searchsorted with NaNs at the tail.
-        finite_ref_agg = ref_agg[np.isfinite(ref_agg)]
-        sorted_self_aggregates = np.sort(finite_ref_agg).astype(np.float64)
-        if sorted_self_aggregates.size == 0:
-            raise ValueError(
-                "Extremity.fit: every reference row has all-NaN extremity, "
-                "so no CDF calibration is possible. Check the reference data."
-            )
+        sorted_self_aggregates = _sorted_finite(ref_agg, "Extremity")
 
         self._shared = shared
         self._sorted_self_aggregates = sorted_self_aggregates
         self._reference_extremity = float(
-            np.nanmean(
-                _score_from_aggregates(
-                    ref_agg, sorted_self_aggregates, sorted_self_aggregates.size
-                )
-            )
+            np.nanmean(_score_from_aggregates(ref_agg, sorted_self_aggregates))
         )
         self._finish_fit(t0)
         logger.debug(
@@ -166,14 +154,7 @@ class Extremity(ScoreComponent):
             query_repr = _make_query_repr(self._shared, query)
 
         per_feature, raw_aggregate = compute_extremity(scaled_values=query_repr)
-        score = _score_from_aggregates(
-            raw_aggregate,
-            self._sorted_self_aggregates,
-            self._sorted_self_aggregates.size,
-        )
-        # A query whose every feature is NaN has no information about
-        # extremity, so the calibrated score follows the raw NaN aggregate.
-        score = np.where(np.isfinite(raw_aggregate), score, np.nan)
+        score = _score_from_aggregates(raw_aggregate, self._sorted_self_aggregates)
         idx = list(query.index)
         return ExtremityRunResult(
             score=pd.Series(score, index=idx, name="extremity"),
@@ -263,10 +244,7 @@ def compute_extremity(
     n_query = scaled_values.shape[0]
     n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
     if n_features == 0:
-        return np.zeros((n_query, 0)), np.zeros(n_query)
+        return np.zeros((n_query, 0)), np.full(n_query, np.nan)
 
     per_feature = np.minimum(np.abs(scaled_values), 1.0)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        aggregate = np.nanquantile(per_feature, AGGREGATE_QUANTILE, axis=1)
-    return per_feature, aggregate
+    return per_feature, _nan_aggregate(per_feature)

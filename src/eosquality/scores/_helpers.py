@@ -9,9 +9,11 @@ Keeping them in one neutral module avoids the "Support owns
 from __future__ import annotations
 
 import pathlib
+import warnings
 
 import numpy as np
 import pandas as pd
+from rdkit import Chem
 
 from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.knn.fit import fit_knn
@@ -36,50 +38,75 @@ from eosquality.vectorindex import VectorIndex
 AGGREGATE_QUANTILE = 0.66
 
 
+def _nan_aggregate(per_feature: np.ndarray) -> np.ndarray:
+    """Per-row ``AGGREGATE_QUANTILE`` over the finite features of each row.
+
+    NaN features carry no information and are ignored; a row whose every
+    feature is NaN aggregates to NaN. Shared by typicality and extremity so
+    both follow the same missing-value policy.
+    """
+    if per_feature.shape[1] == 0:
+        return np.full(per_feature.shape[0], np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN rows
+        return np.nanquantile(per_feature, AGGREGATE_QUANTILE, axis=1)
+
+
 def _cdf_score(
     values: np.ndarray,
     sorted_self: np.ndarray,
-    n_reference: int,
     *,
     higher_is_higher: bool,
 ) -> np.ndarray:
     """Map per-row values to calibrated scores via the reference CDF.
 
-    Single source of truth for every CDF-calibrated score in the
-    package. ``higher_is_higher=True`` (typicality, extremity, signal):
-    a value above the reference median maps to a score above 0.5.
-    ``higher_is_higher=False`` (support, consistency — distance-based):
-    a *smaller* value (closer to the reference) maps to a score above
-    0.5 via a ``1 − cdf`` flip.
+    Single source of truth for every CDF-calibrated score in the package.
+    ``sorted_self`` is the ascending array of the same raw quantity computed
+    on the reference (finite values only).
 
-    Formula: ``cdf = searchsorted(sorted_self, values, side='right') /
-    n_reference``; return ``clip(cdf if higher_is_higher else 1 - cdf,
-    eps, 1.0)`` with ``eps = 1 / (2 · n_reference)``.
+    - ``higher_is_higher=True`` (typicality, extremity, signal): a value
+      above the reference median maps above 0.5.
+    - ``higher_is_higher=False`` (support, consistency — distances): a
+      *smaller* value maps above 0.5 via a ``1 − cdf`` flip.
+
+    The CDF uses **mid-ranks**, ``cdf = (#{ref < v} + #{ref ≤ v}) / (2n)``,
+    so a value tied with many reference rows sits in the middle of its tie
+    block instead of at its top. Reference rows scored against their own
+    CDF therefore average exactly 0.5 even for heavily tied raw values
+    (e.g. a one-output model, or quantised typicality). Results are
+    clipped to ``[eps, 1]`` with ``eps = 1 / (2n)``; NaN values stay NaN.
     """
-    eps = 1.0 / (2.0 * max(n_reference, 1))
-    cdf = np.searchsorted(sorted_self, values, side="right") / n_reference
-    out = cdf if higher_is_higher else 1.0 - cdf
-    return np.clip(out, eps, 1.0)
+    n = sorted_self.size
+    if n == 0:
+        raise ValueError("Cannot calibrate against an empty reference distribution.")
+    values = np.asarray(values, dtype=np.float64)
+    below = np.searchsorted(sorted_self, values, side="left")
+    at_or_below = np.searchsorted(sorted_self, values, side="right")
+    cdf = (below + at_or_below) / (2.0 * n)
+    out = np.clip(cdf if higher_is_higher else 1.0 - cdf, 1.0 / (2.0 * n), 1.0)
+    return np.where(np.isnan(values), np.nan, out)
 
 
 def _score_from_aggregates(
-    aggregates: np.ndarray,
-    sorted_self_aggregates: np.ndarray,
-    n_reference: int,
+    aggregates: np.ndarray, sorted_self_aggregates: np.ndarray
 ) -> np.ndarray:
     """``higher_is_higher=True`` wrapper around :func:`_cdf_score`.
 
-    Used by typicality / extremity / signal where the per-row aggregate
-    grows with the property being measured (more typical, more extreme,
-    more signal) and a query above the reference median should score
-    above 0.5.
+    Used by typicality / extremity / signal, where the per-row aggregate
+    grows with the property being measured.
     """
-    return _cdf_score(
-        aggregates,
-        sorted_self_aggregates,
-        n_reference,
-        higher_is_higher=True,
-    )
+    return _cdf_score(aggregates, sorted_self_aggregates, higher_is_higher=True)
+
+
+def _sorted_finite(values: np.ndarray, component: str) -> np.ndarray:
+    """Ascending float64 copy of the finite entries of ``values`` (the CDF table)."""
+    finite = np.sort(values[np.isfinite(values)]).astype(np.float64)
+    if finite.size == 0:
+        raise ValueError(
+            f"{component}.fit: no reference row has a finite raw value, so no "
+            "CDF calibration is possible. Check the reference data."
+        )
+    return finite
 
 
 # ---------------------------------------------------------------------------
@@ -252,11 +279,22 @@ def _resolve_vector_index(shared: SharedFitState) -> VectorIndex:
 # ---------------------------------------------------------------------------
 
 
-# Tanimoto distance below this is treated as a perfect-fingerprint match
-# (i.e. the query molecule is present in the library, possibly under a
-# different canonical SMILES). FPSim2 returns 0.0 in that case; the small
-# epsilon guards against float-precision wobble.
+# Tanimoto distance below this is a perfect fingerprint match. FPSim2 returns
+# exactly 0.0; the epsilon guards against float wobble.
 _SELF_MATCH_DISTANCE_THRESHOLD = 1e-6
+
+
+def _canonical(smiles: str) -> str | None:
+    """RDKit canonical isomeric SMILES, or ``None`` if it does not parse."""
+    mol = Chem.MolFromSmiles(smiles)
+    return Chem.MolToSmiles(mol) if mol is not None else None
+
+
+def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
+    if query_smiles == library_smiles:
+        return True
+    a, b = _canonical(query_smiles), _canonical(library_smiles)
+    return a is not None and a == b
 
 
 def _query_fp_distances(
@@ -268,19 +306,18 @@ def _query_fp_distances(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(fp_distances, indices)`` for each query row, shape ``(n_query, k)``.
 
-    Wraps :meth:`VectorIndex.query`. The reference's calibration CDF is
-    built from **identity-stripped** self-kNN distances (each library
-    row's k nearest neighbors are k *other* molecules — see the index
-    build step). For the per-query lookup to be comparable, we strip
-    perfect-Tanimoto self-matches here too: queries that are already in
-    the library would otherwise return themselves as the top neighbor
-    with distance 0, inflating their score artificially.
+    Wraps :meth:`VectorIndex.query`. The reference's calibration CDFs are
+    built from **identity-stripped** self-kNN (each library row's k nearest
+    neighbors are k *other* molecules). For queries to be comparable, a
+    query that *is* a library molecule must not count itself as a
+    neighbor: we query ``k + 1`` neighbors and drop the zero-distance
+    neighbor whose library SMILES is the query molecule (string match, or
+    same RDKit canonical isomeric SMILES). Rows without such a match drop
+    their furthest neighbor instead. A zero-distance neighbor that is a
+    *different* molecule (e.g. a stereoisomer sharing the Morgan
+    fingerprint) is kept, exactly as in the library's own self-kNN.
 
-    To do this we query ``k + 1`` neighbors and drop one column per row:
-    the first perfect-match entry if any exists, else the furthest of
-    the ``k + 1``. Pass ``exclude_self_match=False`` to opt out (useful
-    if you've already pre-stripped the query SMILES, or for direct
-    raw-distance debugging).
+    Pass ``exclude_self_match=False`` to return the raw top-k.
     """
     query_smiles = list(query["input"])
     if not exclude_self_match:
@@ -290,17 +327,18 @@ def _query_fp_distances(
     fp_distances, vi_indices = vi.query(query_smiles, k=k + 1)
     fp_distances = fp_distances.astype(np.float64)
     n_query = fp_distances.shape[0]
+    library_smiles = vi.smiles
 
-    zero_mask = fp_distances < _SELF_MATCH_DISTANCE_THRESHOLD  # (n_query, k+1)
-    has_zero = zero_mask.any(axis=1)
-    first_zero = zero_mask.argmax(axis=1)  # 0 when has_zero is False (unused)
-    # Column to drop per row: first perfect match if any, else the furthest
-    # (the (k+1)-th entry, index k).
-    drop_col = np.where(has_zero, first_zero, k)
+    # Column to drop per row: the self match if present, else the furthest.
+    drop_col = np.full(n_query, k, dtype=np.int64)
+    rows, cols = np.nonzero(fp_distances < _SELF_MATCH_DISTANCE_THRESHOLD)
+    for i, j in zip(rows, cols):
+        if drop_col[i] != k:
+            continue  # already found this row's self match
+        if _is_same_molecule(query_smiles[i], library_smiles[vi_indices[i, j]]):
+            drop_col[i] = j
 
-    all_cols = np.arange(k + 1)
-    keep_mask = all_cols[None, :] != drop_col[:, None]  # (n_query, k+1)
-
+    keep_mask = np.arange(k + 1)[None, :] != drop_col[:, None]
     fp_kept = fp_distances[keep_mask].reshape(n_query, k)
     idx_kept = vi_indices[keep_mask].reshape(n_query, k)
     return fp_kept, idx_kept
@@ -318,17 +356,20 @@ def _query_output_distances(
     """Mean L1 in output space from ``query_repr`` to ``ref_repr[indices]``.
 
     Returns ``(n_query, k)``: for each query row and each of its k
-    FP-selected neighbors, the mean absolute difference over features.
+    FP-selected neighbors, the mean absolute difference over the features
+    that are finite on both sides (NaN if none are).
     ``indices`` come from :func:`_query_fp_distances` (run time) or the
     precomputed self-kNN (fit time). ``ref_repr`` is the post-reduction
     scaled reference matrix, ``SharedFitState.ref_repr``. Computed in
     row chunks to keep peak memory flat for reference-sized inputs.
     """
-    n_query, n_features = query_repr.shape
+    n_query = query_repr.shape[0]
     out = np.empty(indices.shape, dtype=np.float64)
     for start in range(0, n_query, _OUTPUT_DISTANCE_CHUNK):
         stop = min(start + _OUTPUT_DISTANCE_CHUNK, n_query)
         diffs = query_repr[start:stop, None, :] - ref_repr[indices[start:stop]]
         np.abs(diffs, out=diffs)
-        out[start:stop] = diffs.sum(axis=2) / n_features
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN
+            out[start:stop] = np.nanmean(diffs, axis=2)
     return out

@@ -128,11 +128,7 @@ class Support(ScoreComponent):
         # healthy reference.
         self._reference_support = float(
             np.mean(
-                _support_from_distances(
-                    knn.mean_fp_distances,
-                    sorted_self_distances,
-                    len(knn.mean_fp_distances),
-                )
+                _support_from_distances(knn.mean_fp_distances, sorted_self_distances)
             )
         )
         self._vector_index_cache = vi
@@ -186,7 +182,7 @@ class Support(ScoreComponent):
         n_ref = len(self._shared.reference_ids)
         distance_k_mean = query_fp_distances.mean(axis=1)
         support_score = _support_from_distances(
-            distance_k_mean, self._sorted_self_distances, n_ref
+            distance_k_mean, self._sorted_self_distances
         )
 
         idx = list(query.index)
@@ -266,20 +262,11 @@ class Support(ScoreComponent):
 
 
 def _support_from_distances(
-    distance_k_mean: np.ndarray,
-    sorted_self_distances: np.ndarray,
-    n_reference: int,
+    distance_k_mean: np.ndarray, sorted_self_distances: np.ndarray
 ) -> np.ndarray:
-    """Map per-row mean k-distances to support scores via the CDF.
+    """Map per-row mean k-distances to support scores via the reference CDF.
 
-    Thin distance-direction wrapper around :func:`_cdf_score` with
-    ``higher_is_higher=False``: smaller FP distance → closer to the
-    reference → higher support. Shared by :meth:`Support.fit` (for the
-    ``reference_support_`` baseline) and :meth:`Support.run`.
+    Distance-direction wrapper around :func:`_cdf_score`: a smaller FP
+    distance (closer to the reference) gives higher support.
     """
-    return _cdf_score(
-        distance_k_mean,
-        sorted_self_distances,
-        n_reference,
-        higher_is_higher=False,
-    )
+    return _cdf_score(distance_k_mean, sorted_self_distances, higher_is_higher=False)

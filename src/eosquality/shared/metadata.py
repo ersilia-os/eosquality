@@ -57,6 +57,14 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
     )
 
 
+# On-disk artifact format. Bump whenever saved files change meaning or
+# layout so older artifacts fail at load with a clear "refit" message
+# instead of producing silently different scores.
+#   2 — mid-rank CDF calibration, NaN-ignoring aggregates, merged
+#       consistency FP bins, signal CDF as .npy, custom index paths.
+ARTIFACT_FORMAT_VERSION = 2
+
+
 @dataclass
 class FitMetadata:
     """Provenance and dataset statistics for a fitted reference population."""
@@ -76,6 +84,7 @@ class FitMetadata:
     # Absolute path of a non-canonical vector index; "" for the canonical
     # library, which is resolved by library_id at run time instead.
     vector_index_path: str = ""
+    format_version: int = ARTIFACT_FORMAT_VERSION
 
 
 def compute_metadata(

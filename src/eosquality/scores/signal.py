@@ -68,6 +68,7 @@ SUBFOLDER = "signal"
 LEARNER_STATE_FILE = "learner.json"
 LEARNER_MODEL_FILE = "learner.ubj"
 UMBRELLA_FILE = "umbrella.json"
+SELF_AGGREGATES_FILE = "reference_self_aggregates.npy"
 # Calibration-time SHAP matrix on the val slice — ``(n_val, n_features)``
 # float32. Persisted so the score formula can be iterated offline without
 # recomputing SHAP (which is the slow step). Provisional while the raw
@@ -614,7 +615,7 @@ class Signal(ScoreComponent):
         self._backend = backend
         self._sorted_self_aggregates = sorted_self
         self._reference_signal = float(
-            np.mean(_score_from_aggregates(ref_agg, sorted_self, len(ref_agg)))
+            np.mean(_score_from_aggregates(ref_agg, sorted_self))
         )
         self._reference_signal_raw = float(ref_agg.mean())
         # float32 halves disk + memory; SHAP values don't need float64.
@@ -663,11 +664,7 @@ class Signal(ScoreComponent):
             row_aggregate = _shap_signal_raw(self._learner.model_, query_X)
         else:
             row_aggregate = np.zeros(0, dtype=np.float64)
-        score = _score_from_aggregates(
-            row_aggregate,
-            self._sorted_self_aggregates,
-            len(self._sorted_self_aggregates),
-        )
+        score = _score_from_aggregates(row_aggregate, self._sorted_self_aggregates)
         logger.debug(
             f"signal | run | {len(smiles_list):,} queries | "
             f"descriptor={self._backend.name} | {time.perf_counter() - t0:.1f}s"
@@ -697,8 +694,9 @@ class Signal(ScoreComponent):
         - Backend state (``physchem_scaler.json`` for ``physchem``; nothing
           extra for ``maccs``).
         - ``umbrella.json`` — formula_version, descriptor, output_columns,
-          reference_signal, reference_signal_raw, and the sorted reference
-          Gini values used as the calibration CDF.
+          reference_signal, reference_signal_raw.
+        - ``reference_self_aggregates.npy`` — sorted val-slice Gini values,
+          the calibration CDF.
         - ``val_shap_attributions.npy`` — ``(n_val, n_features)`` float32
           ``|SHAP|`` matrix on the val slice, for offline formula iteration.
         """
@@ -713,10 +711,10 @@ class Signal(ScoreComponent):
             "output_columns": list(self._output_columns or []),
             "reference_signal": float(self._reference_signal or 0.0),
             "reference_signal_raw": float(self._reference_signal_raw or 0.0),
-            "sorted_self_aggregates": self._sorted_self_aggregates.tolist(),
         }
         with open(folder / UMBRELLA_FILE, "w") as f:
-            json.dump(umbrella_payload, f)
+            json.dump(umbrella_payload, f, indent=2)
+        np.save(folder / SELF_AGGREGATES_FILE, self._sorted_self_aggregates)
         if self._val_shap_attributions is not None:
             np.save(folder / VAL_SHAP_ATTRIBUTIONS_FILE, self._val_shap_attributions)
 
@@ -733,8 +731,8 @@ class Signal(ScoreComponent):
         self._backend = load_backend(umbrella["descriptor"], folder)
         self._learner = SignalLearner.load(folder)
         self._output_columns = list(umbrella["output_columns"])
-        self._sorted_self_aggregates = np.asarray(
-            umbrella["sorted_self_aggregates"], dtype=np.float64
+        self._sorted_self_aggregates = np.load(
+            require_file(folder / SELF_AGGREGATES_FILE, self.NAME)
         )
         self._reference_signal = float(umbrella["reference_signal"])
         self._reference_signal_raw = float(umbrella["reference_signal_raw"])
