@@ -101,6 +101,7 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
   - With physchem descriptors, raw Gini values cluster near their maximum (about 0.99 on the test fixture), so most of the discrimination comes from small differences.
   - The full val-slice |SHAP| matrix is saved to `signal/val_shap_attributions.npy` so other reductions can be prototyped offline.
 - **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30).
+- **Support and molecule size:** Tanimoto similarity is lower for small molecules, so small fragments look somewhat more novel than they are. This is not corrected for (see Support).
 - **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
 - **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality download`.
 - **Run time** for 1,000 queries is about 15 s with all five scores, dominated by FPSim2 queries (about 10 ms each). Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes a few minutes.
