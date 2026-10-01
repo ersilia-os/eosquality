@@ -132,9 +132,10 @@ def _compute_binary_class_freq(
 
     The eosframes binary transform snaps every non-NaN value to whichever of
     ``{low, high}`` is closer. We replicate that snap here over the raw
-    reference and record the resulting fraction of 1s, so query-time
-    typicality can grade a 1 against ``freq_high`` and a 0 against
-    ``1 - freq_high``. NaNs are excluded from the denominator; a column
+    reference and record the resulting fraction of 1s as a descriptive
+    statistic in ``shared/binary_class_freq.json`` (no score reads it;
+    typicality's density LUTs already capture class balance). NaNs are
+    excluded from the denominator; a column
     whose reference is entirely NaN gets a sentinel 0.5 (balanced — no
     information either way).
     """
