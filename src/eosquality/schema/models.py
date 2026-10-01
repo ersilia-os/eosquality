@@ -23,7 +23,3 @@ class Schema:
     @property
     def column_names(self) -> list[str]:
         return [c.name for c in self.columns]
-
-    @property
-    def numeric_columns(self) -> list[ColumnSpec]:
-        return [c for c in self.columns if c.kind == "numeric"]

@@ -13,7 +13,6 @@ from eosquality.shared.splitter import Split
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
-
 SUBFOLDER = "shared"
 
 
@@ -90,4 +89,5 @@ def _metadata_from_dict(d: dict) -> FitMetadata:
         column_characteristics=characteristics,
         library_id=d.get("library_id", ""),
         fit_duration_seconds=float(d.get("fit_duration_seconds", 0.0)),
+        vector_index_path=d.get("vector_index_path", ""),
     )

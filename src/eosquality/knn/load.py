@@ -8,7 +8,6 @@ import pathlib
 from eosquality.knn.state import KnnFitState
 from eosquality.utils.logging import logger
 
-
 SUBFOLDER = "knn"
 STATE_FILE = "state.json"
 

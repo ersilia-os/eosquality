@@ -2,15 +2,13 @@
 
 Two interchangeable descriptor backends drive the same SHAP-Gini score:
 
-- :class:`PhyschemBackend` — 217 RDKit physicochemical descriptors,
-  scaled via the same scaler that ``eosquality build`` fits on the
-  library. Reference values are loaded from the precomputed
-  ``physchem_scaled.npy`` that ships with the library; query values
-  are computed on demand with the saved scaler params.
-- :class:`MaccsBackend` — 167-bit RDKit MACCS structural fingerprint.
-  Nothing is precomputed at library time; reference and query bits
-  are both computed on demand via RDKit (fast enough that on-the-fly
-  works for the subsampled training rows + the val slice).
+- :class:`PhyschemBackend` — RDKit physicochemical descriptors, scaled
+  with the scaler that ``eosquality build`` fits on the library.
+  Reference rows come from the library's ``physchem_scaled.npy``; query
+  rows are computed on demand with the saved scaler params.
+- :class:`MaccsBackend` — 166-bit RDKit MACCS keys. Reference rows come
+  from the library's ``maccs.npy``; query rows are computed on demand with
+  the same function the library build used.
 
 Both backends expose the same interface so :class:`signal.Signal` can
 plug in either one. The choice is decided at fit time and baked into
@@ -26,12 +24,14 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import MACCSkeys
-
-from eosquality.library.physchem import apply_scaler, compute_physchem_raw
+from eosquality.exceptions import ArtifactVersionError
+from eosquality.library.maccs import MACCS_FILE, N_MACCS, compute_maccs
+from eosquality.library.physchem import (
+    apply_scaler,
+    check_descriptor_names,
+    compute_physchem_raw,
+)
 from eosquality.vectorindex import VectorIndex
-
 
 PHYSCHEM_NAME = "physchem"
 MACCS_NAME = "maccs"
@@ -41,19 +41,22 @@ DEFAULT_DESCRIPTOR: str = PHYSCHEM_NAME
 PHYSCHEM_SCALER_FILE = "physchem_scaler.json"
 PHYSCHEM_REF_MATRIX_FILE = "physchem_scaled.npy"
 
-MACCS_N_FEATURES: int = 167
-MACCS_FEATURE_NAMES: tuple[str, ...] = tuple(
-    f"maccs_{i:03d}" for i in range(MACCS_N_FEATURES)
-)
+
+def _gather_rows(matrix: np.ndarray, indices: np.ndarray) -> np.ndarray:
+    """``matrix[indices]`` read in ascending row order (fast on a memmap)."""
+    order = np.argsort(indices, kind="stable")
+    out = np.empty((len(indices), matrix.shape[1]), dtype=matrix.dtype)
+    out[order] = matrix[indices[order]]
+    return out
 
 
 class PhyschemBackend:
-    """217-dim RDKit physchem descriptors with library-fitted scaler.
+    """RDKit physchem descriptors with the library-fitted scaler.
 
-    Reference values are loaded once from the library's
-    ``physchem_scaled.npy`` and cached as ``_ref_matrix``; query values
-    are computed on the fly with the saved scaler params so they match
-    the reference scaling bit-for-bit.
+    Reference rows are gathered from the library's memory-mapped
+    ``physchem_scaled.npy``; query rows are computed on the fly with the
+    saved scaler params. The installed RDKit's descriptor list must match
+    the one the library was built with (checked on construction).
     """
 
     name: str = PHYSCHEM_NAME
@@ -64,20 +67,13 @@ class PhyschemBackend:
         *,
         reference_matrix: np.ndarray | None = None,
     ) -> None:
+        check_descriptor_names(scaler_params)
         self._scaler_params = scaler_params
         self._ref_matrix = reference_matrix
 
     @property
     def n_features(self) -> int:
         return len(self._scaler_params["descriptor_names"])
-
-    @property
-    def feature_names(self) -> list[str]:
-        return list(self._scaler_params["descriptor_names"])
-
-    @property
-    def scaler_params(self) -> dict:
-        return self._scaler_params
 
     def compute_reference_subset(
         self, reference: pd.DataFrame, indices: np.ndarray
@@ -87,7 +83,7 @@ class PhyschemBackend:
                 "PhyschemBackend has no cached reference matrix; "
                 "construct via PhyschemBackend.from_library(vi)."
             )
-        return self._ref_matrix[indices]
+        return _gather_rows(self._ref_matrix, indices)
 
     def query_matrix(self, smiles_list: list[str]) -> np.ndarray:
         raw = compute_physchem_raw(smiles_list)
@@ -99,7 +95,7 @@ class PhyschemBackend:
 
     @classmethod
     def from_library(cls, vi: VectorIndex) -> "PhyschemBackend":
-        library_dir = pathlib.Path(vi._h5_path).parent
+        library_dir = vi.index_dir
         scaler_path = library_dir / PHYSCHEM_SCALER_FILE
         matrix_path = library_dir / PHYSCHEM_REF_MATRIX_FILE
         if not scaler_path.is_file():
@@ -114,7 +110,11 @@ class PhyschemBackend:
             )
         with open(scaler_path) as f:
             scaler = json.load(f)
-        return cls(scaler_params=scaler, reference_matrix=np.load(matrix_path))
+        # Memory-mapped: fit only gathers the train + val rows.
+        return cls(
+            scaler_params=scaler,
+            reference_matrix=np.load(matrix_path, mmap_mode="r"),
+        )
 
     @classmethod
     def load_state(cls, folder: pathlib.Path) -> "PhyschemBackend":
@@ -129,52 +129,55 @@ class PhyschemBackend:
 
 
 class MaccsBackend:
-    """167-bit RDKit MACCS structural fingerprint, computed on demand.
+    """166-bit RDKit MACCS keys.
 
-    No library-level precomputation: reference + query bits are
-    computed fresh via :func:`rdkit.Chem.MACCSkeys.GenMACCSKeys`. Fast
-    enough that on-the-fly works at fit time (for the subsampled train
-    rows + the val slice) and at run time. Bit 0 is always 0 (RDKit
-    placeholder); kept in the matrix since XGBoost + SHAP handle the
-    constant column without issue.
+    Reference rows are gathered from the library's memory-mapped
+    ``maccs.npy``; query rows are computed with
+    :func:`eosquality.library.maccs.compute_maccs`, the same function the
+    library build used, so both sides share one bit layout. No per-fit
+    state is persisted.
     """
 
     name: str = MACCS_NAME
 
-    @property
-    def n_features(self) -> int:
-        return MACCS_N_FEATURES
+    def __init__(self, *, reference_matrix: np.ndarray | None = None) -> None:
+        self._ref_matrix = reference_matrix
 
     @property
-    def feature_names(self) -> list[str]:
-        return list(MACCS_FEATURE_NAMES)
+    def n_features(self) -> int:
+        return N_MACCS
 
     def compute_reference_subset(
         self, reference: pd.DataFrame, indices: np.ndarray
     ) -> np.ndarray:
-        return self.query_matrix(list(reference["input"].iloc[indices]))
+        if self._ref_matrix is None:
+            raise RuntimeError(
+                "MaccsBackend has no reference matrix; construct via "
+                "MaccsBackend.from_library(vi)."
+            )
+        return _gather_rows(self._ref_matrix, indices)
 
     def query_matrix(self, smiles_list: list[str]) -> np.ndarray:
-        out = np.zeros((len(smiles_list), MACCS_N_FEATURES), dtype=np.uint8)
-        for i, smi in enumerate(smiles_list):
-            mol = Chem.MolFromSmiles(smi)
-            if mol is None:
-                continue
-            bits = MACCSkeys.GenMACCSKeys(mol)
-            out[i] = np.array(list(bits), dtype=np.uint8)
-        return out
+        return compute_maccs(smiles_list)
 
     def save_state(self, folder: pathlib.Path) -> None:
-        # No per-fit parameters; the descriptor identifier in umbrella.json
-        # is enough to reconstruct the backend at load time.
         return None
 
     @classmethod
     def from_library(cls, vi: VectorIndex) -> "MaccsBackend":
-        # MACCS is library-independent; the VectorIndex argument is
-        # accepted for symmetry with PhyschemBackend.from_library.
-        del vi
-        return cls()
+        path = vi.index_dir / MACCS_FILE
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Reference MACCS matrix not found at {path}. "
+                "Re-build the library (eosquality build)."
+            )
+        matrix = np.load(path, mmap_mode="r")
+        if matrix.shape != (vi.n_reference, N_MACCS):
+            raise ValueError(
+                f"{path} has shape {matrix.shape}; expected "
+                f"({vi.n_reference}, {N_MACCS}). Re-build the library."
+            )
+        return cls(reference_matrix=matrix)
 
     @classmethod
     def load_state(cls, folder: pathlib.Path) -> "MaccsBackend":
@@ -202,7 +205,7 @@ def load_backend(name: str, folder: pathlib.Path) -> DescriptorBackend:
         return PhyschemBackend.load_state(folder)
     if name == MACCS_NAME:
         return MaccsBackend.load_state(folder)
-    raise FileNotFoundError(
+    raise ArtifactVersionError(
         f"signal artifact at {folder} declares descriptor={name!r}, which is "
         f"not a recognized descriptor in this eosquality install "
         f"(known: {DESCRIPTOR_NAMES}). Refit with a supported descriptor."

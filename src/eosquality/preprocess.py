@@ -8,7 +8,7 @@ and emits a per-kind robust transform into a documented float region inside
 ``[-1, 1]``.
 
 This module keeps the eosquality-facing surface (``fit_transform``,
-``transform``, ``raw_numeric_values``, ``get_state``, ``from_state``) so the
+``transform``, ``get_state``, ``from_state``) so the
 quality API and per-score code don't need to change. State persists as the
 plain JSON-serialisable dict returned by ``eosframes.fit`` — see the
 ``shared/`` save/load helpers.
@@ -76,22 +76,6 @@ class PreprocessPipeline:
             raise RuntimeError("PreprocessPipeline must be fitted before transform().")
         feature_cols = list(self._schema.column_names)
         return self._transform_to_array(df[feature_cols])
-
-    def raw_numeric_values(self, df: pd.DataFrame) -> np.ndarray:
-        """Return raw float values for the fitted columns, shape (n, n_features).
-
-        Typicality re-quantizes the eosframes scaled output rather than reading
-        the raw values, but the kNN distance fallback and external callers may
-        still want the unscaled array.
-        """
-        if self._params is None:
-            raise RuntimeError(
-                "PreprocessPipeline must be fitted before raw_numeric_values()."
-            )
-        feature_cols = list(self._schema.column_names)
-        if not feature_cols:
-            return np.empty((len(df), 0))
-        return df[feature_cols].to_numpy(dtype=float)
 
     # ------------------------------------------------------------------
     # Serialization state

@@ -14,3 +14,12 @@ class IncompatibleArtifactsError(ValueError):
     major cannot be loaded under another — scores would silently differ. Refit
     with a compatible release, or install the release that produced the artifacts.
     """
+
+
+class ArtifactVersionError(IncompatibleArtifactsError):
+    """Raised when a saved artifact was written in an older, unsupported format.
+
+    The artifact's files are present but describe a format this eosquality
+    install no longer reads (e.g. an earlier score formula). Refit with the
+    current version.
+    """

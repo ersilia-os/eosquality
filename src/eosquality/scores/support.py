@@ -15,33 +15,26 @@ import json
 import pathlib
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from eosquality.knn.load import load_knn
-from eosquality.knn.save import save_knn
 from eosquality.knn.state import KnnFitState
+from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
     _cdf_score,
-    _component_metadata,
     _query_fp_distances,
     _resolve_shared_and_knn,
     _resolve_vector_index,
 )
-from eosquality.shared.load import load_shared
-from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
-
 SUBFOLDER = "support"
 STATE_FILE = "state.json"
 DISTANCES_FILE = "reference_self_distances.npy"
-METADATA_FILE = "metadata.json"
 
 
 @dataclass
@@ -56,7 +49,7 @@ class SupportRunResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class Support:
+class Support(ScoreComponent):
     """CDF-based support scorer (FP-space Tanimoto distances).
 
     Holds three pieces of fitted state:
@@ -75,14 +68,14 @@ class Support:
     on Tanimoto distances only.
     """
 
+    NAME = SUBFOLDER
+    USES_KNN = True
+
     def __init__(self) -> None:
-        self._shared: SharedFitState | None = None
-        self._knn: KnnFitState | None = None
+        super().__init__()
         self._sorted_self_distances: np.ndarray | None = None
         self._reference_support: float | None = None
         self._vector_index_cache: VectorIndex | None = None
-        self._fit_duration_seconds: float | None = None
-        self._fit_timestamp: str | None = None
 
     # ------------------------------------------------------------------
     # Fit
@@ -110,9 +103,6 @@ class Support:
         Either pass pre-fit ``shared=`` / ``knn=`` (when composed by
         :class:`ErsiliaQuality`), or pass ``eos_id`` + ``version`` +
         ``vector_index`` so Support can fit both states itself.
-
-        Records the wall-clock duration and a UTC timestamp; both are
-        persisted by :meth:`save` to ``support/metadata.json``.
         """
         t0 = time.perf_counter()
         shared, knn, vi = _resolve_shared_and_knn(
@@ -124,18 +114,19 @@ class Support:
             shared=shared,
             knn=knn,
         )
-
         if knn.mean_fp_distances is None:
             raise RuntimeError(
                 "Support.fit requires a KnnFitState that still carries fit-time "
                 "mean_fp_distances (i.e., produced by fit_knn in this pass)."
             )
         sorted_self_distances = np.sort(knn.mean_fp_distances).astype(np.float64)
-        # reference_support_ is the mean support a reference row receives
-        # against its own CDF — same formula as run() applied to the
-        # reference itself. By construction this is ≈ 0.5 for a healthy
-        # reference; large drifts signal heavy ties in self-distances.
-        reference_support = float(
+
+        self._shared = shared
+        self._knn = knn
+        self._sorted_self_distances = sorted_self_distances
+        # Same formula as run() applied to the reference itself; ≈ 0.5 for a
+        # healthy reference.
+        self._reference_support = float(
             np.mean(
                 _support_from_distances(
                     knn.mean_fp_distances,
@@ -144,17 +135,11 @@ class Support:
                 )
             )
         )
-
-        self._shared = shared
-        self._knn = knn
-        self._sorted_self_distances = sorted_self_distances
-        self._reference_support = reference_support
         self._vector_index_cache = vi
-        self._fit_duration_seconds = float(time.perf_counter() - t0)
-        self._fit_timestamp = datetime.now(tz=timezone.utc).isoformat()
+        self._finish_fit(t0)
         logger.debug(
             f"Support fit | k={knn.k} | n_ref={len(knn.mean_fp_distances):,}"
-            f" | reference_support={reference_support:.4f}"
+            f" | reference_support={self._reference_support:.4f}"
             f" | duration={self._fit_duration_seconds:.3f}s"
         )
         return self
@@ -177,15 +162,11 @@ class Support:
         query:
             DataFrame with an ``'input'`` SMILES column for the vector
             index (other columns are ignored — Support is FP-only).
-        query_fp_indices:
-            Optional pre-computed FP-selected neighbor indices
-            ``(n_query, k)``.
-        query_fp_distances:
-            Optional pre-computed Tanimoto distances to those neighbors
-            ``(n_query, k)``. ``query_fp_indices`` and
-            ``query_fp_distances`` must be passed together or not at all
-            — used by :class:`ErsiliaQuality` to share the FP query
-            across scores.
+        query_fp_indices, query_fp_distances:
+            Optional pre-computed FP-selected neighbor indices and their
+            Tanimoto distances, each ``(n_query, k)``. Must be passed
+            together — used by :class:`ErsiliaQuality` to share the FP
+            query across scores.
         """
         self._check_fitted()
         assert self._shared is not None
@@ -204,24 +185,24 @@ class Support:
 
         n_ref = len(self._shared.reference_ids)
         distance_k_mean = query_fp_distances.mean(axis=1)
-        distance_k_max = query_fp_distances.max(axis=1)
         support_score = _support_from_distances(
             distance_k_mean, self._sorted_self_distances, n_ref
         )
 
         idx = list(query.index)
-        nearest_reference_ids = [
-            [self._shared.reference_ids[j] for j in query_fp_indices[i]]
-            for i in range(len(query))
-        ]
+        reference_ids = self._shared.reference_ids
         return SupportRunResult(
             score=pd.Series(support_score, index=idx, name="support"),
             score_raw=pd.Series(distance_k_mean, index=idx, name="support_raw"),
             distance_k_mean=pd.Series(
                 distance_k_mean, index=idx, name="distance_k_mean"
             ),
-            distance_k_max=pd.Series(distance_k_max, index=idx, name="distance_k_max"),
-            nearest_reference_ids=nearest_reference_ids,
+            distance_k_max=pd.Series(
+                query_fp_distances.max(axis=1), index=idx, name="distance_k_max"
+            ),
+            nearest_reference_ids=[
+                [reference_ids[j] for j in row] for row in query_fp_indices
+            ],
             metadata={
                 "reference_support": self._reference_support,
                 "n_reference": n_ref,
@@ -233,86 +214,22 @@ class Support:
     # Save / load
     # ------------------------------------------------------------------
 
-    def save(self, root: str | pathlib.Path) -> pathlib.Path:
-        """Persist into ``<root>/shared/``, ``<root>/knn/`` and ``<root>/support/``.
-
-        Writes three files under ``support/``:
-
-        - ``state.json`` — the ``reference_support`` baseline.
-        - ``reference_self_distances.npy`` — the sorted CDF array.
-        - ``metadata.json`` — fit timestamp, fit duration, k, n_samples,
-          n_features, eosquality_version.
-
-        Also writes the shared and kNN subfolders via :func:`save_shared`
-        and :func:`save_knn` so the artifact is self-contained.
-        """
-        self._check_fitted()
-        assert self._shared is not None
-        assert self._knn is not None
+    def _save_own(self, folder: pathlib.Path) -> None:
+        """Write ``state.json`` (baseline) and the sorted CDF array."""
         assert self._sorted_self_distances is not None
-        save_shared(self._shared, root)
-        save_knn(self._knn, root)
-        folder = pathlib.Path(root) / SUBFOLDER
-        folder.mkdir(parents=True, exist_ok=True)
         np.save(folder / DISTANCES_FILE, self._sorted_self_distances)
-        payload = {"reference_support": self._reference_support}
         with open(folder / STATE_FILE, "w") as f:
-            json.dump(payload, f)
-        meta = _component_metadata(
-            component="support",
-            k=int(self._knn.k),
-            fit_timestamp=self._fit_timestamp,
-            fit_duration_seconds=self._fit_duration_seconds,
-        )
-        with open(folder / METADATA_FILE, "w") as f:
-            json.dump(meta, f, indent=2)
-        logger.debug(
-            f"  support/ | reference_support={self._reference_support:.4f}"
-            f" | fit_duration={meta['fit_duration_seconds']:.3f}s"
-        )
-        return pathlib.Path(root)
+            json.dump({"reference_support": self._reference_support}, f)
 
-    @classmethod
-    def load(cls, root: str | pathlib.Path) -> "Support":
-        """Reconstruct from ``<root>/shared/`` + ``<root>/knn/`` + ``<root>/support/``."""
-        shared = load_shared(root)
-        knn = load_knn(root)
-        folder = pathlib.Path(root) / SUBFOLDER
-        distances_path = folder / DISTANCES_FILE
-        if not distances_path.is_file():
-            raise FileNotFoundError(
-                f"Missing {distances_path}. The support artifact is incomplete "
-                "(or predates the current support format) and must be refit "
-                "with the current eosquality version."
-            )
-        state_path = folder / STATE_FILE
-        if not state_path.is_file():
-            raise FileNotFoundError(
-                f"Missing {state_path}. The support artifact is incomplete "
-                "and must be refit."
-            )
-        sorted_self_distances = np.load(distances_path)
-        with open(state_path) as f:
-            payload = json.load(f)
-        meta_path = folder / METADATA_FILE
-        fit_duration = None
-        fit_timestamp = None
-        if meta_path.is_file():
-            with open(meta_path) as f:
-                meta = json.load(f)
-            fit_duration = float(meta.get("fit_duration_seconds", 0.0))
-            fit_timestamp = meta.get("fit_timestamp")
-        instance = cls()
-        instance._shared = shared
-        instance._knn = knn
-        instance._sorted_self_distances = sorted_self_distances
-        instance._reference_support = float(payload["reference_support"])
-        instance._fit_duration_seconds = fit_duration
-        instance._fit_timestamp = fit_timestamp
-        return instance
+    def _load_own(self, folder: pathlib.Path) -> None:
+        self._sorted_self_distances = np.load(
+            require_file(folder / DISTANCES_FILE, self.NAME)
+        )
+        payload = read_json(folder / STATE_FILE, self.NAME)
+        self._reference_support = float(payload["reference_support"])
 
     # ------------------------------------------------------------------
-    # Properties / helpers
+    # Properties
     # ------------------------------------------------------------------
 
     @property
@@ -325,18 +242,6 @@ class Support:
         )
 
     @property
-    def shared_(self) -> SharedFitState:
-        self._check_fitted()
-        assert self._shared is not None
-        return self._shared
-
-    @property
-    def knn_(self) -> KnnFitState:
-        self._check_fitted()
-        assert self._knn is not None
-        return self._knn
-
-    @property
     def sorted_self_distances_(self) -> np.ndarray:
         self._check_fitted()
         assert self._sorted_self_distances is not None
@@ -347,18 +252,6 @@ class Support:
         self._check_fitted()
         assert self._reference_support is not None
         return self._reference_support
-
-    @property
-    def fit_duration_seconds_(self) -> float | None:
-        return self._fit_duration_seconds
-
-    @property
-    def fit_timestamp_(self) -> str | None:
-        return self._fit_timestamp
-
-    def _check_fitted(self) -> None:
-        if not self.is_fitted_:
-            raise RuntimeError("Support must be fitted (or loaded) before use.")
 
     def _get_vector_index(self) -> VectorIndex:
         assert self._shared is not None

@@ -5,6 +5,7 @@ Build once per reference molecule collection; share across many models.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import pathlib
@@ -15,20 +16,14 @@ import numpy as np
 from FPSim2 import FPSim2Engine
 from FPSim2.io import create_db_file
 from rdkit import __version__ as _RDKIT_VERSION
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
-
 from eosquality.utils.logging import logger
+from eosquality.utils.progress import make_progress
 
 _PROGRESS_THRESHOLD = 25  # show the FP kNN bar once n_query is at least this
+# FPSim2 top-k searches run single-threaded on purpose: with n_workers > 1
+# the order of equally-similar neighbors is not stable, so which molecule
+# fills the k-th slot (and therefore Consistency) would vary between runs.
+_QUERY_WORKERS = 1
 
 MAX_K_DEFAULT = 50
 RADIUS_DEFAULT = 2
@@ -47,6 +42,15 @@ def _build_fpsim2_db(smiles: list[str], h5_path: str, radius: int, n_bits: int) 
     )
 
 
+def _smiles_digest(smiles: list[str]) -> str:
+    """SHA-256 over the ordered SMILES list (identity of the index contents)."""
+    h = hashlib.sha256()
+    for smi in smiles:
+        h.update(smi.encode())
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 class VectorIndex:
     """Pre-computed Morgan vector index for a reference molecule collection.
 
@@ -62,14 +66,11 @@ class VectorIndex:
         ``(n_ref, max_k)`` self-kNN, identity neighbor already
         stripped), ``smiles.csv`` (one SMILES per reference row), and
         ``metadata.json`` (library name, radius, n_bits, max_k, RDKit
-        version). The same folder also typically holds the auxiliary
-        per-molecule descriptor matrices written by
-        :class:`eosquality.basic_descriptors.BasicDescriptors`
-        (``physchem_scaled.npy``, ``physchem_scaler.json``,
-        ``maccs.npy``) — those files are not loaded by :meth:`load`
-        and are not consumed by the fit/run scores in this package;
-        they exist so consumers of the canonical index folder can use
-        them without recomputing.
+        version). The same folder also holds the per-molecule descriptor
+        matrices written by :class:`eosquality.basic_descriptors.BasicDescriptors`
+        (``physchem_scaled.npy``, ``physchem_scaler.json``, ``maccs.npy``).
+        Those are not loaded by :meth:`load`; the Signal score's descriptor
+        backends read them directly from :attr:`index_dir`.
     """
 
     def __init__(
@@ -169,21 +170,40 @@ class VectorIndex:
         knn_distances_path = output_dir / "knn_distances.npy"
         config_path = output_dir / "metadata.json"
 
-        # If a prior complete run exists, validate its parameters match.
-        if config_path.exists():
-            with open(config_path) as f:
+        # Resume support: an interrupted build leaves ``build_state.json``
+        # behind; a finished one leaves ``metadata.json``. Either way, reuse
+        # partial outputs only if they were produced from exactly this
+        # SMILES list with exactly these parameters.
+        build_state_path = output_dir / "build_state.json"
+        fingerprint = {
+            "n_samples": n,
+            "smiles_sha256": _smiles_digest(smiles),
+            "radius": radius,
+            "n_bits": n_bits,
+            "max_k": max_k,
+        }
+        for prior_path in (config_path, build_state_path):
+            if not prior_path.exists():
+                continue
+            with open(prior_path) as f:
                 prior = json.load(f)
-            if (
-                prior.get("radius") != radius
-                or prior.get("n_bits") != n_bits
-                or prior.get("max_k") != max_k
-            ):
-                raise ValueError(
-                    f"Output directory '{output_dir}' contains an index built with "
-                    f"different parameters (radius={prior.get('radius')}, "
-                    f"n_bits={prior.get('n_bits')}, max_k={prior.get('max_k')}). "
-                    "Delete the folder and rebuild, or match those parameters."
+            mismatched = {
+                key: (prior.get(key), value)
+                for key, value in fingerprint.items()
+                if prior.get(key) != value
+            }
+            if mismatched:
+                details = ", ".join(
+                    f"{key}: on disk={old!r}, requested={new!r}"
+                    for key, (old, new) in mismatched.items()
                 )
+                raise ValueError(
+                    f"Output directory '{output_dir}' contains a (partial) index "
+                    f"built from different inputs ({details}). Delete the folder "
+                    "and rebuild, or match those inputs."
+                )
+        with open(build_state_path, "w") as f:
+            json.dump(fingerprint, f, indent=2)
 
         rdkit_version = _RDKIT_VERSION
         t_build_start = time.perf_counter()
@@ -236,7 +256,9 @@ class VectorIndex:
             knn_indices = np.zeros((n, max_k), dtype=np.int32)
             knn_distances = np.zeros((n, max_k), dtype=np.float32)
             for i, smi in enumerate(smiles):
-                result = engine.top_k(smi, k=max_k + 1, threshold=0.0)
+                result = engine.top_k(
+                    smi, k=max_k + 1, threshold=0.0, n_workers=_QUERY_WORKERS
+                )
                 mol_ids = result["mol_id"].astype(np.int32)
                 sims = result["coeff"].astype(np.float32)
                 not_self = mol_ids != i
@@ -276,11 +298,8 @@ class VectorIndex:
             fpsim2_version = "unknown"
 
         config = {
-            "n_samples": n,
+            **fingerprint,
             "method": "morgan_fpsim2",
-            "radius": radius,
-            "n_bits": n_bits,
-            "max_k": max_k,
             "rdkit_version": rdkit_version,
             "fpsim2_version": fpsim2_version,
             "eosquality_version": eq_version,
@@ -289,6 +308,7 @@ class VectorIndex:
         }
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
+        build_state_path.unlink(missing_ok=True)
         t_save = time.perf_counter() - t0
         logger.debug(f"Artifacts saved → {output_dir} | {t_save:.2f}s")
 
@@ -348,8 +368,11 @@ class VectorIndex:
 
         cls._check_rdkit_version(config)
 
-        knn_indices = np.load(index_dir / "knn_indices.npy")
-        knn_distances = np.load(index_dir / "knn_distances.npy")
+        # Memory-mapped: run time only queries the .h5, and fit time slices
+        # the first k columns, so the full (n_ref, max_k) arrays never need
+        # to be resident.
+        knn_indices = np.load(index_dir / "knn_indices.npy", mmap_mode="r")
+        knn_distances = np.load(index_dir / "knn_distances.npy", mmap_mode="r")
         h5_path = index_dir / "vector_index.h5"
 
         return cls(
@@ -377,6 +400,30 @@ class VectorIndex:
             )
 
     # ------------------------------------------------------------------
+    # Identity
+    # ------------------------------------------------------------------
+
+    @property
+    def library_name(self) -> str:
+        """Library identifier recorded in ``metadata.json`` (``""`` if unset)."""
+        return str(self._config.get("library_name", "") or "")
+
+    @property
+    def index_dir(self) -> pathlib.Path:
+        """Folder holding this index (and the library's descriptor files)."""
+        return pathlib.Path(self._h5_path).parent
+
+    @property
+    def n_reference(self) -> int:
+        """Number of molecules in the index."""
+        return len(self._smiles)
+
+    @property
+    def smiles(self) -> list[str]:
+        """Reference SMILES, in index row order."""
+        return self._smiles
+
+    # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
 
@@ -398,7 +445,9 @@ class VectorIndex:
                 f"SMILES count mismatch: model CSV has {len(smiles)} rows, "
                 f"vector index has {len(self._smiles)} molecules."
             )
-        mismatches = [i for i, (a, b) in enumerate(zip(smiles, self._smiles)) if a != b]
+        mismatches = np.flatnonzero(
+            np.asarray(smiles, dtype=object) != np.asarray(self._smiles, dtype=object)
+        ).tolist()
         if mismatches:
             n_shown = min(3, len(mismatches))
             raise ValueError(
@@ -426,14 +475,14 @@ class VectorIndex:
                 f"Requested k={k} exceeds the pre-computed max_k={max_k}. "
                 "Rebuild the vector index with a larger max_k."
             )
-        return self._knn_indices[:, :k]
+        return np.ascontiguousarray(self._knn_indices[:, :k])
 
     def self_knn_distances(self, k: int) -> np.ndarray:
         """Return precomputed self-kNN Tanimoto distances, shape (n_ref, k)."""
         max_k = self._config["max_k"]
         if k > max_k:
             raise ValueError(f"Requested k={k} exceeds the pre-computed max_k={max_k}.")
-        return self._knn_distances[:, :k]
+        return np.ascontiguousarray(self._knn_distances[:, :k])
 
     # ------------------------------------------------------------------
     # Query (used at run time)
@@ -480,7 +529,7 @@ class VectorIndex:
         if show_progress is None:
             show_progress = n_query >= _PROGRESS_THRESHOLD
 
-        progress = _build_query_progress() if show_progress else None
+        progress = make_progress("FP kNN query") if show_progress else None
         task_id = None
         if progress is not None:
             progress.start()
@@ -488,7 +537,9 @@ class VectorIndex:
 
         try:
             for i, smi in enumerate(smiles_list):
-                result = self._engine.top_k(smi, k=k, threshold=0.0)
+                result = self._engine.top_k(
+                    smi, k=k, threshold=0.0, n_workers=_QUERY_WORKERS
+                )
                 got = len(result)
                 if got < k:
                     raise ValueError(
@@ -506,63 +557,3 @@ class VectorIndex:
                 progress.stop()
 
         return all_dists, all_idx
-
-    def compute_query_fps(self, smiles_list: list[str]) -> np.ndarray:
-        """Return ``(n_query, n_bits)`` uint8 bit matrix for query SMILES.
-
-        The bit layout matches the reference matrix produced by
-        :func:`eosquality.scores.signal._load_fp_matrix` — same Morgan
-        radius / nBits, same uint64 packing, same byteswap + big-bit-endian
-        unpack. Built by piggy-backing on FPSim2's own ``build_fp`` so the
-        XGBoost-based Signal score can predict on queries using exactly
-        the bit ordering it was trained on.
-
-        Raises
-        ------
-        ValueError
-            If any SMILES fails to parse, with the offending row index.
-        """
-        from FPSim2.io.chem import build_fp, load_molecule
-
-        self._check_rdkit_version(self._config)
-
-        n_bits = int(self._config["n_bits"])
-        n_words = n_bits // 64
-        if n_bits % 64 != 0:
-            raise ValueError(
-                f"n_bits={n_bits} is not a multiple of 64; FPSim2 layout assumes "
-                "whole 64-bit words."
-            )
-        radius = int(self._config["radius"])
-        fp_params = {"radius": radius, "fpSize": n_bits}
-
-        n_query = len(smiles_list)
-        out = np.zeros((n_query, n_bits), dtype=np.uint8)
-        for i, smi in enumerate(smiles_list):
-            try:
-                mol = load_molecule(smi)
-            except Exception as e:
-                raise ValueError(
-                    f"Query SMILES at row {i} ({smi!r}) failed to parse: {e}"
-                )
-            packed = build_fp(mol, "Morgan", fp_params, 0)
-            words = np.array(packed[1 : 1 + n_words], dtype=np.uint64)
-            bytes_be = words.byteswap().view(np.uint8)
-            out[i] = np.unpackbits(bytes_be, bitorder="big")
-        return out
-
-
-def _build_query_progress() -> Progress:
-    """Rich progress bar matching the style used by ``library/download.py``."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold cyan]{task.description}[/bold cyan]"),
-        BarColumn(bar_width=None),
-        MofNCompleteColumn(),
-        "•",
-        TimeElapsedColumn(),
-        "•",
-        TimeRemainingColumn(),
-        console=Console(stderr=True),
-        transient=False,
-    )

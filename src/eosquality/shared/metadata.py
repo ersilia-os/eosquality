@@ -17,7 +17,7 @@ from eosquality.utils.logging import logger
 class ColumnCharacteristics:
     """Detected characteristics of a single numeric column."""
 
-    kind: str  # "binary" | "proportion" | "count" | "continuous"
+    kind: str  # "binary" | "count" | "continuous"
     sparsity: float  # fraction of exact zeros (NaN not counted as zero)
     missing_fraction: float  # fraction of NaN values
 
@@ -71,8 +71,11 @@ class FitMetadata:
     fit_timestamp: str  # ISO 8601 UTC
     eosquality_version: str  # package version
     column_characteristics: dict[str, ColumnCharacteristics]  # per-column kind/sparsity
-    library_id: str = ""  # e.g. "ersilia_reference_library_v1"
+    library_id: str = ""  # e.g. "ersilia_reference_library_v0"
     fit_duration_seconds: float = 0.0  # wall time spent in fit_shared
+    # Absolute path of a non-canonical vector index; "" for the canonical
+    # library, which is resolved by library_id at run time instead.
+    vector_index_path: str = ""
 
 
 def compute_metadata(

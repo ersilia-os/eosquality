@@ -9,20 +9,19 @@ Keeping them in one neutral module avoids the "Support owns
 from __future__ import annotations
 
 import pathlib
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.knn.fit import fit_knn
 from eosquality.knn.state import KnnFitState
-from eosquality.library.identity import reference_library_path
+from eosquality.library.identity import LIBRARY_ID, reference_library_path
 from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
 from eosquality.vectorindex import VectorIndex
-
 
 # ---------------------------------------------------------------------------
 # Aggregation + calibration shared by typicality and extremity
@@ -84,34 +83,6 @@ def _score_from_aggregates(
 
 
 # ---------------------------------------------------------------------------
-# Per-component metadata payload
-# ---------------------------------------------------------------------------
-
-
-def _component_metadata(
-    *,
-    component: str,
-    k: int | None,
-    fit_timestamp: str | None,
-    fit_duration_seconds: float | None,
-) -> dict[str, Any]:
-    """Build the per-component ``metadata.json`` payload.
-
-    Shared by every score class so the metadata shape stays consistent
-    across subfolders. Only component-specific bookkeeping is recorded
-    here; shared dataset information (n_samples, n_features,
-    eosquality_version) lives once in ``shared/metadata.json``. ``k``
-    may be ``None`` for scores that don't use a vector index.
-    """
-    return {
-        "component": component,
-        "fit_timestamp": fit_timestamp,
-        "fit_duration_seconds": float(fit_duration_seconds or 0.0),
-        "k": int(k) if k is not None else None,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Shared / kNN state resolution
 # ---------------------------------------------------------------------------
 
@@ -135,6 +106,44 @@ def _make_query_repr(shared: SharedFitState, df: pd.DataFrame) -> np.ndarray:
     selection is applied consistently at fit time and run time.
     """
     return shared.filter_features(_make_pipeline(shared).transform(df))
+
+
+def _reference_repr(shared: SharedFitState, reference: pd.DataFrame) -> np.ndarray:
+    """Scaled + feature-selected reference matrix for fit-time use.
+
+    Reuses ``shared.ref_repr`` (computed once by :func:`fit_shared`) when it
+    is row-aligned with ``reference``; otherwise re-applies the pipeline.
+    Avoids re-running the eosframes transform over the full reference in
+    every score's ``fit``.
+    """
+    ref_repr = shared.ref_repr
+    if (
+        ref_repr is not None
+        and ref_repr.shape[0] == len(reference)
+        and list(reference.index) == list(shared.reference_ids)
+    ):
+        return ref_repr
+    return _make_query_repr(shared, reference)
+
+
+def _resolve_shared(
+    reference: pd.DataFrame,
+    *,
+    shared: SharedFitState | None,
+    eos_id: str | None,
+    version: str | None,
+    component: str,
+) -> SharedFitState:
+    """Return ``shared`` (validated against ``reference``) or fit it here."""
+    if shared is not None:
+        validate_against_schema(reference, shared.schema)
+        return shared
+    if eos_id is None or version is None:
+        raise ValueError(
+            f"{component}.fit needs either a pre-fit shared= argument, or "
+            "eos_id= and version= so it can fit the shared state itself."
+        )
+    return fit_shared(reference, eos_id=eos_id, version=version)
 
 
 def _resolve_shared_and_knn(
@@ -180,9 +189,12 @@ def _resolve_shared_and_knn(
                 "fit needs either a pre-fit shared= argument, or eos_id= "
                 "and version= so the shared state can be fit here."
             )
-        library_id = str(vi._config.get("library_name", "") or "")
-        shared, _ = fit_shared(
-            reference, eos_id=eos_id, version=version, library_id=library_id
+        shared = fit_shared(
+            reference,
+            eos_id=eos_id,
+            version=version,
+            library_id=vi.library_name,
+            vector_index_path=_custom_index_path(vi),
         )
     else:
         validate_against_schema(reference, shared.schema)
@@ -192,14 +204,23 @@ def _resolve_shared_and_knn(
     return shared, knn, vi
 
 
-def _resolve_vector_index(shared: SharedFitState) -> VectorIndex:
-    """Load the VectorIndex pinned by ``shared.metadata.library_id``.
+def _custom_index_path(vi: VectorIndex) -> str:
+    """Absolute index folder for a non-canonical index, ``""`` for the canonical one."""
+    if vi.library_name == LIBRARY_ID:
+        return ""
+    return str(vi.index_dir.resolve())
 
-    Uses :func:`eosquality.library.identity.reference_library_path` so
-    saved artifacts stay portable across machines: the canonical
-    library is found via env override → repo ``data/indices/`` →
-    ``~/.eosquality/`` cache → S3, without baking a path into the
-    artifact.
+
+def _resolve_vector_index(shared: SharedFitState) -> VectorIndex:
+    """Load the VectorIndex the artifact was fit against.
+
+    Artifacts fit on the canonical library (``library_id == LIBRARY_ID``)
+    resolve it via :func:`eosquality.library.identity.reference_library_path`
+    (env override → ``./data/indices/`` → ``~/.eosquality/`` cache), so they
+    stay portable across machines. Artifacts fit on a custom index record
+    its absolute folder in ``shared.metadata.vector_index_path`` and load
+    it from there. Either way the loaded index's ``library_name`` must equal
+    the ``library_id`` recorded at fit time.
     """
     library_id = shared.metadata.library_id
     if not library_id:
@@ -207,7 +228,23 @@ def _resolve_vector_index(shared: SharedFitState) -> VectorIndex:
             "Cannot resolve a vector index: shared.metadata.library_id is empty. "
             "An index-aware score is loaded but the fit did not tag a library."
         )
-    return VectorIndex.load(reference_library_path())
+    if library_id == LIBRARY_ID:
+        path = reference_library_path()
+    elif shared.metadata.vector_index_path:
+        path = pathlib.Path(shared.metadata.vector_index_path)
+    else:
+        raise IncompatibleArtifactsError(
+            f"Artifacts were fit against reference library {library_id!r} but "
+            f"this install ships {LIBRARY_ID!r}. Install a compatible "
+            "eosquality release or refit against the current library."
+        )
+    vi = VectorIndex.load(path)
+    if vi.library_name != library_id:
+        raise IncompatibleArtifactsError(
+            f"Vector index at {path} is library {vi.library_name!r}, but the "
+            f"artifacts were fit against {library_id!r}."
+        )
+    return vi
 
 
 # ---------------------------------------------------------------------------
@@ -269,16 +306,29 @@ def _query_fp_distances(
     return fp_kept, idx_kept
 
 
+# Rows per chunk when computing output-space neighbor distances. Bounds the
+# ``(chunk, k, n_features)`` temporary instead of materialising it for the
+# whole reference (~0.5 GB at 1.35M × 5 × 10 in float64).
+_OUTPUT_DISTANCE_CHUNK = 65_536
+
+
 def _query_output_distances(
     query_repr: np.ndarray, ref_repr: np.ndarray, indices: np.ndarray
 ) -> np.ndarray:
     """Mean L1 in output space from ``query_repr`` to ``ref_repr[indices]``.
 
-    Takes the FP-selected indices as input — the caller is expected to
-    have already obtained them via :func:`_query_fp_distances`. Used by
-    Consistency at run time. ``ref_repr`` is the post-reduction scaled
-    reference matrix, sourced from ``SharedFitState.ref_repr``.
+    Returns ``(n_query, k)``: for each query row and each of its k
+    FP-selected neighbors, the mean absolute difference over features.
+    ``indices`` come from :func:`_query_fp_distances` (run time) or the
+    precomputed self-kNN (fit time). ``ref_repr`` is the post-reduction
+    scaled reference matrix, ``SharedFitState.ref_repr``. Computed in
+    row chunks to keep peak memory flat for reference-sized inputs.
     """
-    neighbor_reprs = ref_repr[indices]
-    diffs = query_repr[:, None, :] - neighbor_reprs
-    return np.abs(diffs).sum(axis=2) / query_repr.shape[1]
+    n_query, n_features = query_repr.shape
+    out = np.empty(indices.shape, dtype=np.float64)
+    for start in range(0, n_query, _OUTPUT_DISTANCE_CHUNK):
+        stop = min(start + _OUTPUT_DISTANCE_CHUNK, n_query)
+        diffs = query_repr[start:stop, None, :] - ref_repr[indices[start:stop]]
+        np.abs(diffs, out=diffs)
+        out[start:stop] = diffs.sum(axis=2) / n_features
+    return out

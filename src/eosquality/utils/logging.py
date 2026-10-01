@@ -1,52 +1,60 @@
-"""Pretty, informative logging for eosquality using loguru + rich."""
+"""Pretty, informative logging for eosquality using loguru + rich.
+
+eosquality logs through a loguru logger bound with ``extra["eosquality"]``
+and owns exactly one stderr sink that only accepts those records. Handlers
+the host application added are left untouched; only loguru's pristine
+default handler (id 0) is removed so package messages are not printed
+twice.
+
+Levels: as a library, eosquality is quiet by default (WARNING and above).
+``set_verbosity(True)`` (or ``ErsiliaQuality(verbose=True)``) switches to
+DEBUG and enables the Rich diagnostic tables. The CLI shows INFO progress
+by default and DEBUG with ``-v``.
+"""
 
 import sys
 from typing import Optional
 
-from loguru import logger as _loguru
+from loguru import logger as _root_logger
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-_loguru.remove()
-_loguru.level("DEBUG", color="<cyan><bold>")
-_loguru.level("INFO", color="<blue><bold>")
-_loguru.level("WARNING", color="<white><bold><bg yellow>")
-_loguru.level("ERROR", color="<white><bold><bg red>")
-_loguru.level("CRITICAL", color="<white><bold><bg red>")
-_loguru.level("SUCCESS", color="<black><bold><bg green>")
+try:
+    _root_logger.remove(0)  # loguru's default stderr handler, if still present
+except ValueError:
+    pass
+
+_loguru = _root_logger.bind(eosquality=True)
 
 _FORMAT = "<green>{time:HH:mm:ss}</green> <level>{level: <8}</level> {message}"
+DEFAULT_LEVEL = "WARNING"
+
+
+def _only_eosquality(record) -> bool:
+    return bool(record["extra"].get("eosquality"))
 
 
 class Logger:
-    """Thin wrapper around loguru + rich for informative, pretty output.
-
-    Output is suppressed by default. Call ``set_verbosity(True)`` or pass
-    ``verbose=True`` to ``ErsiliaQuality`` to enable it.
-    """
+    """Thin wrapper around loguru + rich for informative, pretty output."""
 
     def __init__(self) -> None:
         self.logger = _loguru
         self._console = Console(stderr=True, highlight=False)
         self._sink_id: Optional[int] = None
         self._verbose: bool = False
-        # INFO sink is on by default so users see progress without -v.
-        # ``set_verbosity(True)`` bumps the level to DEBUG and enables the
-        # Rich diagnostic tables.
-        self._install_sink("INFO")
+        self.set_level(DEFAULT_LEVEL)
 
-    def _install_sink(self, level: str) -> None:
+    def set_level(self, level: str) -> None:
+        """Set the minimum level of the package's stderr sink."""
         if self._sink_id is not None:
-            try:
-                self.logger.remove(self._sink_id)
-            except Exception:
-                pass
+            self.logger.remove(self._sink_id)
         self._sink_id = self.logger.add(
             sys.stderr,
             format=_FORMAT,
             colorize=True,
             level=level,
+            filter=_only_eosquality,
         )
 
     @property
@@ -54,14 +62,12 @@ class Logger:
         return self._verbose
 
     def set_verbosity(self, verbose: bool) -> None:
-        """Toggle DEBUG-level output and Rich diagnostic tables.
+        """Toggle DEBUG-level output and the Rich diagnostic tables.
 
-        INFO-level output is always on; ``verbose=True`` adds DEBUG
-        messages and unlocks the Rich tables (``reference_table``,
-        ``reference_report_table``, etc.).
+        ``verbose=False`` restores the quiet library default (WARNING).
         """
         self._verbose = verbose
-        self._install_sink("DEBUG" if verbose else "INFO")
+        self.set_level("DEBUG" if verbose else DEFAULT_LEVEL)
 
     # ------------------------------------------------------------------
     # Standard log levels

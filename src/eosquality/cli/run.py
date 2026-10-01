@@ -60,8 +60,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         eq = ErsiliaQuality.load(args.artifacts)
-        if args.verbose:
-            eq.verbose = True
     except FileNotFoundError as exc:
         _print_error(
             f"artifact at '{args.artifacts}' is incomplete — refit may be required",
@@ -159,6 +157,6 @@ def register_subparsers(subparsers) -> None:
         "--verbose",
         "-v",
         action="store_true",
-        help="Print informative progress and diagnostic tables.",
+        help="Print debug messages and diagnostic tables.",
     )
     run_p.set_defaults(func=cmd_run)

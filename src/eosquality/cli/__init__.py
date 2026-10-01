@@ -13,10 +13,10 @@ and invokes the selected command.
 
 End-user workflow
 -----------------
-Each release is pinned to a canonical reference library, auto-resolved
-from env override → ``./data/indices/ersilia_reference_library_vN/`` →
-``~/.eosquality/`` cache → S3 download. The usual path is just fit then
-run::
+Each release is pinned to a canonical reference library, resolved locally
+from ``$EOSQUALITY_REFERENCE_LIBRARY_PATH`` → ``./data/indices/<library>/``
+→ ``~/.eosquality/indices/<library>/``. Fetch it once with
+``eosquality download``; after that the usual path is fit then run::
 
     eosquality fit --input eos4e40_v1.csv --output artifacts/ [--k 5]
     eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
@@ -30,18 +30,17 @@ For maintainers / advanced use
 ``eosquality build`` rebuilds the vector index from a SMILES library CSV.
 It is a release tool — ordinary users should not need to run it. Use it
 to produce a new canonical library for the next major release, or to
-build a non-canonical index for internal testing; set
-``EOSQUALITY_REFERENCE_LIBRARY_PATH`` to point ``fit`` at that folder::
+build a non-canonical index for internal testing and fit against it::
 
     eosquality build --input library.csv --output /tmp/idx/ [--max-k 50]
-    EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/idx/ \\
-        eosquality fit --input eos4e40_v1.csv --output artifacts/
+    eosquality fit --input eos4e40_v1.csv --output artifacts/ --vector-index /tmp/idx/
 """
 
 import argparse
 import importlib.metadata
 import sys
 
+from eosquality import set_log_level
 from eosquality.cli.build import register_subparsers as _register_build
 from eosquality.cli.download import register_subparsers as _register_download
 from eosquality.cli.fit import register_subparsers as _register_fit
@@ -75,10 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    """Parse ``sys.argv`` and dispatch to the selected subcommand."""
+def main(argv: list[str] | None = None) -> None:
+    """Parse ``argv`` (default ``sys.argv``) and dispatch to the subcommand.
+
+    The CLI shows INFO-level progress by default; ``-v`` adds DEBUG output
+    and the diagnostic tables.
+    """
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    set_log_level("INFO")
     sys.exit(args.func(args))
 
 

@@ -23,29 +23,25 @@ import pathlib
 import time
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from eosquality.schema.infer import validate_against_schema
+from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
     AGGREGATE_QUANTILE,
-    _component_metadata,
     _make_query_repr,
+    _reference_repr,
+    _resolve_shared,
     _score_from_aggregates,
 )
-from eosquality.shared.fit import fit_shared
-from eosquality.shared.load import load_shared
-from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
-
 SUBFOLDER = "extremity"
 STATE_FILE = "state.json"
-METADATA_FILE = "metadata.json"
 SELF_AGGREGATES_FILE = "reference_self_aggregates.npy"
 
 
@@ -59,7 +55,7 @@ class ExtremityRunResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class Extremity:
+class Extremity(ScoreComponent):
     """Position-based per-feature extremity scorer.
 
     Holds two pieces of fitted state:
@@ -74,12 +70,12 @@ class Extremity:
     per-column LUTs.
     """
 
+    NAME = SUBFOLDER
+
     def __init__(self) -> None:
-        self._shared: SharedFitState | None = None
+        super().__init__()
         self._sorted_self_aggregates: np.ndarray | None = None  # (n_ref,)
         self._reference_extremity: float | None = None
-        self._fit_duration_seconds: float | None = None
-        self._fit_timestamp: str | None = None
 
     # ------------------------------------------------------------------
     # Fit
@@ -95,30 +91,22 @@ class Extremity:
     ) -> "Extremity":
         """Fit on a reference DataFrame.
 
-        Scales the reference with the shared eosframes pipeline and records
-        ``reference_extremity_`` — the mean aggregate extremity of the
-        reference under its own scaler — as a calibration baseline.
+        Builds the sorted reference Q66 aggregates used as the calibration
+        CDF and records ``reference_extremity_`` as a sanity anchor.
 
         Either pass a pre-fit ``shared=`` (when composed by ErsiliaQuality),
         or pass ``eos_id`` + ``version`` so Extremity can fit the shared
         state itself.
-
-        Records the wall-clock duration and a UTC timestamp; both are
-        persisted by :meth:`save` to ``extremity/metadata.json``.
         """
         t0 = time.perf_counter()
-        if shared is None:
-            if eos_id is None or version is None:
-                raise ValueError(
-                    "Extremity.fit needs either a pre-fit shared= argument, "
-                    "or eos_id= and version= so it can fit the shared state itself."
-                )
-            shared, _ref_repr = fit_shared(reference, eos_id=eos_id, version=version)
-        else:
-            validate_against_schema(reference, shared.schema)
-
-        ref_scaled = _make_query_repr(shared, reference)
-        _, ref_agg = compute_extremity(scaled_values=ref_scaled)
+        shared = _resolve_shared(
+            reference,
+            shared=shared,
+            eos_id=eos_id,
+            version=version,
+            component="Extremity",
+        )
+        _, ref_agg = compute_extremity(scaled_values=_reference_repr(shared, reference))
 
         # CDF calibration is built only over reference rows whose aggregate
         # is finite. An all-NaN reference row carries no information and
@@ -130,19 +118,17 @@ class Extremity:
                 "Extremity.fit: every reference row has all-NaN extremity, "
                 "so no CDF calibration is possible. Check the reference data."
             )
-        reference_extremity = float(
+
+        self._shared = shared
+        self._sorted_self_aggregates = sorted_self_aggregates
+        self._reference_extremity = float(
             np.nanmean(
                 _score_from_aggregates(
                     ref_agg, sorted_self_aggregates, sorted_self_aggregates.size
                 )
             )
         )
-
-        self._shared = shared
-        self._sorted_self_aggregates = sorted_self_aggregates
-        self._reference_extremity = reference_extremity
-        self._fit_duration_seconds = float(time.perf_counter() - t0)
-        self._fit_timestamp = datetime.now(tz=timezone.utc).isoformat()
+        self._finish_fit(t0)
         logger.debug(
             f"Extremity fit | reference_extremity={self._reference_extremity:.4f}"
             f" | duration={self._fit_duration_seconds:.3f}s"
@@ -166,44 +152,35 @@ class Extremity:
         query:
             DataFrame with the same numeric columns as the reference.
         query_repr:
-            Optional pre-scaled query array (output of the eosframes scaler)
-            ``(n_query, n_features)``. If provided, the eosframes transform
-            step is skipped — used by ErsiliaQuality to share scaling work
-            across multiple scores.
+            Optional pre-scaled, feature-selected query array
+            ``(n_query, n_selected)``. If provided, schema validation and the
+            eosframes transform are skipped — used by ErsiliaQuality to share
+            that work across scores.
         """
         self._check_fitted()
         assert self._shared is not None
         assert self._sorted_self_aggregates is not None
 
-        validate_against_schema(query, self._shared.schema)
-
         if query_repr is None:
+            validate_against_schema(query, self._shared.schema)
             query_repr = _make_query_repr(self._shared, query)
 
         per_feature, raw_aggregate = compute_extremity(scaled_values=query_repr)
-        n_ref = self._sorted_self_aggregates.size
         score = _score_from_aggregates(
-            raw_aggregate, self._sorted_self_aggregates, n_ref
+            raw_aggregate,
+            self._sorted_self_aggregates,
+            self._sorted_self_aggregates.size,
         )
-        # Preserve the NaN-row semantics: a query whose every feature is
-        # NaN has no information about extremity, so the calibrated score
-        # follows the raw NaN aggregate.
-        nan_rows = ~np.isfinite(raw_aggregate)
-        if nan_rows.any():
-            score = np.where(nan_rows, np.nan, score)
-        per_feature_df = pd.DataFrame(
-            per_feature,
-            index=list(query.index),
-            columns=list(self._shared.selected_columns),
-        )
-        score_series = pd.Series(score, index=list(query.index), name="extremity")
-        score_raw_series = pd.Series(
-            raw_aggregate, index=list(query.index), name="extremity_raw"
-        )
+        # A query whose every feature is NaN has no information about
+        # extremity, so the calibrated score follows the raw NaN aggregate.
+        score = np.where(np.isfinite(raw_aggregate), score, np.nan)
+        idx = list(query.index)
         return ExtremityRunResult(
-            score=score_series,
-            score_raw=score_raw_series,
-            per_feature=per_feature_df,
+            score=pd.Series(score, index=idx, name="extremity"),
+            score_raw=pd.Series(raw_aggregate, index=idx, name="extremity_raw"),
+            per_feature=pd.DataFrame(
+                per_feature, index=idx, columns=list(self._shared.selected_columns)
+            ),
             metadata={
                 "reference_extremity": self._reference_extremity,
                 "n_reference": len(self._shared.reference_ids),
@@ -214,79 +191,22 @@ class Extremity:
     # Save / load
     # ------------------------------------------------------------------
 
-    def save(self, root: str | pathlib.Path) -> pathlib.Path:
-        """Persist into ``<root>/shared/`` and ``<root>/extremity/``.
-
-        Writes three files under ``extremity/``:
-
-        - ``state.json`` — the ``reference_extremity`` baseline.
-        - ``reference_self_aggregates.npy`` — sorted reference per-row
-          Q66 aggregates; the CDF lookup table.
-        - ``metadata.json`` — fit timestamp, fit duration.
-
-        Also writes the shared subfolder via :func:`save_shared` so the
-        artifact is self-contained.
-        """
-        self._check_fitted()
-        assert self._shared is not None
+    def _save_own(self, folder: pathlib.Path) -> None:
+        """Write ``state.json`` (baseline) and the sorted CDF array."""
         assert self._sorted_self_aggregates is not None
-        save_shared(self._shared, root)
-        folder = pathlib.Path(root) / SUBFOLDER
-        folder.mkdir(parents=True, exist_ok=True)
         np.save(folder / SELF_AGGREGATES_FILE, self._sorted_self_aggregates)
-        payload = {"reference_extremity": self._reference_extremity}
         with open(folder / STATE_FILE, "w") as f:
-            json.dump(payload, f)
-        meta = _component_metadata(
-            component="extremity",
-            k=None,
-            fit_timestamp=self._fit_timestamp,
-            fit_duration_seconds=self._fit_duration_seconds,
+            json.dump({"reference_extremity": self._reference_extremity}, f)
+
+    def _load_own(self, folder: pathlib.Path) -> None:
+        payload = read_json(folder / STATE_FILE, self.NAME)
+        self._sorted_self_aggregates = np.load(
+            require_file(folder / SELF_AGGREGATES_FILE, self.NAME)
         )
-        with open(folder / METADATA_FILE, "w") as f:
-            json.dump(meta, f, indent=2)
-        logger.debug(
-            f"  extremity/ | reference_extremity={self._reference_extremity:.4f}"
-            f" | fit_duration={meta['fit_duration_seconds']:.3f}s"
-        )
-        return pathlib.Path(root)
-
-    @classmethod
-    def load(cls, root: str | pathlib.Path) -> "Extremity":
-        """Reconstruct from ``<root>/shared/`` + ``<root>/extremity/``."""
-        shared = load_shared(root)
-        folder = pathlib.Path(root) / SUBFOLDER
-        with open(folder / STATE_FILE) as f:
-            payload = json.load(f)
-
-        aggregates_path = folder / SELF_AGGREGATES_FILE
-        if not aggregates_path.is_file():
-            raise FileNotFoundError(
-                f"Missing {aggregates_path}. This artifact predates the "
-                "Q66 + CDF-calibrated extremity format and must be refit "
-                "with the current eosquality version."
-            )
-        sorted_self_aggregates = np.load(aggregates_path)
-
-        meta_path = folder / METADATA_FILE
-        fit_duration = None
-        fit_timestamp = None
-        if meta_path.is_file():
-            with open(meta_path) as f:
-                meta = json.load(f)
-            fit_duration = float(meta.get("fit_duration_seconds", 0.0))
-            fit_timestamp = meta.get("fit_timestamp")
-
-        instance = cls()
-        instance._shared = shared
-        instance._sorted_self_aggregates = sorted_self_aggregates
-        instance._reference_extremity = float(payload["reference_extremity"])
-        instance._fit_duration_seconds = fit_duration
-        instance._fit_timestamp = fit_timestamp
-        return instance
+        self._reference_extremity = float(payload["reference_extremity"])
 
     # ------------------------------------------------------------------
-    # Properties / helpers
+    # Properties
     # ------------------------------------------------------------------
 
     @property
@@ -296,12 +216,6 @@ class Extremity:
             and self._sorted_self_aggregates is not None
             and self._reference_extremity is not None
         )
-
-    @property
-    def shared_(self) -> SharedFitState:
-        self._check_fitted()
-        assert self._shared is not None
-        return self._shared
 
     @property
     def sorted_self_aggregates_(self) -> np.ndarray:
@@ -314,18 +228,6 @@ class Extremity:
         self._check_fitted()
         assert self._reference_extremity is not None
         return self._reference_extremity
-
-    @property
-    def fit_duration_seconds_(self) -> float | None:
-        return self._fit_duration_seconds
-
-    @property
-    def fit_timestamp_(self) -> str | None:
-        return self._fit_timestamp
-
-    def _check_fitted(self) -> None:
-        if not self.is_fitted_:
-            raise RuntimeError("Extremity must be fitted (or loaded) before use.")
 
 
 # ---------------------------------------------------------------------------

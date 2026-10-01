@@ -36,11 +36,8 @@ import os
 import pathlib
 import re
 
-from rich.console import Console
-
-from eosquality.library.download import _is_library_cached_and_valid
-
-_console = Console(stderr=True, highlight=False)
+from eosquality.library.download import is_library_cached_and_valid
+from eosquality.utils.logging import logger
 
 LIBRARY_ID: str = "ersilia_reference_library_v0"
 
@@ -162,19 +159,13 @@ def reference_library_path() -> pathlib.Path:
         return path
 
     cwd_candidate = _cwd_library_candidate()
-    if _is_library_cached_and_valid(cwd_candidate, LIBRARY_ID):
-        _console.print(
-            f"[dim]↪ reference library found in cwd[/dim] "
-            f"[cyan]{library_dirname()}[/cyan] [dim]→[/dim] {cwd_candidate}"
-        )
+    if is_library_cached_and_valid(cwd_candidate, LIBRARY_ID):
+        logger.debug(f"reference library found in cwd → {cwd_candidate}")
         return cwd_candidate
 
     cache_candidate = user_cache_dir() / library_dirname()
-    if _is_library_cached_and_valid(cache_candidate, LIBRARY_ID):
-        _console.print(
-            f"[dim]↪ reference library found in user cache[/dim] "
-            f"[cyan]{library_dirname()}[/cyan] [dim]→[/dim] {cache_candidate}"
-        )
+    if is_library_cached_and_valid(cache_candidate, LIBRARY_ID):
+        logger.debug(f"reference library found in user cache → {cache_candidate}")
         return cache_candidate
 
     raise FileNotFoundError(
@@ -216,18 +207,12 @@ def reference_library_csv_path() -> pathlib.Path:
 
     cwd_candidate = _cwd_library_csv_candidate()
     if cwd_candidate.is_file():
-        _console.print(
-            f"[dim]↪ library CSV found in cwd[/dim] "
-            f"[cyan]{library_csv_filename()}[/cyan] [dim]→[/dim] {cwd_candidate}"
-        )
+        logger.debug(f"library CSV found in cwd → {cwd_candidate}")
         return cwd_candidate
 
     cache_candidate = user_library_csv_cache_dir() / library_csv_filename()
     if cache_candidate.is_file():
-        _console.print(
-            f"[dim]↪ library CSV found in user cache[/dim] "
-            f"[cyan]{library_csv_filename()}[/cyan] [dim]→[/dim] {cache_candidate}"
-        )
+        logger.debug(f"library CSV found in user cache → {cache_candidate}")
         return cache_candidate
 
     raise FileNotFoundError(
