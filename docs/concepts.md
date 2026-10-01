@@ -39,7 +39,7 @@ The same rule applies to every score:
 |---|---|---|---|
 | Typicality | output | Q66 over features of per-feature density | outputs sit where the reference's outputs are dense |
 | Extremity | output | Q66 over features of `min(\|scaled\|, 1)` | outputs sit far from the column centres |
-| Support | fingerprint | mean Tanimoto distance to the k FP neighbours | the molecule is chemically close to the library |
+| Support | fingerprint, size-conditioned | mean Tanimoto distance to the k FP neighbours | the molecule is chemically close to library molecules of its size |
 | Consistency | output, FP-conditioned | mean output L1 distance to the k FP neighbours | the outputs agree with those of chemically similar molecules |
 | Signal *(opt-in)* | descriptor | Gini of per-feature \|SHAP\| | the model's output is driven by a few descriptors |
 
@@ -55,7 +55,23 @@ Per-feature extremity is `min(|scaled|, 1)`: 0 at the column centre, 1 at the ra
 
 Morgan fingerprints (radius 2, 2048 bits) are queried with FPSim2. The raw value is the mean Tanimoto distance to the query's k nearest library molecules (default k = 5).
 
-The calibration CDF uses each library molecule's distance to its k nearest **other** molecules. So that queries are comparable, a query that is itself in the library has its own entry removed from its neighbours. The entry removed is the neighbour with the same SMILES or the same canonical SMILES. A different molecule with an identical fingerprint, such as a stereoisomer, is kept. Support depends only on chemistry, so it is identical across models.
+**Size conditioning.** Tanimoto distance on bits is size-biased: molecules with few set bits sit further from everything. In the library, the median distance is 0.44 for 20–30 bits and 0.31 for 60–80 bits. So calibration is **conditioned on fingerprint size**:
+1. The library is split into up to 10 quantile bins of its set-bit count (same merging rules as consistency).
+2. Each bin gets its own CDF.
+3. A query is scored against the bin of its own size.
+
+The question support answers is: how close is this molecule to the library, compared with library molecules of the same size? It stays uniform on the library, and its correlation with size drops from ρ = 0.32 to −0.02.
+
+**Self-matches.** The calibration CDF uses each library molecule's distance to its k nearest **other** molecules. So that queries are comparable, a query that is itself in the library has its own entry removed from its neighbours. The entry removed is the neighbour with the same SMILES or the same canonical SMILES. A different molecule with an identical fingerprint, such as a stereoisomer, is kept.
+
+**Log scale.** `support_log = −log10(support)` expresses the same tail probability on a log scale:
+- about 0.3 for a typical library molecule;
+- 2 means further than 99% of same-size library molecules;
+- 3 means further than 99.9%.
+
+On the 0–1 scale, queries far outside the library (e.g. generated synthetic scaffolds) are all squeezed into 0–0.01; `support_log` keeps them apart.
+
+Support depends only on chemistry, so it is identical across models.
 
 ### Consistency (output agreement among chemical neighbours)
 

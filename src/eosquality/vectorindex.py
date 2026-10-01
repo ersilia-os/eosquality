@@ -486,6 +486,44 @@ class VectorIndex:
         return np.ascontiguousarray(self._knn_distances[:, :k])
 
     # ------------------------------------------------------------------
+    # Fingerprint size (number of set Morgan bits)
+    # ------------------------------------------------------------------
+
+    def fingerprint_sizes(self) -> np.ndarray:
+        """``(n_ref,)`` number of set Morgan bits per reference molecule.
+
+        Read from the FPSim2 database, which stores each fingerprint's
+        popcount in its last column next to the molecule id.
+        """
+        fps = self._get_engine().fps
+        sizes = np.empty(len(self._smiles), dtype=np.int64)
+        sizes[fps[:, 0].astype(np.int64)] = fps[:, -1].astype(np.int64)
+        return sizes
+
+    def query_fingerprint_sizes(self, smiles_list: list[str]) -> np.ndarray:
+        """Number of set Morgan bits per query SMILES (NaN if it fails to parse).
+
+        Uses FPSim2's own fingerprint builder with the index's parameters, so
+        query sizes are computed exactly like the reference's.
+        """
+        from FPSim2.io.chem import build_fp, load_molecule
+
+        engine = self._get_engine()
+        out = np.full(len(smiles_list), np.nan)
+        for i, smi in enumerate(smiles_list):
+            try:
+                fp = build_fp(load_molecule(smi), engine.fp_type, engine.fp_params, 0)
+            except Exception:  # unparsable SMILES: leave NaN
+                continue
+            out[i] = float(fp[-1])
+        return out
+
+    def _get_engine(self) -> FPSim2Engine:
+        if self._engine is None:
+            self._engine = FPSim2Engine(str(self._h5_path), in_memory_fps=True)
+        return self._engine
+
+    # ------------------------------------------------------------------
     # Query (used at run time)
     # ------------------------------------------------------------------
 
@@ -518,9 +556,7 @@ class VectorIndex:
             Row indices into the reference library, shape (n_query, k).
         """
         self._check_rdkit_version(self._config)
-
-        if self._engine is None:
-            self._engine = FPSim2Engine(str(self._h5_path), in_memory_fps=True)
+        engine = self._get_engine()
 
         n_ref = len(self._smiles)
         n_query = len(smiles_list)
@@ -538,9 +574,7 @@ class VectorIndex:
 
         try:
             for i, smi in enumerate(smiles_list):
-                result = self._engine.top_k(
-                    smi, k=k, threshold=0.0, n_workers=_QUERY_WORKERS
-                )
+                result = engine.top_k(smi, k=k, threshold=0.0, n_workers=_QUERY_WORKERS)
                 got = len(result)
                 if got < k:
                     raise ValueError(

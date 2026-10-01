@@ -22,7 +22,7 @@ The library's `vN` must equal the package's major version. Importing a release w
 Saved artifacts record the following in `shared/metadata.json`:
 - `library_id`
 - `eosquality_version`
-- `format_version` (the on-disk layout and score semantics; currently 2)
+- `format_version` (the on-disk layout and score semantics; currently 3)
 - `vector_index_path` (for custom indices)
 
 `ErsiliaQuality.load` rejects artifacts in these cases:

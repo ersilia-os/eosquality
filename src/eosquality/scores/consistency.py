@@ -41,8 +41,17 @@ import pandas as pd
 from eosquality.knn.state import KnnFitState
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
+from eosquality.scores._binning import (
+    binned_cdf_score,
+    decode_edges,
+    encode_edges,
+    load_per_bin,
+    min_bin_size,
+    partition_and_sort,
+    quantile_bin_edges,
+    save_per_bin,
+)
 from eosquality.scores._helpers import (
-    _cdf_score,
     _make_query_repr,
     _query_fp_distances,
     _query_output_distances,
@@ -56,11 +65,6 @@ from eosquality.vectorindex import VectorIndex
 SUBFOLDER = "consistency"
 STATE_FILE = "state.json"
 DISTANCES_FILE = "reference_self_distances_per_bin.npz"
-
-# Sentinel encoding of ``±inf`` in JSON, so the JSON parser doesn't have to
-# deal with ``Infinity`` literals.
-_NEG_INF_SENTINEL = -1.0e18
-_POS_INF_SENTINEL = 1.0e18
 
 
 @dataclass
@@ -164,15 +168,13 @@ class Consistency(ScoreComponent):
         )
         mean_self_fp_distances = knn.mean_fp_distances.astype(np.float64)
 
-        fp_bin_edges = _compute_fp_bin_edges(
+        fp_bin_edges = quantile_bin_edges(
             mean_self_fp_distances,
             self.N_FP_BINS,
-            min_bin_size=_min_bin_size(len(mean_self_fp_distances), self.N_FP_BINS),
+            min_bin_size=min_bin_size(len(mean_self_fp_distances), self.N_FP_BINS),
         )
-        sorted_self_distances_per_bin = _partition_and_sort(
-            values=mean_self_output_distances,
-            keys=mean_self_fp_distances,
-            bin_edges=fp_bin_edges,
+        sorted_self_distances_per_bin = partition_and_sort(
+            mean_self_output_distances, mean_self_fp_distances, fp_bin_edges
         )
 
         self._shared = shared
@@ -181,11 +183,12 @@ class Consistency(ScoreComponent):
         self._sorted_self_distances_per_bin = sorted_self_distances_per_bin
         self._reference_consistency = float(
             np.nanmean(
-                _consistency_from_distances_binned(
-                    distance_k_mean=mean_self_output_distances,
-                    fp_distance_k_mean=mean_self_fp_distances,
-                    fp_bin_edges=fp_bin_edges,
-                    sorted_self_distances_per_bin=sorted_self_distances_per_bin,
+                binned_cdf_score(
+                    mean_self_output_distances,
+                    mean_self_fp_distances,
+                    fp_bin_edges,
+                    sorted_self_distances_per_bin,
+                    higher_is_higher=False,
                 )
             )
         )
@@ -263,11 +266,12 @@ class Consistency(ScoreComponent):
             )
 
         distance_k_mean = _mean_over_neighbors(query_output_distances)
-        score = _consistency_from_distances_binned(
-            distance_k_mean=distance_k_mean,
-            fp_distance_k_mean=query_fp_distances.mean(axis=1).astype(np.float64),
-            fp_bin_edges=self._fp_bin_edges,
-            sorted_self_distances_per_bin=self._sorted_self_distances_per_bin,
+        score = binned_cdf_score(
+            distance_k_mean,
+            query_fp_distances.mean(axis=1).astype(np.float64),
+            self._fp_bin_edges,
+            self._sorted_self_distances_per_bin,
+            higher_is_higher=False,
         )
 
         idx = list(query.index)
@@ -293,17 +297,11 @@ class Consistency(ScoreComponent):
         """Write ``state.json`` (baseline, bins, edges) and the per-bin CDFs."""
         assert self._fp_bin_edges is not None
         assert self._sorted_self_distances_per_bin is not None
-        np.savez(
-            folder / DISTANCES_FILE,
-            **{
-                f"b{i:02d}": arr
-                for i, arr in enumerate(self._sorted_self_distances_per_bin)
-            },
-        )
+        save_per_bin(folder / DISTANCES_FILE, self._sorted_self_distances_per_bin)
         payload = {
             "reference_consistency": self._reference_consistency,
             "n_bins": self.n_bins_,
-            "fp_bin_edges": _encode_finite_edges(self._fp_bin_edges),
+            "fp_bin_edges": encode_edges(self._fp_bin_edges),
         }
         with open(folder / STATE_FILE, "w") as f:
             json.dump(payload, f)
@@ -311,16 +309,15 @@ class Consistency(ScoreComponent):
     def _load_own(self, folder: pathlib.Path) -> None:
         payload = read_json(folder / STATE_FILE, self.NAME)
         n_bins = int(payload["n_bins"])
-        fp_bin_edges = _decode_finite_edges(payload["fp_bin_edges"])
+        fp_bin_edges = decode_edges(payload["fp_bin_edges"])
         if len(fp_bin_edges) != n_bins + 1:
             raise ValueError(
                 f"consistency/{STATE_FILE} declares n_bins={n_bins} but has "
                 f"{len(fp_bin_edges)} bin edges."
             )
-        with np.load(require_file(folder / DISTANCES_FILE, self.NAME)) as npz:
-            self._sorted_self_distances_per_bin = [
-                np.asarray(npz[f"b{i:02d}"], dtype=np.float64) for i in range(n_bins)
-            ]
+        self._sorted_self_distances_per_bin = load_per_bin(
+            require_file(folder / DISTANCES_FILE, self.NAME), n_bins
+        )
         self._fp_bin_edges = fp_bin_edges
         self._reference_consistency = float(payload["reference_consistency"])
 
@@ -375,132 +372,8 @@ class Consistency(ScoreComponent):
 # ---------------------------------------------------------------------------
 
 
-# A bin's CDF needs enough rows to resolve scores: at least this many, or
-# half the nominal bin size for small references.
-_MIN_BIN_ROWS = 1_000
-
-
-def _min_bin_size(n_reference: int, n_bins: int) -> int:
-    return max(1, min(_MIN_BIN_ROWS, n_reference // (2 * n_bins)))
-
-
 def _mean_over_neighbors(distances: np.ndarray) -> np.ndarray:
     """Per-row mean over the k neighbors, ignoring NaN; all-NaN rows → NaN."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         return np.nanmean(distances, axis=1).astype(np.float64)
-
-
-def _compute_fp_bin_edges(
-    mean_fp_distances: np.ndarray, n_bins: int, *, min_bin_size: int = 1
-) -> np.ndarray:
-    """Return ascending FP-distance bin edges ``[-inf, e_1, …, e_m, +inf]``.
-
-    Starts from the ``n_bins`` quantile bins, then (1) collapses duplicate
-    interior quantiles (heavy ties in the reference's mean FP distance) and
-    (2) repeatedly merges the smallest bin into its smaller neighbor until
-    every bin holds at least ``min_bin_size`` reference rows. Rows equal to
-    an edge fall in the bin above it (same ``side="right"`` routing as
-    :func:`_assign_fp_bins`). Outer edges are ``±inf`` so any query distance
-    lands in a bin. The result can therefore have fewer than ``n_bins``
-    bins; :attr:`Consistency.n_bins_` reports the actual count.
-    """
-    if n_bins < 1:
-        raise ValueError(f"n_bins must be >= 1; got {n_bins}.")
-    interior_q = np.linspace(0.0, 1.0, n_bins + 1)[1:-1]
-    interior = np.unique(np.quantile(mean_fp_distances, interior_q))
-    while interior.size:
-        edges = np.concatenate(([-np.inf], interior, [np.inf]))
-        counts = np.bincount(
-            _assign_fp_bins(mean_fp_distances, edges), minlength=edges.size - 1
-        )
-        smallest = int(np.argmin(counts))
-        if counts[smallest] >= min_bin_size:
-            break
-        # Remove the edge shared with the smaller neighbor (interior edge
-        # i separates bins i and i+1).
-        if smallest == 0:
-            drop = 0
-        elif smallest == counts.size - 1:
-            drop = smallest - 1
-        else:
-            drop = (
-                smallest - 1
-                if counts[smallest - 1] <= counts[smallest + 1]
-                else smallest
-            )
-        interior = np.delete(interior, drop)
-    return np.concatenate(([-np.inf], interior.astype(np.float64), [np.inf]))
-
-
-def _assign_fp_bins(fp_distances: np.ndarray, fp_bin_edges: np.ndarray) -> np.ndarray:
-    """Return per-row bin index (0..n_bins-1) for each FP distance value."""
-    n_bins = len(fp_bin_edges) - 1
-    bin_idx = np.searchsorted(fp_bin_edges[1:-1], fp_distances, side="right")
-    return np.clip(bin_idx, 0, n_bins - 1).astype(np.int64)
-
-
-def _partition_and_sort(
-    values: np.ndarray,
-    keys: np.ndarray,
-    bin_edges: np.ndarray,
-) -> list[np.ndarray]:
-    """Per bin of ``keys``, the ascending finite ``values`` (one CDF per bin)."""
-    n_bins = len(bin_edges) - 1
-    bin_idx = _assign_fp_bins(keys, bin_edges)
-    finite = np.isfinite(values)
-    return [
-        np.sort(values[(bin_idx == b) & finite]).astype(np.float64)
-        for b in range(n_bins)
-    ]
-
-
-def _consistency_from_distances_binned(
-    distance_k_mean: np.ndarray,
-    fp_distance_k_mean: np.ndarray,
-    fp_bin_edges: np.ndarray,
-    sorted_self_distances_per_bin: list[np.ndarray],
-) -> np.ndarray:
-    """Map per-row output-space k-distances to consistency via per-bin CDFs.
-
-    Each row is routed to its FP-distance bin and scored with
-    :func:`_cdf_score` (distance direction) against that bin's sorted
-    reference distances. NaN distances score NaN, as do rows routed to a bin
-    with no finite reference distance (only possible if the reference
-    outputs are almost entirely missing).
-    """
-    bin_idx = _assign_fp_bins(fp_distance_k_mean, fp_bin_edges)
-    score = np.full(distance_k_mean.shape, np.nan, dtype=np.float64)
-    for b, sorted_arr in enumerate(sorted_self_distances_per_bin):
-        mask = bin_idx == b
-        if mask.any() and sorted_arr.size:
-            score[mask] = _cdf_score(
-                distance_k_mean[mask], sorted_arr, higher_is_higher=False
-            )
-    return score
-
-
-def _encode_finite_edges(edges: np.ndarray) -> list[float]:
-    """Encode ``±inf`` as ``±_POS_INF_SENTINEL`` so JSON serialization is clean."""
-    out: list[float] = []
-    for v in edges:
-        if v == -np.inf:
-            out.append(_NEG_INF_SENTINEL)
-        elif v == np.inf:
-            out.append(_POS_INF_SENTINEL)
-        else:
-            out.append(float(v))
-    return out
-
-
-def _decode_finite_edges(encoded: list[float]) -> np.ndarray:
-    """Inverse of :func:`_encode_finite_edges`."""
-    out = np.empty(len(encoded), dtype=np.float64)
-    for i, v in enumerate(encoded):
-        if v <= _NEG_INF_SENTINEL:
-            out[i] = -np.inf
-        elif v >= _POS_INF_SENTINEL:
-            out[i] = np.inf
-        else:
-            out[i] = float(v)
-    return out

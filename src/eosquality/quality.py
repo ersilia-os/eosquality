@@ -85,12 +85,13 @@ _KNN_USERS = frozenset({"support", "consistency"})
 class RunResult:
     """Combined result returned by :meth:`ErsiliaQuality.run`.
 
-    ``scores`` is a per-query DataFrame with two columns per fitted
+    ``scores`` is a per-query DataFrame with the columns of each fitted
     component, in canonical order: ``typicality``, ``typicality_raw``,
     ``extremity``, ``extremity_raw``, ``support``, ``support_raw``,
-    ``consistency``, ``consistency_raw``, ``signal``, ``signal_raw``. The
-    calibrated column is in ``(0, 1]``; ``*_raw`` is the pre-calibration
-    value. Components that were not fit are absent.
+    ``support_log``, ``consistency``, ``consistency_raw``, ``signal``,
+    ``signal_raw``. The calibrated column is in ``(0, 1]``; ``*_raw`` is the
+    pre-calibration value; ``support_log = −log10(support)``. Components
+    that were not fit are absent.
 
     ``metadata`` has ``n_reference`` plus each component's run metadata
     with keys prefixed by the component name (e.g. ``support_k``,
@@ -414,6 +415,8 @@ class ErsiliaQuality:
                 result = component.run(query)
             columns[name] = result.score
             columns[f"{name}_raw"] = result.score_raw
+            if hasattr(result, "score_log"):
+                columns[f"{name}_log"] = result.score_log
             metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
             logger.info(
                 f"score {name!r} | mean={float(result.score.mean()):.4f} "

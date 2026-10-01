@@ -25,11 +25,20 @@ def fitted(request, reference, library):
 def test_run_columns_and_ranges(fitted, query):
     scores = fitted.run(query).scores
     expected = [
-        c
-        for name in ("typicality", "extremity", "support", "consistency", "signal")
-        for c in (name, f"{name}_raw")
+        "typicality",
+        "typicality_raw",
+        "extremity",
+        "extremity_raw",
+        "support",
+        "support_raw",
+        "support_log",
+        "consistency",
+        "consistency_raw",
+        "signal",
+        "signal_raw",
     ]
     assert list(scores.columns) == expected
+    np.testing.assert_allclose(scores["support_log"], -np.log10(scores["support"]))
     calibrated = scores[["typicality", "extremity", "support", "consistency", "signal"]]
     finite = calibrated.to_numpy()[np.isfinite(calibrated.to_numpy())]
     assert (finite > 0).all() and (finite <= 1).all()
@@ -117,3 +126,17 @@ def test_typicality_only_fit_needs_no_index(reference, query):
         "extremity",
         "extremity_raw",
     ]
+
+
+def test_support_is_calibrated_within_each_size_bin(fitted, reference, library):
+    from eosquality.scores._binning import assign_bins
+    from eosquality.vectorindex import VectorIndex
+
+    support = fitted.support
+    sizes = VectorIndex.load(library).fingerprint_sizes()
+    distances = np.concatenate(support.sorted_self_distances_per_bin_)
+    assert distances.size == len(reference)
+    bins = assign_bins(sizes, support.size_bin_edges_)
+    for b, sorted_arr in enumerate(support.sorted_self_distances_per_bin_):
+        assert sorted_arr.size == (bins == b).sum()
+    assert support.n_bins_ > 1

@@ -15,7 +15,7 @@ flowchart LR
 
     SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>CDF of Q66"]
     SH --> EXT["<b>Extremity</b><br/>|scaled| position<br/>CDF of Q66"]
-    KNN --> SUP["<b>Support</b><br/>CDF of mean<br/>Tanimoto distance"]
+    KNN --> SUP["<b>Support</b><br/>mean Tanimoto distance<br/>CDF per FP-size bin"]
     KNN --> CON["<b>Consistency</b><br/>output L1 to FP neighbours<br/>CDF per FP-distance bin"]
     SH --> CON
     SH --> SIG["<b>Signal</b> (opt-in)<br/>XGBoost descriptor → outputs<br/>CDF of |SHAP| Gini on val"]
@@ -32,7 +32,7 @@ flowchart LR
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
-    TYP & EXT & SUP & CON & SIG --> OUT["scores.csv<br/>score + score_raw per component"]
+    TYP & EXT & SUP & CON & SIG --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
 ```
 
 ## Save layout
@@ -48,7 +48,7 @@ flowchart LR
   knn/state.json                        # {"k": …}; iff support or consistency
   typicality/   state.json  reference_self_aggregates.npy  metadata.json
   extremity/    state.json  reference_self_aggregates.npy  metadata.json
-  support/      state.json  reference_self_distances.npy   metadata.json
+  support/      state.json  reference_self_distances_per_bin.npz  metadata.json
   consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
   signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
                 physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
