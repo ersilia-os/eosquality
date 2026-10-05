@@ -47,6 +47,11 @@ def model_outputs(smiles: list[str], seed: int) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="session")
+def make_outputs():
+    return model_outputs
+
+
+@pytest.fixture(scope="session")
 def smiles() -> list[str]:
     return list(pd.read_csv(DATA / "smiles_700.csv")["smiles"])
 

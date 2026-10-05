@@ -128,7 +128,7 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 
 - **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used.
 - **Dependencies** are pinned to exact versions in `pyproject.toml`; bump them deliberately.
-- **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `error:` lines and exit status 1.
+- **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `error:` lines and exit status 1. The library fetch command keeps the verb `download` rather than `fetch`, because users already script `eosquality download`.
 - **Size limits:** modules stay under 600 lines and functions under 80; split them before they grow past that.
 - **Docstrings:** every public module, class, function and method in `src/` and `scripts/` has a NumPy-style docstring, with `Parameters` and `Returns` sections where they apply. Test functions in `tests/` are exempt from the docstring rules; pytest test names and fixtures are self-describing.
 

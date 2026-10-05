@@ -10,7 +10,6 @@ from __future__ import annotations
 import pathlib
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -29,6 +28,7 @@ from eosquality.exceptions import (
     NotFittedError,
     SchemaError,
 )
+from eosquality.results import RunResult
 from eosquality.scores._helpers import (
     _resolve_vector_index,
 )
@@ -56,36 +56,6 @@ __all__ = [
     "ErsiliaQuality",
     "RunResult",
 ]
-
-
-@dataclass
-class RunResult:
-    """Combined result returned by :meth:`ErsiliaQuality.run`.
-
-    ``scores`` is a per-query DataFrame with the columns of each fitted
-    component, in canonical order: ``typicality``, ``typicality_raw``,
-    ``extremity``, ``extremity_raw``, ``support``, ``support_raw``,
-    ``support_log``, ``consistency``, ``consistency_raw``, ``signal``,
-    ``signal_raw``. The calibrated column is in ``(0, 1]``; ``*_raw`` is the
-    pre-calibration value; ``support_log = −log10(support)``. Components
-    that were not fit are absent.
-
-    Training-modality columns (when training sets were fit) follow:
-    ``training_distance`` (uncalibrated), ``training_n_columns``,
-    ``in_training_any``.
-
-    ``metadata`` has ``n_reference`` (reference modality) plus each
-    component's run metadata with keys prefixed by the component name (e.g.
-    ``support_k``, ``consistency_n_fp_bins``, ``training_distance_n_columns``).
-
-    ``training_details`` (training modality only) has one row per
-    (query, output column): per-column domain and the nearest training
-    molecules with their similarities and labels.
-    """
-
-    scores: pd.DataFrame
-    metadata: dict[str, Any]
-    training_details: pd.DataFrame | None = None
 
 
 class ErsiliaQuality:
@@ -456,12 +426,7 @@ class ErsiliaQuality:
         float
             Requires the support score to be fitted.
         """
-        self._check_fitted()
-        if self.support is None:
-            raise RuntimeError(
-                "reference_support is only defined when the support score has been fit."
-            )
-        return self.support.reference_support_
+        return self._anchor("support")
 
     @property
     def reference_typicality_(self) -> float:
@@ -472,12 +437,7 @@ class ErsiliaQuality:
         float
             Requires the typicality score to be fitted.
         """
-        self._check_fitted()
-        if self.typicality is None:
-            raise RuntimeError(
-                "reference_typicality is only defined when typicality has been fit."
-            )
-        return self.typicality.reference_typicality_
+        return self._anchor("typicality")
 
     @property
     def reference_extremity_(self) -> float:
@@ -488,12 +448,7 @@ class ErsiliaQuality:
         float
             Requires the extremity score to be fitted.
         """
-        self._check_fitted()
-        if self.extremity is None:
-            raise RuntimeError(
-                "reference_extremity is only defined when extremity has been fit."
-            )
-        return self.extremity.reference_extremity_
+        return self._anchor("extremity")
 
     @property
     def reference_consistency_(self) -> float:
@@ -504,12 +459,7 @@ class ErsiliaQuality:
         float
             Requires the consistency score to be fitted.
         """
-        self._check_fitted()
-        if self.consistency is None:
-            raise RuntimeError(
-                "reference_consistency is only defined when consistency has been fit."
-            )
-        return self.consistency.reference_consistency_
+        return self._anchor("consistency")
 
     @property
     def reference_signal_(self) -> float:
@@ -520,12 +470,7 @@ class ErsiliaQuality:
         float
             Requires the signal score to be fitted.
         """
-        self._check_fitted()
-        if self.signal is None:
-            raise RuntimeError(
-                "reference_signal is only defined when signal has been fit."
-            )
-        return self.signal.reference_signal_
+        return self._anchor("signal")
 
     @property
     def modalities_(self) -> list[str]:
@@ -581,6 +526,16 @@ class ErsiliaQuality:
             raise NotFittedError(
                 "This ErsiliaQuality instance is not fitted yet. Call fit() first."
             )
+
+    def _anchor(self, score: str) -> float:
+        """Reference anchor of a fitted reference score (raises if not fitted)."""
+        self._check_fitted()
+        component = getattr(self, score)
+        if component is None:
+            raise RuntimeError(
+                f"reference_{score} is only defined when {score} has been fit."
+            )
+        return getattr(component, f"reference_{score}_")
 
     def _reset(self) -> None:
         """Drop every fitted component (a re-fit replaces all of them)."""

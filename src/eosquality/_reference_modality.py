@@ -192,26 +192,7 @@ def run_reference(
         f"{time.perf_counter() - t:.2f}s"
     )
 
-    # FP kNN once, shared by Support and Consistency.
-    query_fp_indices: np.ndarray | None = None
-    query_fp_distances: np.ndarray | None = None
-    query_output_distances: np.ndarray | None = None
-    if eq.support is not None or eq.consistency is not None:
-        vi = eq._get_vector_index()
-        knn = (eq.support or eq.consistency).knn_  # type: ignore[union-attr]
-        t = time.perf_counter()
-        query_fp_distances, query_fp_indices = _query_fp_distances(query, vi, knn.k)
-        logger.info(
-            f"run | FP kNN | k={knn.k} | median dist="
-            f"{float(np.median(query_fp_distances)) if len(query) else float('nan'):.4f} | "
-            f"{time.perf_counter() - t:.2f}s"
-        )
-        if eq.consistency is not None:
-            assert eq._shared.ref_repr is not None
-            query_output_distances = _query_output_distances(
-                query_repr, eq._shared.ref_repr, query_fp_indices
-            )
-
+    neighbours = _shared_neighbours(eq, query, query_repr)
     metadata["n_reference"] = len(eq._shared.reference_ids)
     for name, component in components.items():
         t = time.perf_counter()
@@ -220,17 +201,11 @@ def run_reference(
         elif name == "support":
             result = component.run(
                 query,
-                query_fp_indices=query_fp_indices,
-                query_fp_distances=query_fp_distances,
+                query_fp_indices=neighbours["query_fp_indices"],
+                query_fp_distances=neighbours["query_fp_distances"],
             )
         elif name == "consistency":
-            result = component.run(
-                query,
-                query_repr=query_repr,
-                query_fp_indices=query_fp_indices,
-                query_fp_distances=query_fp_distances,
-                query_output_distances=query_output_distances,
-            )
+            result = component.run(query, query_repr=query_repr, **neighbours)
         else:
             result = component.run(query)
         columns[name] = result.score
@@ -243,6 +218,28 @@ def run_reference(
             f"raw mean={float(result.score_raw.mean()):.4f} | "
             f"{time.perf_counter() - t:.2f}s"
         )
+
+
+def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray) -> dict:
+    """FP kNN (and output distances) computed once for Support and Consistency."""
+    out = {
+        "query_fp_indices": None,
+        "query_fp_distances": None,
+        "query_output_distances": None,
+    }
+    if eq.support is None and eq.consistency is None:
+        return out
+    knn = (eq.support or eq.consistency).knn_
+    t = time.perf_counter()
+    distances, indices = _query_fp_distances(query, eq._get_vector_index(), knn.k)
+    out["query_fp_distances"], out["query_fp_indices"] = distances, indices
+    logger.info(f"run | FP kNN | k={knn.k} | {time.perf_counter() - t:.2f}s")
+    if eq.consistency is not None:
+        assert eq._shared.ref_repr is not None
+        out["query_output_distances"] = _query_output_distances(
+            query_repr, eq._shared.ref_repr, indices
+        )
+    return out
 
 
 def emit_reference_report(eq, reference: pd.DataFrame, shared: SharedFitState) -> None:

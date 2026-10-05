@@ -184,12 +184,10 @@ def test_add_training_rejects_other_model(reference, library, training_dir, tmp_
         ErsiliaQuality.add_training(art, training_dir, eos_id="eos9zzz")
 
 
-def test_training_files_named_after_ersilia_columns(tmp_path, smiles):
+def test_training_files_named_after_ersilia_columns(tmp_path, smiles, make_outputs):
     """Training files are matched to model outputs by Ersilia column name."""
-    from conftest import model_outputs
-
     columns = ["cytotoxicity_hepg2", "cytotoxicity_hskmc", "cytotoxicity_imr90"]
-    ref = model_outputs(smiles[:600], seed=0)[["key", "input", "mw", "logp", "tpsa"]]
+    ref = make_outputs(smiles[:600], seed=0)[["key", "input", "mw", "logp", "tpsa"]]
     ref.columns = ["key", "input", *columns]
     folder = tmp_path / "training_eos42ez_v1"
     folder.mkdir()
