@@ -108,9 +108,10 @@ def cli() -> None:
     """Every subcommand prints curated progress (``-v`` adds DEBUG logs)."""
 
 
+# In workflow order: setup once, then fit per model, then run per query set.
+cli.add_command(setup)
 cli.add_command(fit)
 cli.add_command(run)
-cli.add_command(setup)
 cli.add_command(build)
 
 

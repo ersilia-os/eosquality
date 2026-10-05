@@ -94,44 +94,35 @@ def test_scaffold_folds_keep_scaffolds_together(smiles):
     assert all(len(v) == 1 for v in by_scaffold.values())
 
 
-def test_best_variant_is_chosen(fitted):
-    from eosquality.scores._error_model import VARIANTS
-
+def test_out_of_fold_spearman_is_recorded(fitted):
     for m in fitted.training_difficulty.models_.values():
-        assert set(m.variant_spearman) == set(VARIANTS)
-        assert m.variant in VARIANTS
-        finite = {v: r for v, r in m.variant_spearman.items() if np.isfinite(r)}
-        assert m.spearman == max(finite.values())
+        assert np.isfinite(m.spearman)
+        assert m.error_model.n_features_in_ == len(m.features)
 
 
-def test_diffknn_and_top1_inputs(fitted):
+def test_inputs_follow_unique_feature_set_one(fitted):
     from eosquality.scores import _error_model as em
 
     model = fitted.training_difficulty.models_["aromatic"]
-    training = fitted._training
-    column, vi = training.columns["aromatic"], training.indices["aromatic"]
-    dist, nn = vi.self_knn_distances(model.k), vi.self_knn_indices(model.k)
-    blocks = em._blocks(
-        dist=dist,
-        nn=nn,
-        y=column.y,
-        residuals=model.residuals,
-        prediction=model.oof_prediction,
-        variance=model.oof_variance,
-        neighbour_prediction=model.oof_prediction,
-        neighbour_variance=model.oof_variance,
-        log_density=np.zeros((column.n, 3)),
-        maccs=np.zeros((column.n, 166)),
+    names = em.feature_names(binary=True)
+    assert names[:166] == list(em.MACCS_NAMES) and names[-1] == "prediction"
+    assert "probability_top1" in names and "probability_top1" not in (
+        em.feature_names(binary=False)
+    )
+    n = 7
+    p = model.oof_prediction[:n]
+    inputs = em._inputs(
+        dist=np.zeros((n, model.k)),
+        prediction=p,
+        variance=model.oof_variance[:n],
+        log_density=np.zeros((n, 3)),
+        maccs=np.zeros((n, 166)),
         binary=True,
     )
-    for i in range(5):
-        expected = abs(model.oof_prediction[i] - model.oof_prediction[nn[i]].mean())
-        assert blocks["transformed"][i, 0] == pytest.approx(expected)
-    top1 = blocks["base"][:, -1]
+    assert inputs.shape == (n, len(names))
+    top1 = inputs[:, names.index("probability_top1")]
+    np.testing.assert_allclose(top1, np.maximum(p, 1 - p))
     assert ((top1 >= 0.5) & (top1 <= 1.0)).all()
-    assert len(em._variant_names("data+base+pred", True)) == (
-        blocks["data"].shape[1] + blocks["base"].shape[1] + 1
-    )
 
 
 def test_kde_matches_brute_force(smiles):

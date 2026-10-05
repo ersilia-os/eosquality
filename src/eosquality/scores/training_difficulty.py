@@ -6,8 +6,8 @@ model. For each output column with at least ``MIN_LABELLED`` labels, an
 predict, following UNIQUE's error models (see
 :mod:`eosquality.scores._error_model`): a surrogate random forest fitted
 with scaffold-grouped CV gives out-of-fold residuals, and a second random
-forest predicts them from UQ inputs (kNN distance, KDE densities, ensemble
-variance, DiffkNN…), choosing the best of UNIQUE's three feature sets.
+forest predicts them from UNIQUE's feature set (i): MACCS keys, base UQ
+metrics (kNN distance, KDE densities, ensemble variance) and the prediction.
 
 The query's predicted error is calibrated as its percentile among the
 training molecules' out-of-fold predicted errors: ~0.5 is as hard as a
@@ -122,10 +122,8 @@ class TrainingDifficulty(ScoreComponent):
             self._models[name] = model
             logger.info(
                 f"training difficulty | column {name!r}: n={model.n_labelled:,} | "
-                "Spearman(predicted, OOF error): "
-                + ", ".join(f"{v}={r:.3f}" for v, r in model.variant_spearman.items())
-                + f" → {model.variant} | "
-                f"{time.perf_counter() - t:.1f}s"
+                f"folds={model.cv} | Spearman(predicted, OOF error)="
+                f"{model.spearman:.3f} | {time.perf_counter() - t:.1f}s"
             )
             _warn_if_degraded(name, model)
         self._finish_fit(t0)
@@ -173,11 +171,7 @@ class TrainingDifficulty(ScoreComponent):
                 "columns": names,
                 "spearman": {n: m.spearman for n, m in self._models.items()},
                 "n_labelled": {n: m.n_labelled for n, m in self._models.items()},
-                "variant": {n: m.variant for n, m in self._models.items()},
                 "cv": {n: m.cv for n, m in self._models.items()},
-                "variant_spearman": {
-                    n: m.variant_spearman for n, m in self._models.items()
-                },
                 "summary_quantile": SUMMARY_QUANTILE,
             },
         )

@@ -104,7 +104,7 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 - **Support and molecule size:** Tanimoto similarity is lower for small molecules, so small fragments look somewhat more novel than they are. This is not corrected for (see Support).
 - **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
 - **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality setup`.
-- **Run time** for 1,000 queries is about 15 s with all five scores, dominated by FPSim2 queries (about 10 ms each). Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes a few minutes.
+- **Run time** for 1,000 queries is about 15–25 s with all five scores, dominated by FPSim2 queries (about 10 ms each) and Signal's descriptors. Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes about a minute without Signal; Signal adds a few minutes (SHAP over the ~135k-row val slice). Typicality and extremity fit in under a second each.
 - `binary_class_freq` is computed and saved, but no score reads it.
 
 ## Training modality (in progress)
@@ -115,10 +115,47 @@ Each output column can have its own training set. It is fitted with `--training-
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
 | 2 | `training_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
-| 3 | `training_difficulty`: learned error model per labelled column, following UNIQUE (surrogate RF with scaffold CV; base UQ: kNN distance, 3 KDEs, ensemble variance, top-1 probability; transformed UQ: DiffkNN on prediction and variance, plus label-based local error and spread; MACCS as data features; best of UNIQUE's 3 feature sets by OOF Spearman), calibrated rank, Q66 → one value | y | done (validated on synthetic data only) |
+| 3 | `training_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on six public endpoints, below) |
 | 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
 
-Validation uses training sets only: split by scaffold, fit a surrogate model, and check that the scores predict its error on held-out molecules (`scripts/evaluate_training.py`: Spearman, AUROC, sparsification gain against the oracle, random baseline 0). So far this has only been run on a synthetic set whose labels are noisy for sulfur-containing molecules: `training_difficulty` reaches Spearman 0.35 there, while `training_distance` is at random level, because the noise is unrelated to novelty. Real endpoints are pending.
+### Validation
+
+Validation uses training sets only. `scripts/evaluate_training.py`:
+1. splits a labelled set by scaffold (80/20);
+2. fits the training modality on the 80%;
+3. trains a stand-in "black-box" model on the same 80%;
+4. checks how well each training score ranks that model's absolute errors on the held-out 20%.
+
+Three black boxes are used:
+- **`rf_morgan`**: a random forest on Morgan bits. It is the same family as the surrogate inside `training_difficulty`, so this case is partly circular.
+- **`xgb_physchem`**: XGBoost on RDKit physicochemical descriptors.
+- **`knn_morgan`**: a 5-NN on Morgan bits.
+
+The last two test transfer to a different model, which is the situation of an Ersilia model.
+
+Results on six MoleculeNet endpoints follow (Spearman of score vs held-out |error|). † marks a value within the permutation baseline (95th percentile of |ρ| under 1,000 permutations), i.e. indistinguishable from random. Bold is the better of the two scores.
+
+| endpoint | rf_morgan: distance / difficulty | xgb_physchem: distance / difficulty | knn_morgan: distance / difficulty |
+|---|---|---|---|
+| ESOL | 0.09† / **0.40** | -0.10† / **0.03†** | 0.10 / **0.31** |
+| Lipophilicity | 0.28 / **0.34** | 0.22 / **0.26** | 0.32 / **0.35** |
+| BBBP (binary) | 0.41 / **0.79** | 0.25 / **0.69** | 0.27 / **0.62** |
+| FreeSolv | -0.04† / **0.08†** | **0.29** / 0.15 | 0.04† / **0.07†** |
+| BACE pIC50 | 0.26 / **0.36** | 0.04† / **0.18** | 0.28 / **0.35** |
+| BACE class (binary) | 0.17 / **0.69** | 0.07† / **0.60** | 0.11 / **0.54** |
+| mean | 0.20 / 0.45 | 0.13 / 0.32 | 0.19 / 0.37 |
+
+What the table shows:
+- **Difficulty beats distance** in 17 of 18 cases, including against the two black boxes that differ from its surrogate, so it is not only learning its own random forest.
+- **Binary endpoints gain most.** For them the error is dominated by classifier confidence, which the error model sees through the surrogate's probability and tree variance.
+- **Continuous endpoints are harder.** The values (0.3–0.4) are in the range Novartis reports for error models on public ADME data (Spearman 0.16–0.46, Parrondo-Pizarro et al. 2026).
+- **Small sets are noise.** FreeSolv (432 training molecules, 210 test) is noise for everything, and XGBoost on physchem descriptors is hardest to anticipate from fingerprints.
+
+The evaluation also reports UNIQUE's ranking metrics and Spearman on the most feature-, label- and discontinuity-shifted test molecules.
+
+The design of `training_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
+
+To reproduce, download the MoleculeNet CSVs (`delaney-processed.csv`, `Lipophilicity.csv`, `BBBP.csv`, `SAMPL.csv`, `bace.csv` from `deepchemdata.s3-us-west-1.amazonaws.com/datasets/`) and run, for example, `python scripts/evaluate_training.py --csv Lipophilicity.csv --y-col exp`.
 
 ## Open items
 

@@ -129,30 +129,28 @@ Training difficulty asks how hard the query is to predict, judging by the traini
 
 It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own:
 1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. A congeneric training set, with fewer usable Murcko scaffolds than folds or one scaffold holding over 40% of the labelled molecules, falls back to random folds; the fit warns that its out-of-fold errors are then optimistic, and the metadata records `cv`. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
-2. **Inputs**, grouped as in UNIQUE:
-   - **Base UQ methods:**
+2. **Inputs.** These are UNIQUE's feature set (i), "data features + base UQ metrics + prediction":
+   - **Data features:** the 166 MACCS keys.
+   - **Base UQ metrics:**
      - kNN distance: the mean Tanimoto distance to the 5 nearest *other* training molecules.
      - Three kernel density estimates on the MACCS keys: Gaussian/Euclidean, Gaussian/Manhattan and exponential/Manhattan. Each bandwidth is chosen by 5-fold grid search over {0.1, 0.5, 1}.
      - Ensemble variance: across the surrogate's trees.
      - For binary labels, the top-1 class probability `max(p, 1 − p)`.
-   - **Transformed UQ methods:**
-     - **DiffkNN** on the prediction and on the variance: `|v − mean(v over the 5 nearest training molecules)|`, as UNIQUE defines it.
-     - Two eosquality additions that use labels, which UNIQUE does not have: the similarity-weighted out-of-fold error of those neighbours, and the spread of their labels.
-   - **Data features:** the 166 MACCS keys.
    - **The prediction** `ŷ`.
-3. **Error model.** As in UNIQUE, a second random forest learning inputs → residual is fitted on three feature sets:
-   - data features + base UQ + prediction;
-   - base UQ + prediction;
-   - transformed UQ + prediction.
+3. **Error model.** A second random forest learns inputs → residual. Its out-of-fold predictions on the same folds give the calibration table, and their Spearman correlation with the true residuals is the **honesty check**: 0 means no better than random.
 
-   Each gets out-of-fold predictions on the same folds, and the one whose predictions correlate best (Spearman) with the true residuals is kept. Its out-of-fold predictions give the calibration table, and its Spearman value is the **honesty check**: 0 means no better than random.
+**Why feature set (i) only.** UNIQUE also builds error models on "base UQ + prediction" and on "transformed UQ (DiffkNN) + prediction", and benchmarks them. Both UNIQUE papers found set (i) best, and so did our benchmark:
+- **Setup:** six MoleculeNet endpoints (ESOL, lipophilicity, FreeSolv, BACE pIC50, BBBP, BACE class), each split by scaffold. Each set's predictions were scored against the held-out errors of three different models (see Validation in `status.md`).
+- **Set (i) with MACCS** had the best mean Spearman: 0.36, against 0.30 for "base + prediction", 0.28 for the transformed set and 0.16 for distance alone.
+- **Choosing the set per column by out-of-fold Spearman was harmful.** It mostly picked the transformed set, whose neighbour-based inputs look predictive out-of-fold but not on new scaffolds. A training molecule's neighbours usually share its scaffold, hence its fold and its fold model's errors; a new-scaffold query's neighbours do not.
+- **MACCS beat Morgan bits** as data features: 0.36 against 0.33.
 
 For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `training_difficulty` is the **66th percentile** across labelled columns, as for distance.
 
 How to read it:
 - It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
 - It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
-- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`, and `training_difficulty_variant_spearman` for all three feature sets) and in the fit log before trusting it. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
 
 Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
 
@@ -165,7 +163,7 @@ The surrogate, densities and error model are saved with joblib (pickle), so only
 - **Training errors are all out-of-fold.** UNIQUE trains its error model on in-sample TRAIN errors plus out-of-sample CALIBRATION errors. Here every error is out-of-fold.
 - **Training molecules are left out of their own neighbours and kernel.** UNIQUE counts a training molecule as its own nearest neighbour.
 - **Densities are summed exactly.** They are computed in log space; scikit-learn's `score_samples` approximates densities far in the tails. For large training sets, the bandwidth grid search uses at most 2,000 molecules and the densities are built on at most 5,000.
-- **Variant choice.** The feature set is chosen per column by out-of-fold Spearman. UNIQUE picks its best method on a held-out test split, with bootstrap and Wilcoxon tests.
+- **One feature set.** Only UNIQUE's set (i) is fitted. UNIQUE fits all three and picks the best on a held-out test split, with bootstrap and Wilcoxon tests; we have no such split at inference time, and picking by out-of-fold Spearman proved unreliable (see above).
 - **Output.** We report a percentile combined across columns. UNIQUE reports raw predicted errors for one endpoint.
 - **Not included:**
   - distances converted to variances and summed (UNIQUE's SumOfVariances), which needs a separate calibration set;

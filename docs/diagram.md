@@ -29,7 +29,7 @@ flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (raw + calibrated)"]
-    IDX --> TDF["<b>Training difficulty</b> (columns with y)<br/>surrogate RF, scaffold CV → OOF errors<br/>UQ inputs (kNN, KDE, variance, DiffkNN)<br/>best of 3 UNIQUE feature sets → calibrated rank,<br/>Q66 → one value"]
+    IDX --> TDF["<b>Training difficulty</b> (columns with y)<br/>surrogate RF, scaffold CV → OOF errors<br/>error model on MACCS + kNN, KDE, variance + ŷ<br/>(UNIQUE feature set i) → calibrated rank,<br/>Q66 → one value"]
 ```
 
 ## Run
