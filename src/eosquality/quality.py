@@ -39,11 +39,19 @@ from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
 from eosquality.scores.support import Support
+from eosquality.scores.training_domain import TrainingDomain
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES, fit_shared
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
+from eosquality.training import (
+    TrainingFitState,
+    fit_training,
+    load_training,
+    load_training_state,
+    save_training_state,
+)
 from eosquality.utils.identifiers import validate_eos_id, validate_version
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
@@ -79,6 +87,8 @@ _SCORE_CLASSES = {
 # descriptor matrices from the index folder; it never queries the index).
 _INDEX_AWARE = frozenset({"support", "consistency", "signal"})
 _KNN_USERS = frozenset({"support", "consistency"})
+# Training-modality components (present iff training sets were fit).
+_TRAINING_ORDER: tuple[str, ...] = ("training_domain",)
 
 
 @dataclass
@@ -93,17 +103,34 @@ class RunResult:
     pre-calibration value; ``support_log = −log10(support)``. Components
     that were not fit are absent.
 
-    ``metadata`` has ``n_reference`` plus each component's run metadata
-    with keys prefixed by the component name (e.g. ``support_k``,
-    ``consistency_n_fp_bins``, ``signal_descriptor``).
+    Training-modality columns (when training sets were fit) follow:
+    ``training_domain``, ``training_domain_raw``, ``training_n_columns``,
+    ``in_training_any``.
+
+    ``metadata`` has ``n_reference`` (reference modality) plus each
+    component's run metadata with keys prefixed by the component name (e.g.
+    ``support_k``, ``consistency_n_fp_bins``, ``training_domain_n_columns``).
+
+    ``training_details`` (training modality only) has one row per
+    (query, output column): per-column domain and the nearest training
+    molecules with their similarities and labels.
     """
 
     scores: pd.DataFrame
     metadata: dict[str, Any]
+    training_details: pd.DataFrame | None = None
 
 
 class ErsiliaQuality:
-    """Orchestrate the per-score components for a single reference dataset."""
+    """Orchestrate the quality scores of one Ersilia model.
+
+    Two modalities, each present only if its data was given at fit time:
+
+    - **reference** — the model's predictions on the reference library
+      (typicality, extremity, support, consistency, signal);
+    - **training** — the model's per-output-column training sets
+      (training_domain).
+    """
 
     def __init__(
         self,
@@ -138,7 +165,9 @@ class ErsiliaQuality:
         self.consistency: Consistency | None = None
         self.extremity: Extremity | None = None
         self.signal: Signal | None = None
+        self.training_domain: TrainingDomain | None = None
         self._shared: SharedFitState | None = None
+        self._training: TrainingFitState | None = None
         self._vector_index_cache: VectorIndex | None = None
         self.is_fitted_: bool = False
 
@@ -148,8 +177,8 @@ class ErsiliaQuality:
 
     def fit(
         self,
-        reference: pd.DataFrame,
-        eos_id: str,
+        reference: pd.DataFrame | None = None,
+        eos_id: str | None = None,
         version: str = "v1",
         vector_index: str | pathlib.Path | None = None,
         ignore_size: bool = False,
@@ -157,11 +186,25 @@ class ErsiliaQuality:
         max_features: int | None = DEFAULT_MAX_FEATURES,
         max_signal_train_samples: int | None = 1000,
         signal_descriptor: str = "physchem",
+        training: str | pathlib.Path | None = None,
+        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
     ) -> ErsiliaQuality:
-        """Fit the selected scores on a reference DataFrame.
+        """Fit the reference modality, the training modality, or both.
 
         Parameters
         ----------
+        reference:
+            The model's predictions on the reference library (``key``,
+            ``input`` and one numeric column per output). ``None`` for a
+            training-only fit.
+        eos_id, version:
+            Model identifier (e.g. ``"eos4e40"``) and dataset version.
+        training:
+            Folder with one ``<output_column>.csv`` per column (``smiles``,
+            optional ``y``, optional ``key``). Fits the training modality.
+        training_predictions:
+            The model's own predictions on the training molecules (Ersilia
+            output CSV or DataFrame), stored for later training scores.
         scores:
             Which components to fit. Defaults to ``DEFAULT_SCORES``
             (``typicality``, ``support``, ``consistency``, ``extremity``).
@@ -200,8 +243,101 @@ class ErsiliaQuality:
             Recorded in the saved artifact and used unchanged at run time.
             Ignored when ``signal`` is not in ``scores``.
         """
+        if eos_id is None:
+            raise ValueError("fit needs eos_id= (e.g. 'eos4e40').")
         validate_eos_id(eos_id)
         validate_version(version)
+        if reference is None and training is None:
+            raise ValueError("fit needs reference predictions, training sets, or both.")
+        # A re-fit replaces every component, including ones not requested now.
+        for name in _SCORE_ORDER + _TRAINING_ORDER:
+            setattr(self, name, None)
+        self._shared = None
+        self._training = None
+        self._vector_index_cache = None
+        self.is_fitted_ = False
+
+        t_start = time.perf_counter()
+        logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
+        if reference is not None:
+            self._fit_reference(
+                reference,
+                eos_id=eos_id,
+                version=version,
+                vector_index=vector_index,
+                ignore_size=ignore_size,
+                scores=scores,
+                max_features=max_features,
+                max_signal_train_samples=max_signal_train_samples,
+                signal_descriptor=signal_descriptor,
+            )
+        if training is not None:
+            self.fit_training(
+                training, training_predictions, eos_id=eos_id, version=version
+            )
+        self.is_fitted_ = True
+        fitted = list(self._components()) + list(self._training_components())
+        logger.success(
+            f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | "
+            f"{time.perf_counter() - t_start:.2f}s"
+        )
+        logger.rule()
+        return self
+
+    def fit_training(
+        self,
+        training: str | pathlib.Path,
+        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
+        *,
+        eos_id: str | None = None,
+        version: str | None = None,
+    ) -> ErsiliaQuality:
+        """Fit (or replace) the training modality on this instance.
+
+        Works on a fresh instance (training-only), after a reference fit, or
+        on an instance loaded from artifacts (adding training later). When a
+        reference modality is present, training files must name its output
+        columns and the model id must match.
+        """
+        known_id, known_version = self._model_id()
+        if known_id and eos_id and eos_id != known_id:
+            raise ValueError(
+                f"Training sets are for {eos_id} but the artifacts are for {known_id}."
+            )
+        eos_id = eos_id or known_id
+        version = version or known_version or "v1"
+        if not eos_id:
+            raise ValueError("fit_training needs eos_id= for a training-only fit.")
+        validate_eos_id(eos_id)
+        validate_version(version)
+        t = time.perf_counter()
+        output_columns = (
+            self._shared.schema.column_names if self._shared is not None else None
+        )
+        columns = load_training(training, output_columns, training_predictions)
+        logger.info(f"training | {len(columns)} column(s) loaded | building indices…")
+        self._training = fit_training(columns, eos_id=eos_id, version=version)
+        self.training_domain = TrainingDomain().fit(
+            training=self._training, shared=self._shared
+        )
+        self.is_fitted_ = True
+        logger.info(f"training | fitted | {time.perf_counter() - t:.1f}s")
+        return self
+
+    def _fit_reference(
+        self,
+        reference: pd.DataFrame,
+        *,
+        eos_id: str,
+        version: str,
+        vector_index: str | pathlib.Path | None,
+        ignore_size: bool,
+        scores: Iterable[str],
+        max_features: int | None,
+        max_signal_train_samples: int | None,
+        signal_descriptor: str,
+    ) -> None:
+        """Fit the reference-modality components on the reference predictions."""
         scores_set = set(scores)
         unknown = scores_set - set(ALL_SCORES)
         if unknown:
@@ -217,13 +353,6 @@ class ErsiliaQuality:
         if needs_index:
             self._validate_input_column(reference)
 
-        # A re-fit replaces every component, including ones not requested now.
-        for name in _SCORE_ORDER:
-            setattr(self, name, None)
-        self.is_fitted_ = False
-
-        t_start = time.perf_counter()
-        logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
         logger.info(
             f"fit | eos_id={eos_id} version={version} "
             f"scores=[{', '.join(sorted(scores_set))}]"
@@ -318,17 +447,7 @@ class ErsiliaQuality:
             logger.info(f"score 'signal' | done | {time.perf_counter() - t:.1f}s")
 
         self._vector_index_cache = vi
-        self.is_fitted_ = True
-
         self._emit_reference_report(reference, shared)
-
-        t_total = time.perf_counter() - t_start
-        fitted = list(self._components())
-        logger.success(
-            f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | {t_total:.2f}s"
-        )
-        logger.rule()
-        return self
 
     def run(self, query: pd.DataFrame) -> RunResult:
         """Score query samples against the fitted reference population.
@@ -350,20 +469,71 @@ class ErsiliaQuality:
             See :class:`RunResult` for the column layout and metadata keys.
         """
         self._check_fitted()
-        assert self._shared is not None
-
         t_start = time.perf_counter()
         components = self._components()
+        training_components = self._training_components()
         logger.rule(f"ErsiliaQuality · run · {len(query):,} queries")
-        logger.info(f"run | n_query={len(query):,} | scores=[{', '.join(components)}]")
+        logger.info(
+            f"run | n_query={len(query):,} | scores="
+            f"[{', '.join(list(components) + list(training_components))}]"
+        )
 
-        validate_against_schema(query, self._shared.schema)
-        needs_input_col = bool(set(components) & _INDEX_AWARE)
+        needs_input_col = bool(set(components) & _INDEX_AWARE) or bool(
+            training_components
+        )
         if needs_input_col and "input" not in query.columns:
             raise SchemaError(
                 "Query DataFrame must contain an 'input' column with SMILES strings."
             )
 
+        columns: dict[str, pd.Series] = {}
+        metadata: dict[str, Any] = {}
+        if self._shared is not None:
+            self._run_reference(query, components, columns, metadata)
+
+        training_details = None
+        if self.training_domain is not None:
+            t = time.perf_counter()
+            result = self.training_domain.run(query)
+            columns["training_domain"] = result.score
+            columns["training_domain_raw"] = result.score_raw
+            columns["training_n_columns"] = result.n_columns
+            columns["in_training_any"] = result.in_training_any
+            metadata.update(
+                {f"training_domain_{k}": v for k, v in result.metadata.items()}
+            )
+            training_details = result.details
+            logger.info(
+                f"score 'training_domain' | mean={float(result.score.mean()):.4f} | "
+                f"{time.perf_counter() - t:.2f}s"
+            )
+
+        scores_df = pd.DataFrame(columns, index=list(query.index))
+        logger.scores_summary_table(scores_df)
+        means = " · ".join(
+            f"{c}={scores_df[c].mean():.3f}"
+            for c in scores_df.columns
+            if pd.api.types.is_float_dtype(scores_df[c])
+        )
+        logger.success(
+            f"Run complete | {len(scores_df):,} queries | {means or 'no scores'} | "
+            f"{time.perf_counter() - t_start:.2f}s"
+        )
+        logger.rule()
+        return RunResult(
+            scores=scores_df, metadata=metadata, training_details=training_details
+        )
+
+    def _run_reference(
+        self,
+        query: pd.DataFrame,
+        components: dict[str, Any],
+        columns: dict[str, pd.Series],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Run the reference-modality components, filling ``columns``/``metadata``."""
+        assert self._shared is not None
+        validate_against_schema(query, self._shared.schema)
         t = time.perf_counter()
         query_repr = _make_query_repr(self._shared, query)
         logger.info(
@@ -391,8 +561,7 @@ class ErsiliaQuality:
                     query_repr, self._shared.ref_repr, query_fp_indices
                 )
 
-        columns: dict[str, pd.Series] = {}
-        metadata: dict[str, Any] = {"n_reference": len(self._shared.reference_ids)}
+        metadata["n_reference"] = len(self._shared.reference_ids)
         for name, component in components.items():
             t = time.perf_counter()
             if name in ("typicality", "extremity"):
@@ -424,16 +593,6 @@ class ErsiliaQuality:
                 f"{time.perf_counter() - t:.2f}s"
             )
 
-        scores_df = pd.DataFrame(columns, index=list(query.index))
-        logger.scores_summary_table(scores_df)
-        means = " · ".join(f"{c}={scores_df[c].mean():.3f}" for c in scores_df.columns)
-        logger.success(
-            f"Run complete | {len(scores_df):,} queries | {means or 'no scores'} | "
-            f"{time.perf_counter() - t_start:.2f}s"
-        )
-        logger.rule()
-        return RunResult(scores=scores_df, metadata=metadata)
-
     # ------------------------------------------------------------------
     # Save / load
     # ------------------------------------------------------------------
@@ -441,49 +600,118 @@ class ErsiliaQuality:
     def save(self, path: str | pathlib.Path) -> pathlib.Path:
         """Write fitted artifacts to a folder.
 
-        Writes ``shared/`` once, ``knn/`` once (iff support or consistency
-        was fit), then each fitted component's own subfolder, plus a
-        top-level ``manifest.json`` summary (informational only — the
-        loader does not consult it).
+        Reference modality: ``shared/`` once, ``knn/`` once (iff support or
+        consistency was fit), then each component's subfolder. Training
+        modality: ``training/`` (sets + per-column indices) and each
+        training component's subfolder. Plus a top-level ``manifest.json``
+        summary (informational only — the loader does not consult it).
         """
         self._check_fitted()
-        assert self._shared is not None
         folder = pathlib.Path(path)
         folder.mkdir(parents=True, exist_ok=True)
-        components = self._components()
-        save_shared(self._shared, folder)
-        knn_owner = self.support or self.consistency
-        if knn_owner is not None:
-            save_knn(knn_owner.knn_, folder)
-        for component in components.values():
-            component.save_component(folder)
+        if self._shared is not None:
+            save_shared(self._shared, folder)
+            knn_owner = self.support or self.consistency
+            if knn_owner is not None:
+                save_knn(knn_owner.knn_, folder)
+            for component in self._components().values():
+                component.save_component(folder)
+        self._save_training(folder)
         self._write_manifest(folder)
         logger.info(f"Artifacts saved → {folder}")
         return folder
 
+    def _save_training(self, folder: pathlib.Path) -> None:
+        if self._training is None:
+            return
+        save_training_state(self._training, folder)
+        for component in self._training_components().values():
+            component.save_component(folder)
+
+    @classmethod
+    def add_training(
+        cls,
+        path: str | pathlib.Path,
+        training: str | pathlib.Path,
+        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
+        *,
+        eos_id: str | None = None,
+        version: str | None = None,
+    ) -> ErsiliaQuality:
+        """Add the training modality to an existing artifacts folder in place.
+
+        The reference-modality files are left untouched; ``training/``,
+        ``training_domain/`` and ``manifest.json`` are written. Refuses if
+        the artifacts already hold a training modality or belong to another
+        model.
+        """
+        folder = pathlib.Path(path)
+        if (folder / "training").exists():
+            raise FileExistsError(
+                f"{folder} already has a training modality; fit into a new folder "
+                "to replace it."
+            )
+        instance = cls.load(folder)
+        instance.fit_training(
+            training, training_predictions, eos_id=eos_id, version=version
+        )
+        instance._save_training(folder)
+        instance._write_manifest(folder)
+        logger.info(f"Training modality added → {folder}")
+        return instance
+
     def _write_manifest(self, folder: pathlib.Path) -> None:
         """Write the top-level ``manifest.json`` summary."""
-        assert self._shared is not None
-        knn_owner = self.support or self.consistency
-        signal_meta = None
-        if self.signal is not None:
-            signal_meta = {
-                "formula_version": SIGNAL_FORMULA_VERSION,
-                "descriptor": self.signal.descriptor_,
-                "n_features": int(self.signal.backend_.n_features),
-            }
-        manifest = {
-            "format_version": self._shared.metadata.format_version,
-            "scores": list(self._components()),
-            "n_samples": self._shared.metadata.n_samples,
-            "n_features": self._shared.metadata.n_features,
-            "n_features_selected": len(self._shared.selected_columns),
-            "k": knn_owner.knn_.k if knn_owner is not None else None,
-            "signal": signal_meta,
-            "library_id": self._shared.metadata.library_id,
-            "fit_timestamp": self._shared.metadata.fit_timestamp,
-            "eosquality_version": self._shared.metadata.eosquality_version,
+        eos_id, version = self._model_id()
+        manifest: dict[str, Any] = {
+            "eos_id": eos_id,
+            "version": version,
+            "modalities": [
+                m
+                for m, present in (
+                    ("reference", self._shared is not None),
+                    ("training", self._training is not None),
+                )
+                if present
+            ],
+            "scores": list(self._components()) + list(self._training_components()),
         }
+        if self._shared is not None:
+            knn_owner = self.support or self.consistency
+            signal_meta = None
+            if self.signal is not None:
+                signal_meta = {
+                    "formula_version": SIGNAL_FORMULA_VERSION,
+                    "descriptor": self.signal.descriptor_,
+                    "n_features": int(self.signal.backend_.n_features),
+                }
+            meta = self._shared.metadata
+            manifest["reference"] = {
+                "format_version": meta.format_version,
+                "n_samples": meta.n_samples,
+                "n_features": meta.n_features,
+                "n_features_selected": len(self._shared.selected_columns),
+                "k": knn_owner.knn_.k if knn_owner is not None else None,
+                "signal": signal_meta,
+                "library_id": meta.library_id,
+                "fit_timestamp": meta.fit_timestamp,
+                "eosquality_version": meta.eosquality_version,
+            }
+        if self._training is not None:
+            from eosquality.training.state import TRAINING_FORMAT_VERSION
+
+            manifest["training"] = {
+                "format_version": TRAINING_FORMAT_VERSION,
+                "columns": {
+                    name: {
+                        "n": col.n,
+                        "has_y": col.has_y,
+                        "y_kind": col.y_kind,
+                        "has_pred": col.has_pred,
+                    }
+                    for name, col in self._training.columns.items()
+                },
+            }
         with open(folder / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=2)
 
@@ -491,10 +719,11 @@ class ErsiliaQuality:
     def load(cls, path: str | pathlib.Path) -> ErsiliaQuality:
         """Reconstruct an orchestrator from a saved folder.
 
-        Reads ``shared/`` (and ``knn/`` if present) once, then loads every
-        component whose subfolder exists. At least one score subfolder
-        must exist. Library / package compatibility is enforced when any
-        index-aware score is found.
+        Loads the reference modality if ``shared/`` exists (reading it and
+        ``knn/`` once) and the training modality if ``training/`` exists,
+        then every component whose subfolder is present. Library / package
+        compatibility is enforced when an index-aware reference score is
+        found.
         """
         folder = pathlib.Path(path)
         if not folder.exists():
@@ -505,24 +734,38 @@ class ErsiliaQuality:
                 "Artifacts are stored as a folder — pass the folder path."
             )
         present = [n for n in _SCORE_ORDER if (folder / n).is_dir()]
-        if not present:
+        present_training = [n for n in _TRAINING_ORDER if (folder / n).is_dir()]
+        if not present and not present_training:
             raise FileNotFoundError(
                 f"No score subfolders found under {folder} — nothing to load."
             )
-        logger.info(f"loading artifacts from {folder} | scores=[{', '.join(present)}]")
-        shared = load_shared(folder)
-        knn = load_knn(folder) if set(present) & _KNN_USERS else None
-        _check_artifacts_compatibility(
-            shared, has_index_scores=bool(set(present) & _INDEX_AWARE)
+        logger.info(
+            f"loading artifacts from {folder} | scores="
+            f"[{', '.join(present + present_training)}]"
         )
-        instance = cls(k=knn.k if knn is not None else 5)
-        instance._shared = shared
-        for name in present:
-            setattr(
-                instance,
-                name,
-                _SCORE_CLASSES[name].load(folder, shared=shared, knn=knn),
+        instance = cls()
+        knn = None
+        if present:
+            shared = load_shared(folder)
+            knn = load_knn(folder) if set(present) & _KNN_USERS else None
+            _check_artifacts_compatibility(
+                shared, has_index_scores=bool(set(present) & _INDEX_AWARE)
             )
+            instance._shared = shared
+            for name in present:
+                setattr(
+                    instance,
+                    name,
+                    _SCORE_CLASSES[name].load(folder, shared=shared, knn=knn),
+                )
+        if present_training:
+            training = load_training_state(folder)
+            instance._training = training
+            instance.training_domain = TrainingDomain.load(
+                folder, shared=instance._shared, training=training
+            )
+        if knn is not None:
+            instance.config = ErsiliaQualityConfig(neighbors=NeighborConfig(k=knn.k))
         instance.is_fitted_ = True
         logger.success(f"Artifacts loaded from {folder}")
         return instance
@@ -589,6 +832,19 @@ class ErsiliaQuality:
         return self.signal.reference_signal_
 
     @property
+    def modalities_(self) -> list[str]:
+        """Fitted modalities: ``"reference"`` and/or ``"training"``."""
+        self._check_fitted()
+        return [
+            m
+            for m, present in (
+                ("reference", self._shared is not None),
+                ("training", self._training is not None),
+            )
+            if present
+        ]
+
+    @property
     def metadata_(self):
         """Shared :class:`FitMetadata` (eos_id, version, sizes, timestamps, ...)."""
         self._check_fitted()
@@ -613,12 +869,28 @@ class ErsiliaQuality:
             )
 
     def _components(self) -> dict[str, Any]:
-        """Fitted components keyed by name, in canonical order."""
+        """Fitted reference-modality components keyed by name, in canonical order."""
         return {
             name: getattr(self, name)
             for name in _SCORE_ORDER
             if getattr(self, name) is not None
         }
+
+    def _training_components(self) -> dict[str, Any]:
+        """Fitted training-modality components keyed by name."""
+        return {
+            name: getattr(self, name)
+            for name in _TRAINING_ORDER
+            if getattr(self, name) is not None
+        }
+
+    def _model_id(self) -> tuple[str, str]:
+        """``(eos_id, version)`` from whichever modality is fitted ("" if none)."""
+        if self._shared is not None:
+            return self._shared.metadata.eos_id, self._shared.metadata.version
+        if self._training is not None:
+            return self._training.eos_id, self._training.version
+        return "", ""
 
     def _get_vector_index(self) -> VectorIndex:
         """Load (and cache) the VectorIndex backing the index-aware scores.

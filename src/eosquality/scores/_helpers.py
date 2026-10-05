@@ -290,6 +290,23 @@ def _canonical(smiles: str) -> str | None:
     return Chem.MolToSmiles(mol) if mol is not None else None
 
 
+def _standardize(smiles: str) -> str | None:
+    """Largest fragment, then RDKit canonical isomeric SMILES; ``None`` if unparsable.
+
+    Used to match training molecules with queries: salt and solvent forms of
+    the same parent molecule map to one standardised SMILES.
+    """
+    if not isinstance(smiles, str) or not smiles:
+        return None
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    frags = Chem.GetMolFrags(mol, asMols=True)
+    if len(frags) > 1:
+        mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
+    return Chem.MolToSmiles(mol)
+
+
 def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
     if query_smiles == library_smiles:
         return True

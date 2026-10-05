@@ -25,6 +25,8 @@ Saved artifacts record the following in `shared/metadata.json`:
 - `format_version` (the on-disk layout and score semantics; currently 4)
 - `vector_index_path` (for custom indices)
 
+The training modality is versioned separately: `training/metadata.json` holds `training_format_version` (currently 1). Adding or changing the training modality therefore never invalidates reference artifacts.
+
 `ErsiliaQuality.load` rejects artifacts in these cases:
 - the format version is different → `ArtifactVersionError`; refit;
 - the library is not this install's canonical library and no custom index path is recorded → `IncompatibleArtifactsError`;

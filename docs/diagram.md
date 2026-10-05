@@ -22,6 +22,15 @@ flowchart LR
     LIB -- "physchem / MACCS" --> SIG
 ```
 
+## Fit — training modality
+
+```mermaid
+flowchart LR
+    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
+    LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
+    IDX --> TD["<b>Training domain</b><br/>nearest training molecule<br/>CDF per column"]
+```
+
 ## Run
 
 ```mermaid
@@ -32,7 +41,9 @@ flowchart LR
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
-    TYP & EXT & SUP & CON & SIG --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
+    Q -- SMILES --> TDR["Training domain<br/>per column → 34th percentile"]
+    TDR --> DET["training_details.csv<br/>query × column · 5 nearest training molecules"]
+    TYP & EXT & SUP & CON & SIG & TDR --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
 ```
 
 ## Save layout
@@ -52,6 +63,13 @@ flowchart LR
   consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
   signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
                 physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
+  training/                             # iff --training (training modality)
+    metadata.json                       # training_format_version, eos_id, version, columns
+    columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
+    indices/c000/ …                     # one VectorIndex per output column
+  training_domain/  state.json  loo_nearest_similarities.npz  metadata.json
 ```
+
+A training-only artifact has no `shared/`, `knn/` or reference-score folders.
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.

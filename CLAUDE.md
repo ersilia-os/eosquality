@@ -32,6 +32,13 @@ The package is installed in editable mode. A long `run_all_scores.sh` run import
 
 The package is organized as **per-score components** (one class per score) on top of two **shared upstream layers**, plus a thin orchestrator and a few flat infrastructure modules.
 
+### Two modalities
+
+- **reference**: the model's predictions on the reference library. It covers the five scores below and the `shared/` + `knn/` tiers.
+- **training**: the model's per-output-column training sets. It covers the `training/` tier and the `training_*` scores.
+
+Each modality is fitted only when its data is given (`fit --reference`, `fit --training`, or both). Training can also be added to existing artifacts (`fit --training DIR --artifacts PATH` / `ErsiliaQuality.add_training`). `run` computes every fitted score.
+
 ### Per-score components — `scores/`
 
 Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bookkeeping, `metadata.json` and save/load:
@@ -39,7 +46,9 @@ Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bo
 - `save_component(root)` writes only the component's own subfolder.
 - `load(root, shared=None, knn=None)` reads `shared/` and `knn/` from disk unless they are passed in.
 
-Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
+Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Class flags select the upstream tiers: `USES_SHARED` (default True), `USES_KNN`, `USES_TRAINING`.
+
+- **`scores/training_domain.py`** — `TrainingDomain` (training modality, `USES_SHARED=False`). Per output column, the raw value is the Tanimoto similarity of the nearest training molecule (the query's own entry is skipped if it is a training molecule). It is calibrated against that column's leave-one-out nearest similarities. The summary is `nanquantile(per-column, 0.34)`. `run` also returns a details table: (query, column) × domain plus 5 nearest neighbours.
 
 - **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
 - **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
@@ -62,6 +71,11 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
   - **Distances.** `_query_fp_distances` (top-(k+1), dropping the neighbour that is the query molecule itself) and `_query_output_distances` (chunked, NaN-aware L1).
 
 ### Shared upstream layers
+
+- **`training/`** — the training-modality tier.
+  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None, predictions=None)`. One `<column>.csv` per output column (`smiles`, optional `y`, optional `key`). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicates are merged: binary by majority, otherwise by median. Columns with fewer than 20 molecules are skipped.
+  - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex`, `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
+  - Persisted under `<root>/training/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
   - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, and `ref_repr` (the scaled, feature-selected reference matrix, read by Consistency at run time).
@@ -88,7 +102,9 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
   - `identity.py` resolves the canonical library locally: env override → `./data/indices/` → `~/.eosquality/`. It never touches the network.
   - `download.py` is used only by `eosquality download`.
   - `physchem.py` / `maccs.py` contain the descriptor functions shared by build and query.
-- **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`, which sets the INFO log level. Subcommands: `build`, `download`, `fit` (with `--vector-index`), `run`.
+- **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`, which sets the INFO log level. Subcommands: `build`, `download`, `fit` and `run`.
+  - `fit` takes `--reference CSV`, `--training DIR`, `--training-predictions CSV`, `-o NEW` or `--artifacts EXISTING`, and `--vector-index`.
+  - `run --training-details PATH` (default `<output>.training_details.csv`).
 - **`utils/`**
   - `logging.py`: a loguru logger bound with `extra["eosquality"]` and a filtered sink. Quiet (WARNING) as a library, INFO in the CLI, DEBUG with `set_verbosity(True)`.
   - `progress.py`: rich progress bars.

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import pathlib
 import sys
 import traceback
 
@@ -43,6 +44,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    details_path = args.training_details or _default_details_path(args.output)
 
     print(f"→ reading query CSV: {args.input}", file=sys.stderr)
     try:
@@ -99,8 +101,18 @@ def cmd_run(args: argparse.Namespace) -> int:
             ],
             axis=1,
         )
+        if result.training_details is not None and os.path.exists(details_path):
+            print(
+                f"error: training details path '{details_path}' already exists; "
+                "delete or move it, or pass --training-details.",
+                file=sys.stderr,
+            )
+            return 1
         print(f"→ writing scores: {args.output}", file=sys.stderr)
         output_df.to_csv(args.output, index=False)
+        if result.training_details is not None:
+            print(f"→ writing training details: {details_path}", file=sys.stderr)
+            result.training_details.to_csv(details_path, index=False)
     except (SchemaError, NotFittedError) as exc:
         _print_error(
             "query does not match the fitted reference", exc, verbose=args.verbose
@@ -115,21 +127,26 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_details_path(output: str) -> str:
+    """``scores.csv`` → ``scores.training_details.csv``."""
+    p = pathlib.Path(output)
+    return str(p.with_name(f"{p.stem}.training_details{p.suffix or '.csv'}"))
+
+
 def register_subparsers(subparsers) -> None:
     """Attach the ``run`` subcommand to *subparsers*."""
     run_p = subparsers.add_parser(
         "run",
         help="Score query data against a fitted reference.",
         description=(
-            "Score query samples against previously fitted reference artifacts. "
-            "The output CSV carries (in order): the query's 'key' and 'input' "
-            "columns (when present), followed by one column per fitted score — "
-            "typicality, extremity, support, consistency, and signal (when "
-            "fit) — each with its raw-aggregate companion 'typicality_raw' etc. "
-            "Scores are calibrated to (0, 1] against the reference's own "
-            "distribution; raw companions are the pre-CDF aggregates. Run "
-            "emits all fitted scores; there is no --scores selector here "
-            "(use 'eosquality fit --scores' to control which scores are fit)."
+            "Score query molecules with every score in the artifacts. The output "
+            "CSV has the query's 'key' and 'input' columns, then each fitted "
+            "score with its '*_raw' companion (reference modality: typicality, "
+            "extremity, support + support_log, consistency, signal; training "
+            "modality: training_domain, training_n_columns, in_training_any). "
+            "If the artifacts hold a training modality, a second CSV with one "
+            "row per (query, output column) and the nearest training molecules "
+            "is written next to it."
         ),
     )
     run_p.add_argument(
@@ -152,6 +169,17 @@ def register_subparsers(subparsers) -> None:
         required=True,
         metavar="PATH",
         help="Output path for the scores CSV file.",
+    )
+    run_p.add_argument(
+        "--training-details",
+        default=None,
+        dest="training_details",
+        metavar="PATH",
+        help=(
+            "Where to write the per-column training details (default: "
+            "<output stem>.training_details.csv). Only written when the "
+            "artifacts hold a training modality."
+        ),
     )
     run_p.add_argument(
         "--verbose",

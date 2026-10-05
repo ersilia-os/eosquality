@@ -43,11 +43,14 @@ class ScoreComponent:
     """
 
     NAME: ClassVar[str] = ""
+    USES_SHARED: ClassVar[bool] = True
     USES_KNN: ClassVar[bool] = False
+    USES_TRAINING: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self._shared: SharedFitState | None = None
         self._knn: KnnFitState | None = None
+        self._training = None  # TrainingFitState, for training-modality scores
         self._fit_duration_seconds: float | None = None
         self._fit_timestamp: str | None = None
 
@@ -67,11 +70,16 @@ class ScoreComponent:
     def save(self, root: str | pathlib.Path) -> pathlib.Path:
         """Persist ``shared/`` (+ ``knn/``) and this component's subfolder."""
         self._check_fitted()
-        assert self._shared is not None
-        save_shared(self._shared, root)
+        if self.USES_SHARED:
+            assert self._shared is not None
+            save_shared(self._shared, root)
         if self.USES_KNN:
             assert self._knn is not None
             save_knn(self._knn, root)
+        if self.USES_TRAINING:
+            from eosquality.training.state import save_training_state
+
+            save_training_state(self._training, root)
         return self.save_component(root)
 
     def save_component(self, root: str | pathlib.Path) -> pathlib.Path:
@@ -101,11 +109,12 @@ class ScoreComponent:
         *,
         shared: SharedFitState | None = None,
         knn: KnnFitState | None = None,
+        training=None,
     ):
         """Reconstruct from ``<root>/``.
 
-        ``shared`` / ``knn`` may be passed in when already loaded (the
-        orchestrator does this); otherwise they are read from disk.
+        ``shared`` / ``knn`` / ``training`` may be passed in when already
+        loaded (the orchestrator does this); otherwise they are read from disk.
         """
         folder = pathlib.Path(root) / cls.NAME
         if not folder.is_dir():
@@ -113,13 +122,18 @@ class ScoreComponent:
                 f"Expected {cls.NAME} artifacts at {folder}, but the folder "
                 "does not exist."
             )
-        if shared is None:
+        if cls.USES_SHARED and shared is None:
             shared = load_shared(root)
         if cls.USES_KNN and knn is None:
             knn = load_knn(root)
+        if cls.USES_TRAINING and training is None:
+            from eosquality.training.state import load_training_state
+
+            training = load_training_state(root)
         instance = cls()
         instance._shared = shared
         instance._knn = knn if cls.USES_KNN else None
+        instance._training = training if cls.USES_TRAINING else None
         instance._load_own(folder)
         meta_path = folder / METADATA_FILE
         if meta_path.is_file():

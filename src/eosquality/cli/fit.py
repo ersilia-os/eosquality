@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import pathlib
 import sys
 import traceback
 
@@ -31,11 +32,42 @@ def _print_error(message: str, exc: Exception, *, verbose: bool) -> None:
         traceback.print_exc(file=sys.stderr)
 
 
+def _model_id_from_name(path: str, fallback_version: str) -> tuple[str, str] | None:
+    """(eos_id, version) from a file or folder name, or None if absent."""
+    name = pathlib.Path(path).name
+    try:
+        return extract_from_path(name)
+    except ValueError:
+        eos_id = find_eos_id(name)
+        return (eos_id, fallback_version) if eos_id else None
+
+
 def cmd_fit(args: argparse.Namespace) -> int:
     """Argparse handler for ``eosquality fit``."""
     if args.verbose:
         set_verbosity(True)
 
+    if args.reference is None and args.training is None:
+        print("error: give --reference, --training, or both.", file=sys.stderr)
+        return 1
+    if args.artifacts is not None:
+        if args.reference is not None or args.output is not None:
+            print(
+                "error: --artifacts adds training sets to an existing artifacts "
+                "folder; it cannot be combined with --reference or --output.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.training is None:
+            print("error: --artifacts needs --training.", file=sys.stderr)
+            return 1
+        return _add_training(args)
+    if args.output is None:
+        print(
+            "error: --output is required (or --artifacts to add training).",
+            file=sys.stderr,
+        )
+        return 1
     if os.path.exists(args.output):
         print(
             f"error: output path '{args.output}' already exists; "
@@ -44,41 +76,45 @@ def cmd_fit(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Extract eos_id and version from the source filename.
-    # Version falls back to --version flag if not found in the filename.
-    try:
-        eos_id, version = extract_from_path(args.input)
-    except ValueError:
-        eos_id, version = find_eos_id(args.input), args.version
-        if eos_id is None:
+    # Model id: from the reference CSV name, else from the training folder name.
+    source = args.reference if args.reference is not None else args.training
+    model_id = _model_id_from_name(source, args.version)
+    if model_id is None:
+        print(
+            f"error: could not find a valid EOS identifier in "
+            f"'{pathlib.Path(source).name}'. Rename it to include the model ID "
+            "and version (e.g. 'eos4e40_v1.csv' or 'training_eos4e40_v1/').",
+            file=sys.stderr,
+        )
+        return 1
+    eos_id, version = model_id
+    if args.reference is not None and args.training is not None:
+        training_id = _model_id_from_name(args.training, version)
+        if training_id is not None and training_id[0] != eos_id:
             print(
-                f"error: could not find a valid EOS identifier in filename "
-                f"'{os.path.basename(args.input)}'. "
-                "Rename the file to include the model ID and version "
-                "(e.g. 'eos4e40_v1.csv').",
+                f"error: --training is for {training_id[0]} but --reference is "
+                f"for {eos_id}.",
                 file=sys.stderr,
             )
             return 1
 
-    print(f"→ reading reference CSV: {args.input}", file=sys.stderr)
-    try:
-        reference = pd.read_csv(args.input)
-    except FileNotFoundError as exc:
-        _print_error(
-            f"reference CSV not found at '{args.input}'", exc, verbose=args.verbose
-        )
-        return 1
-    except Exception as exc:
-        _print_error(
-            f"could not read reference CSV '{args.input}'", exc, verbose=args.verbose
-        )
-        return 1
+    reference = None
+    if args.reference is not None:
+        print(f"→ reading reference CSV: {args.reference}", file=sys.stderr)
+        try:
+            reference = pd.read_csv(args.reference)
+        except Exception as exc:
+            _print_error(
+                f"could not read reference CSV '{args.reference}'",
+                exc,
+                verbose=args.verbose,
+            )
+            return 1
 
     max_features = args.max_features if args.max_features > 0 else None
     max_signal_train_samples = (
         args.max_signal_samples if args.max_signal_samples > 0 else None
     )
-
     scores = _parse_scores(args.scores) if args.scores else list(DEFAULT_SCORES)
 
     try:
@@ -93,17 +129,19 @@ def cmd_fit(args: argparse.Namespace) -> int:
             max_features=max_features,
             max_signal_train_samples=max_signal_train_samples,
             signal_descriptor=args.signal_descriptor,
+            training=args.training,
+            training_predictions=args.training_predictions,
         )
         eq.save(args.output)
     except SchemaError as exc:
         _print_error(
-            "reference does not match the expected schema", exc, verbose=args.verbose
+            "input does not match the expected schema", exc, verbose=args.verbose
         )
         return 1
     except FileNotFoundError as exc:
         _print_error(
-            "fit failed because a required file is missing (likely the canonical "
-            "library — run 'eosquality download' first)",
+            "fit failed because a required file is missing (the canonical "
+            "library? run 'eosquality download')",
             exc,
             verbose=args.verbose,
         )
@@ -111,7 +149,28 @@ def cmd_fit(args: argparse.Namespace) -> int:
     except Exception as exc:
         _print_error("fit failed", exc, verbose=args.verbose)
         return 1
+    return 0
 
+
+def _add_training(args: argparse.Namespace) -> int:
+    if not os.path.isdir(args.artifacts):
+        print(
+            f"error: artifacts folder '{args.artifacts}' does not exist.",
+            file=sys.stderr,
+        )
+        return 1
+    model_id = _model_id_from_name(args.training, args.version)
+    try:
+        ErsiliaQuality.add_training(
+            args.artifacts,
+            args.training,
+            args.training_predictions,
+            eos_id=model_id[0] if model_id else None,
+            version=model_id[1] if model_id else None,
+        )
+    except Exception as exc:
+        _print_error("adding training sets failed", exc, verbose=args.verbose)
+        return 1
     return 0
 
 
@@ -121,27 +180,62 @@ def register_subparsers(subparsers) -> None:
         "fit",
         help="Fit a reference population and save artifacts.",
         description=(
-            "Fit a reference population from a CSV file and persist the artifacts. "
-            "The canonical reference library is resolved locally (env override "
-            "EOSQUALITY_REFERENCE_LIBRARY_PATH → ./data/indices/<library>/ → "
-            "~/.eosquality/indices/<library>/); fit never downloads — run "
-            "'eosquality download' first if the library isn't cached yet. Use "
-            "--vector-index to fit against a non-canonical index instead."
+            "Fit quality scores for one model and save the artifacts. Two "
+            "modalities, each fitted when its data is given: --reference (the "
+            "model's predictions on the reference library) and --training (a "
+            "folder of per-output-column training sets). Give either or both; "
+            "--training with --artifacts adds training sets to an existing "
+            "artifacts folder. The model id is read from the --reference file "
+            "name, else from the --training folder name (e.g. eos4e40_v1.csv, "
+            "training_eos4e40_v1/). The canonical reference library is resolved "
+            "locally (EOSQUALITY_REFERENCE_LIBRARY_PATH → ./data/indices/<library>/ "
+            "→ ~/.eosquality/indices/<library>/); fit never downloads."
         ),
     )
     fit_p.add_argument(
-        "--input",
-        "-i",
-        required=True,
-        metavar="PATH",
-        help="Path to the reference CSV file (must contain 'key', 'input', and numeric feature columns).",
+        "--reference",
+        default=None,
+        metavar="CSV",
+        help=(
+            "Reference modality: the model's predictions on the reference "
+            "library ('key', 'input' and one numeric column per output)."
+        ),
+    )
+    fit_p.add_argument(
+        "--training",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Training modality: folder with one <output_column>.csv per column "
+            "('smiles', optional 'y', optional 'key')."
+        ),
+    )
+    fit_p.add_argument(
+        "--training-predictions",
+        default=None,
+        dest="training_predictions",
+        metavar="CSV",
+        help=(
+            "The model's own predictions on the training molecules (Ersilia "
+            "output CSV), stored with the training modality."
+        ),
     )
     fit_p.add_argument(
         "--output",
         "-o",
-        required=True,
+        default=None,
         metavar="PATH",
-        help="Output folder for the saved artifacts (e.g. artifacts/).",
+        help="New folder for the saved artifacts (must not exist).",
+    )
+    fit_p.add_argument(
+        "--artifacts",
+        "-a",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Existing artifacts folder to add the --training modality to, in "
+            "place (reference files are left untouched)."
+        ),
     )
     fit_p.add_argument(
         "--vector-index",

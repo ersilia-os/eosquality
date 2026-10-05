@@ -107,6 +107,20 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 - **Run time** for 1,000 queries is about 15 s with all five scores, dominated by FPSim2 queries (about 10 ms each). Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes a few minutes.
 - `binary_class_freq` is computed and saved, but no score reads it.
 
+## Training modality (in progress)
+
+Each output column can have its own training set. It is fitted with `--training`, alone or with `--reference`, or added to existing artifacts with `--artifacts`.
+
+| Stage | Adds | Needs | Status |
+|---|---|---|---|
+| 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
+| 2 | `training_domain` + per-column nearest-neighbour details | SMILES | done |
+| 3 | `training_reliability`: how smooth the labels are around the query, calibrated within domain bins | y | planned |
+| 4 | `training_fidelity`: local model-vs-label error among training neighbours | y + training predictions | planned |
+| 5 | Conformal expected-error intervals | stages 3–4 validated | planned |
+
+Validation will use training sets only: split by scaffold, fit a surrogate model, and check that the scores predict its error on held-out molecules (`scripts/evaluate_training.py`).
+
 ## Open items
 
 Carried over from the previous README TODO list:
