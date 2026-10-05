@@ -45,11 +45,48 @@ def _nan_aggregate(per_feature: np.ndarray) -> np.ndarray:
     feature is NaN aggregates to NaN. Shared by typicality and extremity so
     both follow the same missing-value policy.
     """
-    if per_feature.shape[1] == 0:
-        return np.full(per_feature.shape[0], np.nan)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN rows
-        return np.nanquantile(per_feature, AGGREGATE_QUANTILE, axis=1)
+    return _row_nanquantile(per_feature, AGGREGATE_QUANTILE)
+
+
+def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
+    """Row-wise ``np.nanquantile(values, q, axis=1)`` (linear method), vectorised.
+
+    numpy's ``nanquantile`` along an axis falls back to a Python loop over
+    rows, about 100 s for the 1.35M-row reference library. Sorting each row
+    (NaN last) and interpolating at ``q * (n_finite - 1)`` gives identical
+    values in well under a second. All-NaN rows (and zero columns) give NaN.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        ``(n_rows, n_columns)`` array; NaN entries are ignored.
+    q : float
+        Quantile in ``[0, 1]``.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_rows,)`` float64.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    n_rows = values.shape[0]
+    if values.shape[1] == 0:
+        return np.full(n_rows, np.nan)
+    ordered = np.sort(values, axis=1)  # NaN sorts last
+    n_finite = np.count_nonzero(~np.isnan(values), axis=1)
+    has_values = n_finite > 0
+    position = q * np.maximum(n_finite - 1, 0)
+    lower = np.floor(position).astype(np.int64)
+    upper = np.minimum(lower + 1, np.maximum(n_finite - 1, 0))
+    fraction = position - lower
+    rows = np.arange(n_rows)
+    a = ordered[rows, lower]
+    b = ordered[rows, upper]
+    # numpy's _lerp: interpolate from whichever end is closer, for exactness.
+    diff = b - a
+    out = np.where(fraction >= 0.5, b - diff * (1.0 - fraction), a + diff * fraction)
+    out = np.where(fraction == 0, a, out)
+    return np.where(has_values, out, np.nan)
 
 
 def _cdf_score(
