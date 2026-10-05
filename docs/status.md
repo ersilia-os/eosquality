@@ -162,6 +162,10 @@ The error model's hyperparameters matter little. On five of these endpoints, the
 
 Distance alone reached 0.17.
 
+**Cost.** The training modality is fitted once per labelled column, and the time grows with the training set: about 35 s for 4,000 molecules, 4 min for 20,000 and 9 min for 50,000. Two-thirds of that is the surrogate random forest, cross-validated and then fitted on everything. Scoring 1,000 queries takes 3–4 s.
+
+The surrogate considers every fingerprint bit at each split (`max_features=1.0`). Restricting it to a third of the bits, or to their square root, is up to 15 times faster, but it ranked held-out errors less well on the two largest continuous sets: lipophilicity 0.31 and 0.30 instead of 0.32, BACE pIC50 0.28 and 0.24 instead of 0.30. So the slower setting stays.
+
 The design of `training_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
 
 To reproduce, download the MoleculeNet CSVs (`delaney-processed.csv`, `Lipophilicity.csv`, `BBBP.csv`, `SAMPL.csv`, `bace.csv` from `deepchemdata.s3-us-west-1.amazonaws.com/datasets/`) and run, for example, `python scripts/evaluate_training.py --csv Lipophilicity.csv --y-col exp`.

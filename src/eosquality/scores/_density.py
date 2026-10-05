@@ -121,11 +121,25 @@ class TrainingDensity:
         own = self_positions >= 0
         divisor = np.log(np.where(own & (n_ref > 1), n_ref - 1, n_ref))
         out = np.empty((len(x), len(KDE_VARIANTS)))
+        binary = _is_binary(x) and _is_binary(reference)
+        ref_counts = reference.sum(axis=1)
         for start in range(0, len(x), _CHUNK):
             stop = min(start + _CHUNK, len(x))
             rows = np.flatnonzero(own[start:stop])
+            block = x[start:stop]
+            if binary:
+                # 0/1 keys: Manhattan distance = Hamming count = |a| + |b| − 2a·b
+                # (one BLAS product, exact in float64), Euclidean = its root.
+                hamming = block.sum(axis=1)[:, None] + ref_counts[None, :]
+                hamming -= 2.0 * (block @ reference.T)
+                np.maximum(hamming, 0.0, out=hamming)
+                by_metric = {"manhattan": hamming, "euclidean": np.sqrt(hamming)}
             for j, (kernel, metric) in enumerate(KDE_VARIANTS):
-                d = pairwise_distances(x[start:stop], reference, metric=metric)
+                d = (
+                    by_metric[metric]
+                    if binary
+                    else pairwise_distances(block, reference, metric=metric)
+                )
                 h = self.bandwidths[j]
                 log_k = self.log_k0[j] - (
                     d * d / (2.0 * h * h) if kernel == "gaussian" else d / h
@@ -134,6 +148,11 @@ class TrainingDensity:
                     log_k[rows, self_positions[start:stop][rows]] = -np.inf
                 out[start:stop, j] = logsumexp(log_k, axis=1)
         return out - divisor[:, None]
+
+
+def _is_binary(values: np.ndarray) -> bool:
+    """Whether every entry is 0 or 1 (MACCS keys)."""
+    return bool(np.isin(values, (0.0, 1.0)).all())
 
 
 def _subset(n: int, cap: int, rng: np.random.Generator) -> np.ndarray:
