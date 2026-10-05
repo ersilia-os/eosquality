@@ -57,7 +57,11 @@ from eosquality.scores._descriptors import (
     load_backend,
     make_backend,
 )
-from eosquality.scores._helpers import _reference_repr, _score_from_aggregates
+from eosquality.scores._helpers import (
+    _parses,
+    _reference_repr,
+    _score_from_aggregates,
+)
 from eosquality.scores._signal_learner import (
     SignalLearner,
     _shap_attributions,
@@ -330,13 +334,15 @@ class Signal(ScoreComponent):
             )
         t0 = time.perf_counter()
         smiles_list = list(query["input"])
-        if smiles_list:
-            query_X = self._backend.query_matrix(smiles_list).astype(
-                np.float32, copy=False
-            )
-            row_aggregate = _shap_signal_raw(self._learner.model_, query_X)
-        else:
-            row_aggregate = np.zeros(0, dtype=np.float64)
+        # Unparsable SMILES would become placeholder descriptor rows (zeros or
+        # NaN) and get a meaningless score; they are NaN instead.
+        valid = np.array([_parses(s) for s in smiles_list], dtype=bool)
+        row_aggregate = np.full(len(smiles_list), np.nan)
+        if valid.any():
+            query_X = self._backend.query_matrix(
+                [s for s, ok in zip(smiles_list, valid, strict=True) if ok]
+            ).astype(np.float32, copy=False)
+            row_aggregate[valid] = _shap_signal_raw(self._learner.model_, query_X)
         score = _score_from_aggregates(row_aggregate, self._sorted_self_aggregates)
         logger.debug(
             f"signal | run | {len(smiles_list):,} queries | "

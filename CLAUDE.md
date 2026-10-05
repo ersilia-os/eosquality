@@ -115,7 +115,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 - **`utils/`**
   - Output is in two layers, as in ZairaChem and Olinda; both write through one shared stderr Rich console.
     - `console.py`: the curated, user-facing layer. It provides `section()`, `Steps(n)` (`▪ Step i/N` + a timed `✓` line, `.skip()`), `detail`, `table`, `summary_panel`, `progress` (only on a TTY), `STEP_COLORS` per command, and the path/size/time formatting. It is silent until `console.enable()` is called, by the CLI or by verbose library use.
-    - `logging.py`: the diagnostic layer, a loguru logger bound with `extra["eosquality"]` on a `RichHandler`. It prints WARNING by default and DEBUG with `set_verbosity(True)`, which also enables the console. `log_file(path)` adds a DEBUG file sink: `module:function:line`, rotation, `diagnose=False`. The `eosframes` stdlib logger is routed into it (`ROUTED_LOGGERS`).
+    - `logging.py`: the diagnostic layer, a loguru logger bound with `extra["eosquality"]` on a `RichHandler`. It prints WARNING by default and DEBUG with `set_verbosity(True)`, which also enables the console. `log_file(path)` adds a DEBUG file sink for one command (`module:function:line`, `diagnose=False`, no rotation or retention) and records any exception escaping the block, with its traceback. The `eosframes` stdlib logger is routed into it (`ROUTED_LOGGERS`).
   - `progress.py`: an alias of `console.progress`.
   - `parallel.py`: `map_rows`, serial below 5,000 items, otherwise a process pool.
   - `identifiers.py`: EOS id / version parsing.

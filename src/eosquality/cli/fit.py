@@ -153,7 +153,12 @@ def _positive_or_none(value: int) -> int | None:
     help="Fit the reference modality against a non-canonical vector index folder.",
 )
 @click.option(
-    "--k", default=5, show_default=True, metavar="K", help="Nearest neighbours."
+    "--k",
+    default=5,
+    show_default=True,
+    type=click.IntRange(min=1),
+    metavar="K",
+    help="Nearest neighbours.",
 )
 @click.option(
     "--version",

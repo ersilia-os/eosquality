@@ -11,7 +11,9 @@ above it.
   :meth:`Logger.set_verbosity` (``-v`` in the CLI,
   ``ErsiliaQuality(verbose=True)``).
 - **Log file.** :meth:`Logger.log_file` adds a DEBUG sink with
-  ``module:function:line`` context, rotation and retention.
+  ``module:function:line`` context. It belongs to one command, so it is
+  neither rotated nor pruned (retention globbing could delete unrelated logs).
+  An exception escaping the block is recorded in it, with its traceback.
   ``diagnose=False`` keeps variable values (e.g. SMILES) out of tracebacks.
   The CLI writes one per command (``<artifacts>/eosquality.log`` for
   ``fit``, ``<output>.log`` for ``run``).
@@ -45,8 +47,6 @@ except ValueError:
 _loguru = _root_logger.bind(eosquality=True)
 
 DEFAULT_LEVEL = "WARNING"
-ROTATION = "10 MB"
-RETENTION = 5
 _FILE_FORMAT = (
     "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}"
 )
@@ -60,33 +60,45 @@ def _only_eosquality(record) -> bool:
     return bool(record["extra"].get("eosquality"))
 
 
+def _terminal(record) -> bool:
+    """Terminal sink filter: eosquality records not marked ``file_only``."""
+    return _only_eosquality(record) and not record["extra"].get("file_only")
+
+
 class _ToLoguru(_stdlib_logging.Handler):
     """Forward standard-library log records to the eosquality loguru logger."""
 
     def emit(self, record: _stdlib_logging.LogRecord) -> None:
         try:
-            level = _loguru.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-        origin = {
-            "name": record.name,
-            "function": record.funcName,
-            "line": record.lineno,
-        }
-        _loguru.patch(lambda r: r.update(origin)).opt(exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+            try:
+                level = _loguru.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            origin = {
+                "name": record.name,
+                "function": record.funcName,
+                "line": record.lineno,
+            }
+            _loguru.patch(lambda r: r.update(origin)).opt(
+                exception=record.exc_info
+            ).log(level, record.getMessage())
+        except Exception:  # logging must never break the caller
+            self.handleError(record)
 
 
 def _route_dependency_loggers() -> None:
-    """Replace the handlers of ``ROUTED_LOGGERS`` with a forward to loguru.
+    """Forward ``ROUTED_LOGGERS`` to loguru, unless the host already set them up.
 
     Done by logger name, without importing the dependency (eosframes pulls in
     pandas). eosframes only adds its own handler when its logger has none, so
     the forward installed here stays in place when it configures itself later.
+    A logger that already has handlers was configured by the host application
+    (or by the dependency itself, if imported first) and is left alone.
     """
     for name in ROUTED_LOGGERS:
         dependency = _stdlib_logging.getLogger(name)
+        if dependency.handlers:
+            continue
         dependency.handlers = [_ToLoguru()]
         dependency.setLevel(_stdlib_logging.DEBUG)
         dependency.propagate = False
@@ -125,7 +137,7 @@ class Logger:
             show_level=True,
         )
         self._sink_id = self.logger.add(
-            handler, format="{message}", level=level, filter=_only_eosquality
+            handler, format="{message}", level=level, filter=_terminal
         )
 
     @property
@@ -143,8 +155,8 @@ class Logger:
 
         ``verbose=True`` also turns the curated output of
         :mod:`eosquality.utils.console` on, so library users see the same
-        steps as the CLI. ``verbose=False`` restores the quiet terminal
-        level; the console is left as it is.
+        steps as the CLI; ``verbose=False`` turns both off again (warnings
+        only).
 
         Parameters
         ----------
@@ -153,8 +165,7 @@ class Logger:
         """
         self._verbose = bool(verbose)
         self.set_level("DEBUG" if verbose else DEFAULT_LEVEL)
-        if verbose:
-            _enable_console(True)
+        _enable_console(self._verbose)
 
     def add_file(self, path: str | pathlib.Path) -> int:
         """Start writing every eosquality record (DEBUG+) to ``path``.
@@ -174,8 +185,6 @@ class Logger:
             str(path),
             level="DEBUG",
             format=_FILE_FORMAT,
-            rotation=ROTATION,
-            retention=RETENTION,
             backtrace=True,
             diagnose=False,
             filter=_only_eosquality,
@@ -212,6 +221,13 @@ class Logger:
         sink = self.add_file(path)
         try:
             yield pathlib.Path(path)
+        except BaseException as exc:
+            # Record the failure while the sink is still open; the caller
+            # (e.g. the CLI error handler) runs only after it is closed.
+            self.logger.bind(file_only=True).opt(exception=True).error(
+                f"failed: {type(exc).__name__}: {exc}"
+            )
+            raise
         finally:
             self.remove_file(sink)
 

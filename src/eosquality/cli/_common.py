@@ -38,9 +38,10 @@ def require_new_path(path: str, what: str = "output path") -> None:
 def run_command(fn, *, verbose: bool, command: str) -> None:
     """Run a command body with curated output; failures become ``✖ error:`` lines.
 
-    Turns the curated console on in the command's accent colour. With
-    ``verbose``, DEBUG logs and full tracebacks also go to the terminal;
-    otherwise tracebacks only reach the log file, if the command opened one.
+    Turns the curated console on in the command's accent colour, and restores
+    the previous console and verbosity state on exit. With ``verbose``, DEBUG
+    logs and full tracebacks also go to the terminal; otherwise tracebacks
+    only reach the command's log file (see ``Logger.log_file``).
 
     Parameters
     ----------
@@ -51,6 +52,9 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
     command : str
         Command name, for its accent colour (``console.STEP_COLORS``).
     """
+    # Global output state is restored on exit, so calling the CLI in-process
+    # (tests, notebooks) leaves library use silent again.
+    previous = (console.enabled(), console.active_color(), logger.verbose)
     console.enable(True)
     console.set_active_color(console.STEP_COLORS.get(command, "cyan"))
     if verbose:
@@ -59,15 +63,17 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
     try:
         fn()
     except CliError as exc:
-        logger.debug(f"{command} | error: {exc}")
-        console.echo(f"[bold red]error:[/] {exc}", "error")
+        console.echo(f"[bold red]error:[/] {console.plain(exc)}", "error")
         ctx.exit(1)
     except Exception as exc:  # anything unexpected still exits cleanly with status 1
-        logger.logger.opt(exception=True).debug(f"{command} | unexpected error")
-        console.echo(f"[bold red]error:[/] {exc}", "error")
+        console.echo(f"[bold red]error:[/] {console.plain(exc)}", "error")
         if verbose:
             console.console.print_exception()
         ctx.exit(1)
+    finally:
+        set_verbosity(previous[2])
+        console.enable(previous[0])
+        console.set_active_color(previous[1])
 
 
 @contextmanager

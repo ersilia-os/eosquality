@@ -13,7 +13,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
+from rdkit import Chem, rdBase
 
 from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.knn.fit import fit_knn
@@ -23,6 +23,7 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
+from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
 # ---------------------------------------------------------------------------
@@ -335,7 +336,8 @@ def _standardize(smiles: str) -> str | None:
     """
     if not isinstance(smiles, str) or not smiles:
         return None
-    mol = Chem.MolFromSmiles(smiles)
+    with rdBase.BlockLogs():
+        mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
     frags = Chem.GetMolFrags(mol, asMols=True)
@@ -372,8 +374,44 @@ def _query_fp_distances(
     fingerprint) is kept, exactly as in the library's own self-kNN.
 
     Pass ``exclude_self_match=False`` to return the raw top-k.
+
+    Rows whose SMILES is missing or does not parse get NaN distances (and
+    index 0, a placeholder), so structure-based scores are NaN for them
+    instead of the whole batch failing inside FPSim2; a warning names them.
     """
     query_smiles = list(query["input"])
+    valid = np.array([_parses(s) for s in query_smiles], dtype=bool)
+    if valid.all():
+        return _query_fp_distances_valid(query_smiles, vi, k, exclude_self_match)
+    bad = np.flatnonzero(~valid)
+    shown = ", ".join(str(query.index[i]) for i in bad[:5])
+    logger.warning(
+        f"{len(bad):,} query row(s) have a missing or unparsable SMILES "
+        f"(rows {shown}{', …' if len(bad) > 5 else ''}); their structure-based "
+        "scores are NaN."
+    )
+    distances = np.full((len(query_smiles), k), np.nan)
+    indices = np.zeros((len(query_smiles), k), dtype=np.int64)
+    if valid.any():
+        d, i = _query_fp_distances_valid(
+            [query_smiles[j] for j in np.flatnonzero(valid)], vi, k, exclude_self_match
+        )
+        distances[valid], indices[valid] = d, i
+    return distances, indices
+
+
+def _parses(smiles) -> bool:
+    """Whether ``smiles`` is a non-empty string that RDKit can parse."""
+    if not isinstance(smiles, str) or not smiles.strip():
+        return False
+    with rdBase.BlockLogs():
+        return Chem.MolFromSmiles(smiles) is not None
+
+
+def _query_fp_distances_valid(
+    query_smiles: list[str], vi: VectorIndex, k: int, exclude_self_match: bool
+) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`_query_fp_distances` for SMILES that are known to parse."""
     if not exclude_self_match:
         fp_distances, vi_indices = vi.query(query_smiles, k=k)
         return fp_distances.astype(np.float64), vi_indices
@@ -405,7 +443,10 @@ _OUTPUT_DISTANCE_CHUNK = 65_536
 
 
 def _query_output_distances(
-    query_repr: np.ndarray, ref_repr: np.ndarray, indices: np.ndarray
+    query_repr: np.ndarray,
+    ref_repr: np.ndarray,
+    indices: np.ndarray,
+    fp_distances: np.ndarray | None = None,
 ) -> np.ndarray:
     """Mean L1 in output space from ``query_repr`` to ``ref_repr[indices]``.
 
@@ -415,7 +456,9 @@ def _query_output_distances(
     ``indices`` come from :func:`_query_fp_distances` (run time) or the
     precomputed self-kNN (fit time). ``ref_repr`` is the post-reduction
     scaled reference matrix, ``SharedFitState.ref_repr``. Computed in
-    row chunks to keep peak memory flat for reference-sized inputs.
+    row chunks to keep peak memory flat for reference-sized inputs. Pass the
+    matching ``fp_distances`` to get NaN wherever a neighbour is only a
+    placeholder (unparsable query SMILES, see :func:`_query_fp_distances`).
     """
     n_query = query_repr.shape[0]
     out = np.empty(indices.shape, dtype=np.float64)
@@ -426,4 +469,6 @@ def _query_output_distances(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN
             out[start:stop] = np.nanmean(diffs, axis=2)
+    if fp_distances is not None:
+        out[~np.isfinite(fp_distances)] = np.nan  # placeholder neighbours
     return out

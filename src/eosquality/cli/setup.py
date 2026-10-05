@@ -62,7 +62,7 @@ def setup(force: bool, verbose: bool) -> None:
             [
                 ("library", LIBRARY_ID),
                 ("cache", console.path(user_cache_dir())),
-                ("source", reference_base_url()),
+                ("source", console.plain(reference_base_url())),
             ],
             icon="◆",
         )

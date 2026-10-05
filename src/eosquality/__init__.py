@@ -60,6 +60,16 @@ def __getattr__(name: str):
     return value
 
 
+def __dir__() -> list[str]:
+    """Module attributes, including the lazily imported classes.
+
+    Returns
+    -------
+    list of str
+    """
+    return sorted(set(globals()) | set(_LAZY))
+
+
 def _check_library_matches_package_major() -> None:
     """Fail loudly at import if library_vN and package major X have drifted.
 
@@ -86,13 +96,13 @@ _check_library_matches_package_major()
 
 
 def set_verbosity(verbose: bool) -> None:
-    """Enable (DEBUG + diagnostic tables) or disable (WARNING only) log output.
+    """Turn the step-by-step output and DEBUG logs on, or back to warnings only.
 
     Parameters
     ----------
     verbose : bool
-        ``True`` for DEBUG output and the diagnostic tables; ``False`` for
-        warnings only.
+        ``True`` for the curated step output (as in the CLI) and DEBUG
+        messages; ``False`` for warnings only.
     """
     _logger.set_verbosity(verbose)
 

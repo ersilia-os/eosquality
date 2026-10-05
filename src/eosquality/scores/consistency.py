@@ -263,7 +263,7 @@ class Consistency(ScoreComponent):
         if output_distances is None:
             assert self._shared.ref_repr is not None
             output_distances = _query_output_distances(
-                query_repr, self._shared.ref_repr, fp_indices
+                query_repr, self._shared.ref_repr, fp_indices, fp_distances
             )
         return fp_distances, output_distances
 

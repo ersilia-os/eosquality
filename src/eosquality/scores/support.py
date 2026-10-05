@@ -194,6 +194,7 @@ class Support(ScoreComponent):
                 query, self._get_vector_index(), self._knn.k
             )
 
+        # NaN rows (unparsable SMILES) stay NaN through the CDF.
         nearest_similarity = 1.0 - query_fp_distances.min(axis=1)
         support_score = _cdf_score(
             nearest_similarity, self._sorted_self_similarities, higher_is_higher=True
@@ -211,7 +212,8 @@ class Support(ScoreComponent):
                 query_fp_distances.mean(axis=1), index=idx, name="distance_k_mean"
             ),
             nearest_reference_ids=[
-                [reference_ids[j] for j in row] for row in query_fp_indices
+                [reference_ids[j] for j in row] if np.isfinite(dist[0]) else []
+                for row, dist in zip(query_fp_indices, query_fp_distances, strict=True)
             ],
             metadata={
                 "reference_support": self._reference_support,

@@ -29,7 +29,7 @@ from collections.abc import Iterable
 
 import numpy as np
 import sklearn
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit import __version__ as _RDKIT_VERSION
 from rdkit.Chem import Descriptors
 from sklearn.preprocessing import StandardScaler
@@ -72,7 +72,8 @@ def _compute_one(smi: str) -> np.ndarray:
     """
     row = np.full(N_DESCRIPTORS, np.nan, dtype=np.float32)
     try:
-        mol = Chem.MolFromSmiles(smi)
+        with rdBase.BlockLogs():
+            mol = Chem.MolFromSmiles(smi)
     except Exception:
         return row
     if mol is None:

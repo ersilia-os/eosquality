@@ -40,6 +40,25 @@ def default_details_path(output: str) -> str:
     return str(p.with_name(f"{p.stem}.training_details{p.suffix or '.csv'}"))
 
 
+def log_path_for(output: str) -> pathlib.Path:
+    """Log file of ``run``: ``scores.csv`` → ``scores.log`` (never the output itself).
+
+    Parameters
+    ----------
+    output : str
+        The scores CSV path.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<output stem>.log``, or ``<output>.log`` when the output already
+        ends in ``.log``.
+    """
+    p = pathlib.Path(output)
+    log = p.with_suffix(".log")
+    return log if log != p else p.with_name(p.name + ".log")
+
+
 def _load_artifacts(path: str) -> ErsiliaQuality:
     from eosquality.quality import ErsiliaQuality
 
@@ -132,14 +151,18 @@ def _run(input_path, artifacts, output, training_details) -> None:
     require_new_path(output)
     started = time.perf_counter()
     details_path = training_details or default_details_path(output)
-    log_path = pathlib.Path(output).with_suffix(".log")
+    log_path = log_path_for(output)
     with logger.log_file(log_path):
         logger.info(f"run | {input_path} against {artifacts} → {output}")
         try:
             query = pd.read_csv(input_path)
         except Exception as exc:
             raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
+        if query.empty:
+            raise CliError(f"query CSV '{input_path}' has no rows.")
         eq = _load_artifacts(artifacts)
+        if "training" in eq.modalities_:  # fail before the scoring work
+            require_new_path(details_path, "training details path")
         eos_id, version = eq._model_id()
         console.summary_panel(
             "eosquality · run",
@@ -153,8 +176,6 @@ def _run(input_path, artifacts, output, training_details) -> None:
             icon="◆",
         )
         result = eq.run(query)
-        if result.training_details is not None:
-            require_new_path(details_path, "training details path")
         _write_outputs(query, result, output, details_path)
     rows = [("queries", f"{len(query):,}"), ("scores", console.path(output))]
     if result.training_details is not None:

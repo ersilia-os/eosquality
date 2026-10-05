@@ -142,7 +142,7 @@ Typicality.load("art/").run(query).score
 ## Logging
 
 As a library, `eosquality` is silent by default; only warnings are printed.
-- `eosquality.set_verbosity(True)`, or `ErsiliaQuality(verbose=True)`, turns on the curated step-by-step output, as the CLI shows it, together with DEBUG messages.
+- `eosquality.set_verbosity(True)`, or `ErsiliaQuality(verbose=True)`, turns on the curated step-by-step output, as the CLI shows it, together with DEBUG messages. `set_verbosity(False)` turns both off again.
 - `eosquality.set_log_level("INFO")` changes only the level of the terminal log sink.
 - `from eosquality.utils.logging import logger` gives `with logger.log_file("run.log"): ...`, which writes every record, DEBUG included, to a file.
 

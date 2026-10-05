@@ -34,10 +34,13 @@ eosquality fit --training-sets training_eos4e40_v1/ --artifacts art/            
   Warnings appear in between. With `-v`, DEBUG messages and full tracebacks are shown too. Progress bars appear only on an interactive terminal.
 - **Log files.** Every record, DEBUG included, goes to a log file with `module:function:line` context:
   - `fit`: `<artifacts>/eosquality.log`. With `--artifacts`, it is appended to the existing one. If a fit fails, its log is kept in a temporary file whose path is printed.
-  - `run`: `<output>.log` next to the scores CSV, e.g. `scores.log`.
+  - `run`: `<output>.log` next to the scores CSV, e.g. `scores.log`. If the output itself ends in `.log`, the log is `<output>.log`, e.g. `scores.log.log`.
+
+  When a command fails, the error and its traceback are recorded in its log.
 
   Variable values are never written into tracebacks, so SMILES don't leak into logs.
 - **Exit status.** Errors print as `✖ error: …` and exit with status 1; success exits with 0.
+- **Invalid molecules.** Query rows whose `input` SMILES is missing or does not parse are not an error. Their structure-based scores (support, consistency, signal and the training scores) are NaN, and a warning names the rows. The output-based scores, typicality and extremity, are still computed.
 - `fit` and `run` refuse to overwrite an existing output path.
 
 ## `eosquality setup`

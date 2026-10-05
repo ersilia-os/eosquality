@@ -125,7 +125,7 @@ def _fit_upstream(
         with steps("Load the vector index") as st:
             vi = _load_index(reference, vector_index)
             st.summary = (
-                f"{vi.library_name or 'custom index'} · "
+                f"{console.plain(vi.library_name or 'custom index')} · "
                 f"{vi.n_reference:,} molecules match the reference"
             )
     with steps("Shared state: schema, scaling, feature selection, splits") as st:
@@ -190,8 +190,8 @@ def _validate_reference(
         raise ValueError(
             f"Reference dataset has {len(reference):,} rows. Fitting requires "
             f"at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
-            "Pass ignore_size=True to bypass this check (not recommended "
-            "for production use)."
+            "Pass ignore_size=True (CLI: --ignore-size) to bypass this check "
+            "(not recommended for production use)."
         )
     check_unique_keys(reference)
     return scores_set
@@ -292,7 +292,7 @@ def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray, steps) -
         if eq.consistency is not None:
             assert eq._shared.ref_repr is not None
             out["query_output_distances"] = _query_output_distances(
-                query_repr, eq._shared.ref_repr, indices
+                query_repr, eq._shared.ref_repr, indices, distances
             )
         st.summary = (
             f"median nearest similarity {float(np.median(1 - distances[:, 0])):.2f}"

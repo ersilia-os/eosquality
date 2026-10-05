@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit.Chem import MACCSkeys
 from rdkit.DataStructs import ConvertToNumpyArray
 
@@ -28,7 +28,8 @@ def _compute_one(smi: str) -> np.ndarray:
     """166-bit MACCS row for one SMILES; all zeros if it fails to parse."""
     row_full = np.zeros(MACCS_WIDTH_RAW, dtype=np.uint8)
     try:
-        mol = Chem.MolFromSmiles(smi)
+        with rdBase.BlockLogs():
+            mol = Chem.MolFromSmiles(smi)
         if mol is not None:
             ConvertToNumpyArray(MACCSkeys.GenMACCSKeys(mol), row_full)
     except Exception:  # RDKit raises a variety of types on malformed input

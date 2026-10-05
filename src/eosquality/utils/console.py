@@ -30,6 +30,7 @@ from pathlib import Path
 import psutil
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import (
@@ -82,6 +83,26 @@ def enable(flag: bool = True) -> None:
     """
     global _enabled
     _enabled = bool(flag)
+
+
+def enabled() -> bool:
+    """Whether the curated output is on.
+
+    Returns
+    -------
+    bool
+    """
+    return _enabled
+
+
+def active_color() -> str:
+    """The current accent colour.
+
+    Returns
+    -------
+    str
+    """
+    return _active_color
 
 
 def set_active_color(color: str) -> None:
@@ -276,7 +297,7 @@ class Steps:
 
 
 def detail(rows, *, indent: int = 6) -> None:
-    """Borderless block of dim right-aligned labels and values.
+    """Borderless block of dim right-aligned labels and values (shown verbatim).
 
     Parameters
     ----------
@@ -291,12 +312,12 @@ def detail(rows, *, indent: int = 6) -> None:
     table.add_column(justify="right", style="dim", no_wrap=True)
     table.add_column(justify="left", overflow="fold")
     for key, value in rows:
-        table.add_row(str(key), str(value))
+        table.add_row(plain(key), plain(value))
     console.print(Padding(table, (0, 0, 0, indent)))
 
 
 def table(columns, rows, *, title: str | None = None, indent: int = 6) -> None:
-    """Borderless table with a themed header row.
+    """Borderless table with a themed header row; cells are shown verbatim.
 
     Parameters
     ----------
@@ -322,7 +343,7 @@ def table(columns, rows, *, title: str | None = None, indent: int = 6) -> None:
     for i, name in enumerate(columns):
         out.add_column(name, justify="left" if i == 0 else "right", no_wrap=i == 0)
     for row in rows:
-        out.add_row(*(str(v) for v in row))
+        out.add_row(*(plain(v) for v in row))
     console.print(Padding(out, (0, 0, 0, indent)))
 
 
@@ -330,6 +351,8 @@ def summary_panel(
     title: str, rows, *, color: str | None = None, icon: str = ""
 ) -> None:
     """Rounded, left-titled panel of key/value rows (run header, final summary).
+
+    Values are Rich markup: wrap user data in :func:`path` or :func:`plain`.
 
     Parameters
     ----------
@@ -407,7 +430,10 @@ def progress(label: str) -> Progress:
 
 
 def path(value, keep: int = 3) -> str:
-    """Render a path compactly: ``~/runs/art`` or ``…/a/b/c``.
+    """Render a path compactly (``~/runs/art`` or ``…/a/b/c``), markup-escaped.
+
+    The result is safe to interpolate into Rich markup: a path containing
+    ``[`` is shown verbatim rather than parsed as a style tag.
 
     Parameters
     ----------
@@ -424,12 +450,26 @@ def path(value, keep: int = 3) -> str:
     home = str(Path.home())
     if text.startswith(home):
         text = "~" + text[len(home) :]
-    if len(text) <= 48:
-        return text
-    parts = Path(text).parts
-    if len(parts) <= keep:
-        return text
-    return "…/" + "/".join(parts[-keep:])
+    if len(text) > 48:
+        parts = Path(text).parts
+        if len(parts) > keep:
+            text = "…/" + "/".join(parts[-keep:])
+    return escape(text)
+
+
+def plain(value) -> str:
+    """``str(value)`` escaped for Rich markup (user data inside a markup line).
+
+    Parameters
+    ----------
+    value : object
+        Anything printable.
+
+    Returns
+    -------
+    str
+    """
+    return escape(str(value))
 
 
 def elapsed(seconds: float, *, precise: bool = False) -> str:
