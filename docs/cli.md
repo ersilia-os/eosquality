@@ -22,7 +22,7 @@ eosquality fit --training-sets training_eos4e40_v1/ -o art/                     
 eosquality fit --training-sets training_eos4e40_v1/ --artifacts art/                    # add training later
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `training_distance` (uncalibrated) and the nearest training neighbours. Training scores that use labels `y` and the model's predictions on its training molecules are planned.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `training_distance` (calibrated and raw) and the nearest training neighbours. Training scores that use labels `y` and the model's predictions on its training molecules are planned.
 
 **Common behaviour:**
 - By default, the CLI prints INFO-level progress to stderr. With `-v` it also prints DEBUG messages and the diagnostic tables.
@@ -92,9 +92,9 @@ Scores a query CSV against saved artifacts. Every score that was fit is computed
 The output CSV contains:
 - the query's `key` and `input` columns, if present;
 - a calibrated column and a `*_raw` column for each fitted score;
-- for the training modality, `training_distance` (uncalibrated), `training_n_columns` and `in_training_any` (see [api.md](api.md#runresult)).
+- for the training modality, `training_distance`, `training_distance_raw`, `training_n_columns` and `in_training_any` (see [api.md](api.md#runresult)).
 
-If the artifacts hold a training modality, a second CSV is also written. It has one row per (query, output column), with the per-column distance and the 5 nearest training molecules (keys, similarities, labels).
+If the artifacts hold a training modality, a second CSV is also written. It has one row per (query, output column), with the per-column distances (calibrated, raw, nearest) and the 5 nearest training molecules (keys, similarities, labels).
 
 For a training-only artifact, the query only needs `key` and `input`.
 

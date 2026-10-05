@@ -92,7 +92,7 @@ eq = ErsiliaQuality.load("artifacts/")
 | `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `consistency`, `consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to k neighbours |
 | `signal`, `signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
-| `training_distance` | [0, 1] | 66th percentile across output columns of the distance (1 − Tanimoto) to the nearest training molecule; not calibrated |
+| `training_distance`, `training_distance_raw` | (0, 1], [0, 1] | calibrated score (percentile among the training set's leave-one-out values), and 1 − mean Tanimoto to the 5 nearest training molecules; each the 66th percentile across output columns |
 | `training_n_columns` | integer | output columns with a training set that contributed |
 | `in_training_any` | bool | the query is itself a training molecule of some column |
 
@@ -106,7 +106,7 @@ Scores that were not fit are left out. A row with no usable output feature has N
 - `consistency_n_fp_bins`
 - `signal_descriptor`
 - `signal_formula_version`
-- `training_distance_n_columns`, `training_distance_columns`
+- `training_distance_n_columns`, `training_distance_columns`, `training_distance_k`
 
 ### `training_details`
 
@@ -116,10 +116,13 @@ Scores that were not fit are left out. A row with no usable output feature has N
 |---|---|
 | `key` | query key (or index) |
 | `column` | model output column |
-| `distance` | 1 − Tanimoto similarity of the nearest training molecule for this column |
+| `distance` | calibrated distance for this column: percentile of `distance_raw` among the column's leave-one-out values |
+| `distance_raw` | 1 − mean Tanimoto similarity to the `k` nearest training molecules |
+| `nn1_distance` | 1 − Tanimoto similarity of the nearest training molecule |
+| `k` | neighbours averaged (5) |
 | `n_train` | training molecules for this column |
-| `in_training` | the query is one of this column's training molecules (distance 0) |
-| `nn_keys`, `nn_similarities`, `nn_y` | the 5 nearest training molecules, `\|`-separated, closest first; `nn_y` is empty without labels |
+| `in_training` | the query is one of this column's training molecules; its own entry is excluded from the neighbours |
+| `nn_keys`, `nn_similarities`, `nn_y` | the `k` nearest training molecules, `\|`-separated, closest first; `nn_y` is empty without labels |
 
 ## Per-score components
 

@@ -56,7 +56,7 @@ Reference-modality scores compare a query against the model's own predictions on
 | **Support** | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
-| **Training distance** *(with `--training-sets`)* | How far is the molecule from each output column's training molecules? (uncalibrated) |
+| **Training distance** *(with `--training-sets`)* | How far is the molecule from each output column's training molecules, compared with how close they are to each other? |
 
 ## Documentation
 

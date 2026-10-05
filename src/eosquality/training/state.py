@@ -33,9 +33,10 @@ from eosquality.vectorindex import VectorIndex
 SUBFOLDER = "training_sets"
 # Bump when the meaning or layout of training_sets/ changes. Independent of
 # ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected.
-TRAINING_FORMAT_VERSION = (
-    2  # 2: training_distance (uncalibrated) replaces training_domain
-)
+# 2: training_distance (uncalibrated) replaced training_domain.
+# 3: training_distance is the mean distance to the 5 nearest training
+#    molecules, calibrated on the leave-one-out values.
+TRAINING_FORMAT_VERSION = 3
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

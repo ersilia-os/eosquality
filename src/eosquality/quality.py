@@ -297,6 +297,7 @@ class ErsiliaQuality:
             t = time.perf_counter()
             result = self.training_distance.run(query)
             columns["training_distance"] = result.score
+            columns["training_distance_raw"] = result.score_raw
             columns["training_n_columns"] = result.n_columns
             columns["in_training_any"] = result.in_training_any
             metadata.update(

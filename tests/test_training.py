@@ -69,14 +69,21 @@ def both(reference, library, training_dir):
     )
 
 
-def test_training_molecules_have_zero_distance(both):
+def test_training_molecules_get_their_loo_distance(both):
     distance = both.training_distance
     for name, column in distance.training_.columns.items():
         q = pd.DataFrame({"key": column.ids, "input": column.smiles})
         det = distance.run(q).details
         d = det[det.column == name]
         assert d.in_training.all()
-        np.testing.assert_allclose(d.distance, 0.0, atol=1e-6)
+        # Self excluded: the raw values are exactly the leave-one-out table.
+        assert (d.distance_raw > 0).all()
+        np.testing.assert_allclose(
+            np.sort(d.distance_raw), distance._loo[name], atol=1e-6
+        )
+        # Training molecules against their own CDF average 0.5 (mid-ranks; the
+        # 1/(2n) floor clip adds a hair).
+        assert d.distance.mean() == pytest.approx(0.5, abs=1e-3)
 
 
 def test_distance_matches_brute_force_tanimoto(both, query):
@@ -89,23 +96,44 @@ def test_distance_matches_brute_force_tanimoto(both, query):
     det = both.run(query).training_details
     det = det[det.column == "mw"].set_index("key")
     for key, smi in zip(query.key[:10], query.input[:10], strict=True):
+        if det.loc[key, "in_training"]:
+            continue
         fp = gen.GetFingerprint(Chem.MolFromSmiles(smi))
-        best = max(DataStructs.BulkTanimotoSimilarity(fp, train_fps))
-        assert det.loc[key, "distance"] == pytest.approx(1 - best, abs=1e-6)
+        sims = np.sort(DataStructs.BulkTanimotoSimilarity(fp, train_fps))[::-1]
+        assert det.loc[key, "nn1_distance"] == pytest.approx(1 - sims[0], abs=1e-6)
+        assert det.loc[key, "distance_raw"] == pytest.approx(
+            1 - sims[:5].mean(), abs=1e-6
+        )
 
 
-def test_summary_is_uncalibrated_q66_of_columns(both, query):
+def test_unrelated_molecule_is_far(both):
+    q = pd.DataFrame({"key": ["far"], "input": ["[Fe+2].[Cl-].[Cl-]"]})
+    res = both.training_distance.run(q)
+    assert res.score.iloc[0] > 0.95
+    assert res.score_raw.iloc[0] > 0.9
+
+
+def test_summaries_are_q66_of_columns(both, query):
     res = both.run(query)
-    per_col = res.training_details.pivot(
-        index="key", columns="column", values="distance"
-    )
-    expected = per_col.quantile(0.66, axis=1).reindex(query.key).to_numpy()
-    np.testing.assert_allclose(res.scores["training_distance"].to_numpy(), expected)
+    for value, score in (
+        ("distance", "training_distance"),
+        ("distance_raw", "training_distance_raw"),
+    ):
+        per_col = res.training_details.pivot(
+            index="key", columns="column", values=value
+        )
+        expected = per_col.quantile(0.66, axis=1).reindex(query.key).to_numpy()
+        np.testing.assert_allclose(res.scores[score].to_numpy(), expected)
 
 
 def test_run_columns_and_details(both, query):
     result = both.run(query)
-    for c in ("training_distance", "training_n_columns", "in_training_any"):
+    for c in (
+        "training_distance",
+        "training_distance_raw",
+        "training_n_columns",
+        "in_training_any",
+    ):
         assert c in result.scores.columns
     assert "support" in result.scores.columns  # reference modality still there
     det = result.training_details
@@ -133,6 +161,7 @@ def test_training_only(training_dir, query, tmp_path):
     res = eq.run(smiles_only)
     assert list(res.scores.columns) == [
         "training_distance",
+        "training_distance_raw",
         "training_n_columns",
         "in_training_any",
     ]

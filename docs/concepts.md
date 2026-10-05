@@ -110,15 +110,17 @@ Each output column of a model may have its own training set: SMILES, plus option
 
 ### Training distance
 
-Training distance asks how far the query is from the molecules each output column was trained on. It is a plain distance and is **not calibrated**.
-- **Per column:** `1 − Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **nearest training molecule**.
-  - 0 means the query is itself a training molecule (same standardised SMILES); it is then flagged `in_training`.
-  - Values near 1 mean the training set holds nothing similar.
-  - As a rough guide, a distance of 0.6 or more (similarity ≤ 0.4) means no related training chemistry.
-- **Summary across columns:** `training_distance` in the scores is the **66th percentile** of the per-column distances: at least two-thirds of the columns have a training molecule this close or closer. A single distant column doesn't dominate, but several do.
+Training distance asks how far the query is from the molecules each output column was trained on. It is the classic kNN applicability domain: the mean similarity to the 5 nearest training molecules is among the best structural predictors of prediction error (Sheridan et al., *J. Chem. Inf. Comput. Sci.* 2004). Following the kNN domain of Tropsha and the OECD principle that a domain is judged against the training set itself, the query is compared with how close training molecules are to each other. There is no in/out cutoff: both the raw distance and its calibrated percentile are reported.
+- **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**.
+  - A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value. It is flagged `in_training`.
+  - Values near 1 mean the training set holds nothing similar. Raw values mean the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry.
+- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules.
+  - About 0.5 means the query is as close to the training set as a typical training molecule; near 1 means it is farther than almost all of them. Higher is farther.
+  - The calibrated value is relative to how dense the training set is, so a diverse training set makes the same raw distance look more typical. Read it together with the raw value.
+- **Summary across columns:** `training_distance` (calibrated) and `training_distance_raw` in the scores are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
 - **Column count:** `training_n_columns` counts the columns that contributed.
 
-Per-column distances and the 5 nearest training molecules (keys, similarities, labels) are reported in `training_details` for inspection.
+Per-column distances (calibrated, raw and nearest-neighbour) and the 5 nearest training molecules (keys, similarities, labels) are reported in `training_details` for inspection.
 
 ### Planned
 

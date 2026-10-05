@@ -114,7 +114,7 @@ Each output column can have its own training set. It is fitted with `--training-
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
-| 2 | `training_distance` (uncalibrated Morgan distance to the nearest training molecule) + per-column nearest-neighbour details | SMILES | done |
+| 2 | `training_distance`: mean Morgan distance to the 5 nearest training molecules, raw and calibrated on the training set's leave-one-out values (no cutoff) + per-column nearest-neighbour details | SMILES | done |
 | 3 | `training_reliability`: how much the labels of the nearest training molecules agree | y | planned |
 | 4 | `training_fidelity`: local model-vs-label error among training neighbours | y + training predictions | planned |
 | 5 | Conformal expected-error intervals | stages 3–4 validated | planned |

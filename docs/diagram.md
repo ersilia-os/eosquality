@@ -28,7 +28,7 @@ flowchart LR
 flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
-    IDX --> TD["<b>Training distance</b><br/>1 − Tanimoto to the nearest<br/>training molecule (uncalibrated)"]
+    IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules (raw + calibrated)"]
 ```
 
 ## Run
@@ -71,7 +71,7 @@ One subfolder per modality; either or both may be present.
       metadata.json                       # training_format_version, eos_id, version, columns
       columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
       indices/c000/ …                     # one VectorIndex per output column
-    training_distance/  state.json  metadata.json
+    training_distance/  state.json  loo_mean_distances.npz  metadata.json
 ```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.

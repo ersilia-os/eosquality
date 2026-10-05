@@ -49,7 +49,7 @@ Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bo
 
 Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Class flags select the upstream tiers: `USES_SHARED` (default True), `USES_KNN`, `USES_TRAINING`.
 
-- **`scores/training_distance.py`** — `TrainingDistance` (training modality, `USES_SHARED=False`, **uncalibrated**). Per output column, the distance is 1 − Tanimoto (Morgan) to the nearest training molecule; it is 0 for a query that is a training molecule (flagged `in_training`). The summary is `nanquantile(per-column, 0.66)`. `run` also returns a details table: (query, column) × distance plus the 5 nearest neighbours.
+- **`scores/training_distance.py`** — `TrainingDistance` (training modality, `USES_SHARED=False`). Per output column, the raw distance is 1 − mean Tanimoto (Morgan) to the `K_NEIGHBORS = 5` nearest training molecules; a query that is a training molecule drops itself (flagged `in_training`). The calibrated distance is `_cdf_score` (higher = farther) against the column's leave-one-out raw values, from the index's identity-stripped self-kNN, saved as `loo_mean_distances.npz`. No cutoff. Both summaries are `nanquantile(per-column, 0.66)` (`training_distance`, `training_distance_raw`). `run` also returns a details table: (query, column) × calibrated / raw / nearest distance plus the 5 nearest neighbours.
 
 - **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
 - **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
