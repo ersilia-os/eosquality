@@ -74,7 +74,7 @@ def test_fit_with_training_and_details(
     assert _run(["run", "-i", str(query_csv), "-a", str(art), "-o", str(out)]) == 0
     assert "training_distance" in pd.read_csv(out).columns
     details = pd.read_csv(tmp_path / "scores.training_details.csv")
-    assert len(details) == 3 * len(query)
+    assert len(details) == len(query)  # one row per query, not per column
 
 
 def test_training_only_and_add_later(tmp_path, reference, query, library, training_dir):
@@ -128,3 +128,26 @@ def test_training_only_and_add_later(tmp_path, reference, query, library, traini
 def test_fit_argument_errors(tmp_path, training_dir):
     assert _run(["fit", "-o", str(tmp_path / "x")]) == 1  # no inputs
     assert _run(["fit", "--training-sets", str(training_dir)]) == 1  # no output
+
+
+def test_fit_and_run_write_log_files(tmp_path, reference, query, library):
+    ref_csv = tmp_path / "eos0aaa_v1.csv"
+    reference.to_csv(ref_csv, index=False)
+    query_csv = tmp_path / "query.csv"
+    query.to_csv(query_csv, index=False)
+    art = tmp_path / "art"
+    argv = ["fit", "--reference", str(ref_csv), "-o", str(art)]
+    assert _run([*argv, "--vector-index", str(library), "--ignore-size"]) == 0
+    fit_log = (art / "eosquality.log").read_text()
+    assert "| INFO     | eosquality." in fit_log
+    assert "[eosframes]" not in fit_log and "eosframes" in fit_log  # routed
+    out = tmp_path / "scores.csv"
+    assert _run(["run", "-i", str(query_csv), "-a", str(art), "-o", str(out)]) == 0
+    assert "eosquality.cli.run" in (tmp_path / "scores.log").read_text()
+
+
+def test_setup_replaces_download():
+    from eosquality.cli import cli
+
+    assert "setup" in cli.commands
+    assert "download" not in cli.commands

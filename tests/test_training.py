@@ -71,19 +71,18 @@ def both(reference, library, training_dir):
 
 def test_training_molecules_get_their_loo_distance(both):
     distance = both.training_distance
-    for name, column in distance.training_.columns.items():
-        q = pd.DataFrame({"key": column.ids, "input": column.smiles})
-        det = distance.run(q).details
-        d = det[det.column == name]
-        assert d.in_training.all()
+    for j, (name, column) in enumerate(distance.training_.columns.items()):
+        raw, calibrated, in_train, _ = distance._per_column(column.smiles)
+        assert in_train[:, j].all()
         # Self excluded: the raw values are exactly the leave-one-out table.
-        assert (d.distance_raw > 0).all()
-        np.testing.assert_allclose(
-            np.sort(d.distance_raw), distance._loo[name], atol=1e-6
-        )
+        assert (raw[:, j] > 0).all()
+        np.testing.assert_allclose(np.sort(raw[:, j]), distance._loo[name], atol=1e-6)
         # Training molecules against their own CDF average 0.5 (mid-ranks; the
         # 1/(2n) floor clip adds a hair).
-        assert d.distance.mean() == pytest.approx(0.5, abs=1e-3)
+        assert calibrated[:, j].mean() == pytest.approx(0.5, abs=1e-3)
+    column = next(iter(distance.training_.columns.values()))
+    q = pd.DataFrame({"key": column.ids, "input": column.smiles})
+    assert distance.run(q).in_training.all()
 
 
 def test_distance_matches_brute_force_tanimoto(both, query):
@@ -91,19 +90,25 @@ def test_distance_matches_brute_force_tanimoto(both, query):
     from rdkit.Chem import rdFingerprintGenerator
 
     gen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
-    column = both.training_distance.training_.columns["mw"]
-    train_fps = [gen.GetFingerprint(Chem.MolFromSmiles(s)) for s in column.smiles]
-    det = both.run(query).training_details
-    det = det[det.column == "mw"].set_index("key")
-    for key, smi in zip(query.key[:10], query.input[:10], strict=True):
-        if det.loc[key, "in_training"]:
+    distance = both.training_distance
+    columns = list(distance.training_.columns.values())
+    train_fps = {
+        c.name: [gen.GetFingerprint(Chem.MolFromSmiles(s)) for s in c.smiles]
+        for c in columns
+    }
+    smiles = list(query.input[:10])
+    raw, _, in_train, _ = distance._per_column(smiles)
+    det = both.run(query).training_details.set_index("key")
+    for i, (key, smi) in enumerate(zip(query.key[:10], smiles, strict=True)):
+        if in_train[i].any():
             continue
         fp = gen.GetFingerprint(Chem.MolFromSmiles(smi))
-        sims = np.sort(DataStructs.BulkTanimotoSimilarity(fp, train_fps))[::-1]
-        assert det.loc[key, "nn1_distance"] == pytest.approx(1 - sims[0], abs=1e-6)
-        assert det.loc[key, "distance_raw"] == pytest.approx(
-            1 - sims[:5].mean(), abs=1e-6
-        )
+        nearest = []
+        for j, c in enumerate(columns):
+            sims = np.sort(DataStructs.BulkTanimotoSimilarity(fp, train_fps[c.name]))
+            assert raw[i, j] == pytest.approx(1 - sims[::-1][:5].mean(), abs=1e-6)
+            nearest.append(sims[-1])
+        assert det.loc[key, "nn1_distance"] == pytest.approx(1 - max(nearest), abs=1e-6)
 
 
 def test_unrelated_molecule_is_far(both):
@@ -111,37 +116,36 @@ def test_unrelated_molecule_is_far(both):
     res = both.training_distance.run(q)
     assert res.score.iloc[0] > 0.95
     assert res.score_raw.iloc[0] > 0.9
+    assert not res.in_training.iloc[0]
 
 
-def test_summaries_are_q66_of_columns(both, query):
+def test_whole_model_value_is_q66_of_columns(both, query):
+    distance = both.training_distance
+    raw, calibrated, _, _ = distance._per_column(list(query.input))
     res = both.run(query)
-    for value, score in (
-        ("distance", "training_distance"),
-        ("distance_raw", "training_distance_raw"),
-    ):
-        per_col = res.training_details.pivot(
-            index="key", columns="column", values=value
-        )
-        expected = per_col.quantile(0.66, axis=1).reindex(query.key).to_numpy()
-        np.testing.assert_allclose(res.scores[score].to_numpy(), expected)
+    np.testing.assert_allclose(
+        res.scores["training_distance"], np.quantile(calibrated, 0.66, axis=1)
+    )
+    np.testing.assert_allclose(
+        res.scores["training_distance_raw"], np.quantile(raw, 0.66, axis=1)
+    )
 
 
 def test_run_columns_and_details(both, query):
     result = both.run(query)
-    for c in (
-        "training_distance",
-        "training_distance_raw",
-        "training_n_columns",
-        "in_training_any",
-    ):
+    for c in ("training_distance", "training_distance_raw", "in_training"):
         assert c in result.scores.columns
     assert "support" in result.scores.columns  # reference modality still there
     det = result.training_details
-    assert len(det) == len(query) * 3
-    assert set(det.column) == {"mw", "aromatic", "hbd"}
-    row = det[det.column == "aromatic"].iloc[0]
-    assert len(row.nn_keys.split("|")) == 5 and set(row.nn_y.split("|")) <= {"0", "1"}
-    assert (det[det.column == "hbd"].nn_y == "").all()
+    assert len(det) == len(query) and det.key.tolist() == query.key.tolist()
+    np.testing.assert_allclose(det.distance, result.scores["training_distance"])
+    known = {"mw", "aromatic", "hbd"}
+    for row in det.itertuples():
+        sims = [float(v) for v in row.nn_similarities.split("|")]
+        assert len(sims) == 5 and sims == sorted(sims, reverse=True)
+        assert len(set(row.nn_keys.split("|"))) == 5  # deduplicated
+        for cols in row.nn_columns.split("|"):
+            assert set(cols.split(";")) <= known
 
 
 def test_roundtrip_with_training(both, query, tmp_path):
@@ -162,8 +166,8 @@ def test_training_only(training_dir, query, tmp_path):
     assert list(res.scores.columns) == [
         "training_distance",
         "training_distance_raw",
-        "training_n_columns",
-        "in_training_any",
+        "training_difficulty",
+        "in_training",
     ]
     eq.save(tmp_path / "art")
     assert not (tmp_path / "art/reference_mode").exists()
@@ -234,7 +238,11 @@ def test_training_files_named_after_ersilia_columns(tmp_path, smiles, make_outpu
     )
     assert eq.training_distance.training_.column_names == columns
     details = eq.run(ref.head(5)).training_details
-    assert sorted(details.column.unique()) == columns
+    assert len(details) == 5
+    member_of = {
+        c for cell in details.nn_columns for n in cell.split("|") for c in n.split(";")
+    }
+    assert member_of <= set(columns)
     # A file that is not named after an output column is rejected.
     (folder / "cytotoxicity_hela.csv").write_text("smiles\nCCO\n")
     with pytest.raises(SchemaError, match="cytotoxicity_hela"):

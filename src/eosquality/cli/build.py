@@ -8,12 +8,14 @@ Writes the Morgan FP index plus the physchem and MACCS descriptor matrices.
 """
 
 import pathlib
+import time
 
 import click
 import pandas as pd
 
 from eosquality.basic_descriptors import BasicDescriptors
-from eosquality.cli._common import CliError, run_command, say, verbose_option
+from eosquality.cli._common import CliError, run_command, verbose_option
+from eosquality.utils import console
 from eosquality.vectorindex import VectorIndex
 
 
@@ -96,23 +98,48 @@ def build(
                 f"library CSV must contain a 'smiles' column (found: {list(df.columns)})"
             )
         smiles = list(df["smiles"])[:max_samples] if max_samples else list(df["smiles"])
-        say(
-            f"Building vector index for {len(smiles):,} molecules → {output}", err=False
+        started = time.perf_counter()
+        console.summary_panel(
+            "eosquality · build",
+            [
+                (
+                    "library",
+                    f"{console.path(input_path)}  [dim]{len(smiles):,} molecules[/]",
+                ),
+                ("fingerprint", f"Morgan r={radius} · {n_bits} bits · max_k={max_k}"),
+                ("output", console.path(output)),
+            ],
+            icon="◆",
         )
-        try:
-            VectorIndex.build(
-                smiles=smiles,
-                output_dir=output,
-                max_k=max_k,
-                radius=radius,
-                n_bits=n_bits,
-                verbose=verbose,
-                library_name=pathlib.Path(input_path).stem,
-            )
-            BasicDescriptors.build_physchem(smiles, output)
-            BasicDescriptors.build_maccs(smiles, output)
-        except Exception as exc:
-            raise CliError(f"index build failed: {exc}") from exc
-        say(f"Vector index saved → {output}", err=False)
+        steps = console.Steps(3)
+        with console.section("Build") as section:
+            try:
+                with steps("Vector index and self-kNN") as st:
+                    VectorIndex.build(
+                        smiles=smiles,
+                        output_dir=output,
+                        max_k=max_k,
+                        radius=radius,
+                        n_bits=n_bits,
+                        verbose=verbose,
+                        library_name=pathlib.Path(input_path).stem,
+                    )
+                    st.summary = f"{len(smiles):,} molecules"
+                with steps("Physicochemical descriptors"):
+                    BasicDescriptors.build_physchem(smiles, output)
+                with steps("MACCS keys"):
+                    BasicDescriptors.build_maccs(smiles, output)
+            except Exception as exc:
+                raise CliError(f"index build failed: {exc}") from exc
+            section.summary = console.folder_size(output)
+        console.summary_panel(
+            "Build complete",
+            [
+                ("index", console.path(output)),
+                ("time", console.elapsed(time.perf_counter() - started)),
+            ],
+            color="green",
+            icon="✓",
+        )
 
-    run_command(_work, verbose=verbose)
+    run_command(_work, verbose=verbose, command="build")

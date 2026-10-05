@@ -103,7 +103,7 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 - **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30).
 - **Support and molecule size:** Tanimoto similarity is lower for small molecules, so small fragments look somewhat more novel than they are. This is not corrected for (see Support).
 - **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
-- **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality download`.
+- **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality setup`.
 - **Run time** for 1,000 queries is about 15 s with all five scores, dominated by FPSim2 queries (about 10 ms each). Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes a few minutes.
 - `binary_class_freq` is computed and saved, but no score reads it.
 
@@ -114,12 +114,11 @@ Each output column can have its own training set. It is fitted with `--training-
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
-| 2 | `training_distance`: mean Morgan distance to the 5 nearest training molecules, raw and calibrated on the training set's leave-one-out values (no cutoff) + per-column nearest-neighbour details | SMILES | done |
-| 3 | `training_reliability`: how much the labels of the nearest training molecules agree | y | planned |
-| 4 | `training_fidelity`: local model-vs-label error among training neighbours | y + training predictions | planned |
-| 5 | Conformal expected-error intervals | stages 3–4 validated | planned |
+| 2 | `training_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
+| 3 | `training_difficulty`: learned error model per labelled column, following UNIQUE (surrogate RF with scaffold CV; base UQ: kNN distance, 3 KDEs, ensemble variance, top-1 probability; transformed UQ: DiffkNN on prediction and variance, plus label-based local error and spread; MACCS as data features; best of UNIQUE's 3 feature sets by OOF Spearman), calibrated rank, Q66 → one value | y | done (validated on synthetic data only) |
+| 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
 
-Validation will use training sets only: split by scaffold, fit a surrogate model, and check that the scores predict its error on held-out molecules (`scripts/evaluate_training.py`).
+Validation uses training sets only: split by scaffold, fit a surrogate model, and check that the scores predict its error on held-out molecules (`scripts/evaluate_training.py`: Spearman, AUROC, sparsification gain against the oracle, random baseline 0). So far this has only been run on a synthetic set whose labels are noisy for sulfur-containing molecules: `training_difficulty` reaches Spearman 0.35 there, while `training_distance` is at random level, because the noise is unrelated to novelty. Real endpoints are pending.
 
 ## Open items
 

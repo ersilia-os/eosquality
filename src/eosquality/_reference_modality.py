@@ -19,6 +19,7 @@ from eosquality._registry import (
     INDEX_AWARE,
     KNN_USERS,
     MIN_REFERENCE_SAMPLES,
+    SCORE_ORDER,
 )
 from eosquality.exceptions import SchemaError
 from eosquality.knn.fit import fit_knn
@@ -36,7 +37,7 @@ from eosquality.scores.signal import Signal
 from eosquality.scores.support import Support
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.fit import fit_shared
-from eosquality.shared.state import SharedFitState
+from eosquality.utils import console
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
@@ -77,26 +78,61 @@ def fit_reference(
     signal_descriptor : str
         Signal descriptor backend.
     """
-    scores_set = _validate_reference(reference, scores, ignore_size)
-    logger.info(
-        f"fit | eos_id={eos_id} version={version} "
-        f"scores=[{', '.join(sorted(scores_set))}]"
-    )
-    vi = _load_index(reference, vector_index) if scores_set & INDEX_AWARE else None
-    shared = fit_shared(
-        reference,
-        eos_id=eos_id,
-        version=version,
-        library_id=vi.library_name if vi is not None else "",
-        vector_index_path=_custom_index_path(vi) if vi is not None else "",
-        max_features=max_features,
-    )
-    eq._shared = shared
-    k = eq.config.neighbors.k
-    knn = (
-        fit_knn(shared=shared, vector_index=vi, k=k) if scores_set & KNN_USERS else None
-    )
-    fitters = {
+    scores_set = set(scores)
+    requested = [n for n in SCORE_ORDER if n in scores_set]
+    uses_index = bool(scores_set & INDEX_AWARE)
+    uses_knn = bool(scores_set & KNN_USERS)
+    steps = console.Steps(2 + uses_index + uses_knn + len(requested))
+    with console.section("Reference modality") as section:
+        with steps("Validate reference predictions") as st:
+            _validate_reference(reference, scores, ignore_size)
+            st.summary = f"{len(reference):,} molecules · {len(requested)} score(s)"
+        logger.info(
+            f"fit | eos_id={eos_id} version={version} scores=[{', '.join(requested)}]"
+        )
+        vi = None
+        if uses_index:
+            with steps("Load the vector index") as st:
+                vi = _load_index(reference, vector_index)
+                st.summary = (
+                    f"{vi.library_name or 'custom index'} · "
+                    f"{vi.n_reference:,} molecules match the reference"
+                )
+        with steps("Shared state: schema, scaling, feature selection, splits") as st:
+            shared = fit_shared(
+                reference,
+                eos_id=eos_id,
+                version=version,
+                library_id=vi.library_name if vi is not None else "",
+                vector_index_path=_custom_index_path(vi) if vi is not None else "",
+                max_features=max_features,
+            )
+            st.summary = (
+                f"{len(shared.schema.columns)} output(s) → "
+                f"{len(shared.selected_columns)} selected · 80/10/10 split"
+            )
+        eq._shared = shared
+        k = eq.config.neighbors.k
+        knn = None
+        if uses_knn:
+            with steps(f"Nearest neighbours (k={k})") as st:
+                knn = fit_knn(shared=shared, vector_index=vi, k=k)
+                st.summary = "self-kNN taken from the index"
+        fitters = _fitters(
+            reference, shared, vi, knn, k, signal_descriptor, max_signal_train_samples
+        )
+        for name in requested:
+            with steps(f"Score: {name}") as st:
+                setattr(eq, name, fitters[name]())
+                anchor = getattr(getattr(eq, name), f"reference_{name}_", None)
+                logger.info(f"score {name!r} | fitted | reference={anchor}")
+        section.summary = f"{len(requested)} score(s) fitted"
+    eq._vector_index_cache = vi
+
+
+def _fitters(reference, shared, vi, knn, k, signal_descriptor, max_signal_samples):
+    """Zero-argument fitters for each reference score."""
+    return {
         "typicality": lambda: Typicality().fit(reference, shared=shared),
         "support": lambda: Support().fit(
             reference, vector_index=vi, k=k, shared=shared, knn=knn
@@ -110,16 +146,9 @@ def fit_reference(
             vector_index=vi,
             shared=shared,
             descriptor=signal_descriptor,
-            max_train_samples=max_signal_train_samples,
+            max_train_samples=max_signal_samples,
         ),
     }
-    for name, fitter in fitters.items():
-        if name in scores_set:
-            t = time.perf_counter()
-            setattr(eq, name, fitter())
-            logger.info(f"score {name!r} | fitted | {time.perf_counter() - t:.1f}s")
-    eq._vector_index_cache = vi
-    emit_reference_report(eq, reference, shared)
 
 
 def _validate_reference(
@@ -184,43 +213,49 @@ def run_reference(
         Run metadata; filled in place.
     """
     assert eq._shared is not None
-    validate_against_schema(query, eq._shared.schema)
-    t = time.perf_counter()
-    query_repr = _make_query_repr(eq._shared, query)
-    logger.info(
-        f"run | query scaled | shape={query_repr.shape} | "
-        f"{time.perf_counter() - t:.2f}s"
-    )
-
-    neighbours = _shared_neighbours(eq, query, query_repr)
-    metadata["n_reference"] = len(eq._shared.reference_ids)
-    for name, component in components.items():
-        t = time.perf_counter()
-        if name in ("typicality", "extremity"):
-            result = component.run(query, query_repr=query_repr)
-        elif name == "support":
-            result = component.run(
-                query,
-                query_fp_indices=neighbours["query_fp_indices"],
-                query_fp_distances=neighbours["query_fp_distances"],
+    needs_knn = eq.support is not None or eq.consistency is not None
+    steps = console.Steps(1 + needs_knn + len(components))
+    with console.section("Reference modality") as section:
+        with steps("Validate and scale the query") as st:
+            validate_against_schema(query, eq._shared.schema)
+            query_repr = _make_query_repr(eq._shared, query)
+            st.summary = (
+                f"{query_repr.shape[0]:,} molecules · {query_repr.shape[1]} feature(s)"
             )
-        elif name == "consistency":
-            result = component.run(query, query_repr=query_repr, **neighbours)
-        else:
-            result = component.run(query)
-        columns[name] = result.score
-        columns[f"{name}_raw"] = result.score_raw
-        if hasattr(result, "score_log"):
-            columns[f"{name}_log"] = result.score_log
-        metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
-        logger.info(
-            f"score {name!r} | mean={float(result.score.mean()):.4f} "
-            f"raw mean={float(result.score_raw.mean()):.4f} | "
-            f"{time.perf_counter() - t:.2f}s"
+        neighbours = _shared_neighbours(eq, query, query_repr, steps)
+        metadata["n_reference"] = len(eq._shared.reference_ids)
+        for name, component in components.items():
+            with steps(f"Score: {name}") as st:
+                result = _run_component(name, component, query, query_repr, neighbours)
+                st.summary = f"median {float(result.score.median()):.3f}"
+            columns[name] = result.score
+            columns[f"{name}_raw"] = result.score_raw
+            if hasattr(result, "score_log"):
+                columns[f"{name}_log"] = result.score_log
+            metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
+            logger.info(
+                f"score {name!r} | mean={float(result.score.mean()):.4f} "
+                f"raw mean={float(result.score_raw.mean()):.4f}"
+            )
+        section.summary = f"{len(components)} score(s)"
+
+
+def _run_component(name, component, query, query_repr, neighbours):
+    """Run one reference component with the precomputed shared inputs."""
+    if name in ("typicality", "extremity"):
+        return component.run(query, query_repr=query_repr)
+    if name == "support":
+        return component.run(
+            query,
+            query_fp_indices=neighbours["query_fp_indices"],
+            query_fp_distances=neighbours["query_fp_distances"],
         )
+    if name == "consistency":
+        return component.run(query, query_repr=query_repr, **neighbours)
+    return component.run(query)
 
 
-def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray) -> dict:
+def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray, steps) -> dict:
     """FP kNN (and output distances) computed once for Support and Consistency."""
     out = {
         "query_fp_indices": None,
@@ -230,54 +265,18 @@ def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray) -> dict:
     if eq.support is None and eq.consistency is None:
         return out
     knn = (eq.support or eq.consistency).knn_
-    t = time.perf_counter()
-    distances, indices = _query_fp_distances(query, eq._get_vector_index(), knn.k)
-    out["query_fp_distances"], out["query_fp_indices"] = distances, indices
-    logger.info(f"run | FP kNN | k={knn.k} | {time.perf_counter() - t:.2f}s")
-    if eq.consistency is not None:
-        assert eq._shared.ref_repr is not None
-        out["query_output_distances"] = _query_output_distances(
-            query_repr, eq._shared.ref_repr, indices
+    with steps(f"Nearest library neighbours (k={knn.k})") as st:
+        distances, indices = _query_fp_distances(query, eq._get_vector_index(), knn.k)
+        out["query_fp_distances"], out["query_fp_indices"] = distances, indices
+        if eq.consistency is not None:
+            assert eq._shared.ref_repr is not None
+            out["query_output_distances"] = _query_output_distances(
+                query_repr, eq._shared.ref_repr, indices
+            )
+        st.summary = (
+            f"median nearest similarity {float(np.median(1 - distances[:, 0])):.2f}"
         )
     return out
-
-
-def emit_reference_report(eq, reference: pd.DataFrame, shared: SharedFitState) -> None:
-    """Log the reference anchors of the fitted reference scores.
-
-    Parameters
-    ----------
-    eq : ErsiliaQuality
-        The fitted orchestrator.
-    reference : pandas.DataFrame
-        The reference predictions.
-    shared : SharedFitState
-        The fitted shared state.
-    """
-    logger.info(
-        f"Reference: {len(reference):,} samples · {len(shared.schema.columns)} features"
-    )
-    if (
-        eq.support is None
-        and eq.consistency is None
-        and eq.typicality is None
-        and eq.extremity is None
-        and eq.signal is None
-    ):
-        return
-    logger.reference_report_table(
-        reference_support=eq.support.reference_support_ if eq.support else None,
-        reference_typicality=(
-            eq.typicality.reference_typicality_ if eq.typicality else None
-        ),
-        reference_extremity=(
-            eq.extremity.reference_extremity_ if eq.extremity else None
-        ),
-        reference_consistency=(
-            eq.consistency.reference_consistency_ if eq.consistency else None
-        ),
-        reference_signal=eq.signal.reference_signal_ if eq.signal else None,
-    )
 
 
 def validate_input_column(reference: pd.DataFrame) -> None:

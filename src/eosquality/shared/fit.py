@@ -53,10 +53,10 @@ def fit_shared(
     metadata = compute_metadata(reference, eos_id=eos_id, version=version)
     metadata.library_id = library_id
     metadata.vector_index_path = vector_index_path
-    logger.reference_table(
-        n_samples=len(reference),
-        n_features=len(schema.columns),
-        column_names=schema.column_names,
+    logger.debug(
+        f"shared | reference {len(reference):,} rows · {len(schema.columns)} "
+        f"columns: {', '.join(schema.column_names[:8])}"
+        + ("…" if len(schema.columns) > 8 else "")
     )
     pipeline = PreprocessPipeline(schema=schema)
     ref_repr_full = pipeline.fit_transform(reference)

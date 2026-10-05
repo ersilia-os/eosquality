@@ -150,7 +150,6 @@ class VectorIndex:
         _check_resume(output_dir, fingerprint)
 
         t0 = time.perf_counter()
-        logger.rule("VectorIndex · build")
         logger.info(
             f"Building index | {len(smiles):,} molecules | max_k={max_k} "
             f"| radius={radius} | n_bits={n_bits}"
@@ -165,7 +164,6 @@ class VectorIndex:
             f"Vector index built | {len(smiles):,} molecules | max_k={max_k} | "
             f"{time.perf_counter() - t0:.2f}s"
         )
-        logger.rule()
 
         instance = cls(
             smiles=smiles,

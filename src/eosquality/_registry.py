@@ -38,4 +38,4 @@ SCORE_CLASSES = {
 INDEX_AWARE = frozenset({"support", "consistency", "signal"})
 KNN_USERS = frozenset({"support", "consistency"})
 # Training-modality components (present iff training sets were fit).
-TRAINING_ORDER: tuple[str, ...] = ("training_distance",)
+TRAINING_ORDER: tuple[str, ...] = ("training_distance", "training_difficulty")

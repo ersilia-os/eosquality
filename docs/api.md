@@ -13,7 +13,7 @@ ErsiliaQuality(k=5, verbose=False, config=None)
 ```
 
 - `k` is the number of fingerprint neighbours used by support and consistency. It must be at most the index's `max_k` (50 for the canonical library).
-- `verbose=True` turns on DEBUG logging and the diagnostic tables.
+- `verbose=True` turns on the curated step-by-step output (as in the CLI) and DEBUG logging.
 
 ### `fit`
 
@@ -92,9 +92,9 @@ eq = ErsiliaQuality.load("artifacts/")
 | `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `consistency`, `consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to k neighbours |
 | `signal`, `signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
-| `training_distance`, `training_distance_raw` | (0, 1], [0, 1] | calibrated score (percentile among the training set's leave-one-out values), and 1 − mean Tanimoto to the 5 nearest training molecules; each the 66th percentile across output columns |
-| `training_n_columns` | integer | output columns with a training set that contributed |
-| `in_training_any` | bool | the query is itself a training molecule of some column |
+| `training_distance`, `training_distance_raw` | (0, 1], [0, 1] | one value for the whole model: the 66th percentile across output columns of the calibrated distance (percentile among the column's leave-one-out values) and of the raw distance (1 − mean Tanimoto to the 5 nearest training molecules) |
+| `training_difficulty` | (0, 1] | one value for the whole model: the 66th percentile across labelled output columns of the error model's predicted error, as a percentile among the training molecules' out-of-fold predicted errors (higher is harder); no raw column |
+| `in_training` | bool | the query is itself a training molecule of some column |
 
 Scores that were not fit are left out. A row with no usable output feature has NaN typicality, extremity and consistency.
 
@@ -107,26 +107,25 @@ Scores that were not fit are left out. A row with no usable output feature has N
 - `signal_descriptor`
 - `signal_formula_version`
 - `training_distance_n_columns`, `training_distance_columns`, `training_distance_k`
+- `training_difficulty_columns`, `training_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error, for the chosen feature set), `training_difficulty_variant` (per column: the chosen feature set), `training_difficulty_variant_spearman` (per column: Spearman of each feature set), `training_difficulty_n_labelled`
 
 ### `training_details`
 
-`training_details` is `None` unless the training modality was fit. Otherwise it is a DataFrame with one row per (query, output column):
+`training_details` is `None` unless the training modality was fit. Otherwise it is a DataFrame with one row per query:
 
 | column | meaning |
 |---|---|
 | `key` | query key (or index) |
-| `column` | model output column |
-| `distance` | calibrated distance for this column: percentile of `distance_raw` among the column's leave-one-out values |
-| `distance_raw` | 1 − mean Tanimoto similarity to the `k` nearest training molecules |
-| `nn1_distance` | 1 − Tanimoto similarity of the nearest training molecule |
-| `k` | neighbours averaged (5) |
-| `n_train` | training molecules for this column |
-| `in_training` | the query is one of this column's training molecules; its own entry is excluded from the neighbours |
-| `nn_keys`, `nn_similarities`, `nn_y` | the `k` nearest training molecules, `\|`-separated, closest first; `nn_y` is empty without labels |
+| `distance`, `distance_raw` | the whole-model `training_distance` and `training_distance_raw` |
+| `difficulty` | the whole-model `training_difficulty` (only when fitted) |
+| `nn1_distance` | 1 − Tanimoto similarity of the nearest training molecule over all columns |
+| `in_training` | the query is a training molecule of some column (its own entry is excluded from the neighbours) |
+| `nn_keys`, `nn_similarities` | the 5 nearest training molecules over all columns, `\|`-separated, closest first, deduplicated |
+| `nn_columns` | the output columns each of those molecules is a training molecule of, `;`-joined within a neighbour, `\|` between neighbours |
 
 ## Per-score components
 
-Every reference component can also be used on its own (`TrainingDistance` needs a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
+Every reference component can also be used on its own (`TrainingDistance` and `TrainingDifficulty` need a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
 
 ```python
 from eosquality import Typicality, Extremity, Support, Consistency, Signal
@@ -142,8 +141,9 @@ Typicality.load("art/").run(query).score
 
 ## Logging
 
-As a library, `eosquality` only prints warnings by default.
-- `eosquality.set_log_level("INFO")` shows progress messages.
-- `eosquality.set_verbosity(True)` shows DEBUG messages and the diagnostic tables.
+As a library, `eosquality` is silent by default; only warnings are printed.
+- `eosquality.set_verbosity(True)`, or `ErsiliaQuality(verbose=True)`, turns on the curated step-by-step output, as the CLI shows it, together with DEBUG messages.
+- `eosquality.set_log_level("INFO")` changes only the level of the terminal log sink.
+- `from eosquality.utils.logging import logger` gives `with logger.log_file("run.log"): ...`, which writes every record, DEBUG included, to a file.
 
-Handlers that the host application adds to loguru are left untouched.
+Output goes to stderr, through one shared Rich console. Handlers that the host application adds to loguru are left untouched. The standard-library logger of `eosframes`, which otherwise prints INFO lines on its own, is routed into eosquality's: its messages land in the log file, and reach the screen only as warnings or with verbose output.

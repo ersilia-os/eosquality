@@ -14,7 +14,7 @@ from typing import Any
 
 import pandas as pd
 
-from eosquality import _artifacts, _reference_modality
+from eosquality import _artifacts, _reference_modality, _training_modality
 from eosquality._registry import (
     ALL_SCORES,
     DEFAULT_SCORES,
@@ -36,15 +36,13 @@ from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.signal import Signal
 from eosquality.scores.support import Support
+from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES
 from eosquality.shared.state import SharedFitState
-from eosquality.training import (
-    TrainingFitState,
-    fit_training,
-    load_training,
-)
+from eosquality.training import TrainingFitState
+from eosquality.utils import console
 from eosquality.utils.identifiers import validate_eos_id, validate_version
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
@@ -66,7 +64,7 @@ class ErsiliaQuality:
     - **reference** — the model's predictions on the reference library
       (typicality, extremity, support, consistency, signal);
     - **training** — the model's per-output-column training sets
-      (training_distance).
+      (training_distance, and training_difficulty when labels allow).
     """
 
     def __init__(
@@ -103,6 +101,7 @@ class ErsiliaQuality:
         self.extremity: Extremity | None = None
         self.signal: Signal | None = None
         self.training_distance: TrainingDistance | None = None
+        self.training_difficulty: TrainingDifficulty | None = None
         self._shared: SharedFitState | None = None
         self._training: TrainingFitState | None = None
         self._vector_index_cache: VectorIndex | None = None
@@ -167,7 +166,8 @@ class ErsiliaQuality:
             raise ValueError("fit needs reference predictions, training sets, or both.")
         self._reset()
         t_start = time.perf_counter()
-        logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
+        console.set_active_color(console.STEP_COLORS["fit"])
+        logger.info(f"fit | {eos_id} {version}")
         if reference is not None:
             _reference_modality.fit_reference(
                 self,
@@ -191,7 +191,6 @@ class ErsiliaQuality:
             f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | "
             f"{time.perf_counter() - t_start:.2f}s"
         )
-        logger.rule()
         return self
 
     def fit_training(
@@ -235,14 +234,8 @@ class ErsiliaQuality:
         validate_eos_id(eos_id)
         validate_version(version)
         t = time.perf_counter()
-        output_columns = (
-            self._shared.schema.column_names if self._shared is not None else None
-        )
-        columns = load_training(training_sets, output_columns, training_predictions)
-        logger.info(f"training | {len(columns)} column(s) loaded | building indices…")
-        self._training = fit_training(columns, eos_id=eos_id, version=version)
-        self.training_distance = TrainingDistance().fit(
-            training=self._training, shared=self._shared
+        _training_modality.fit_training_modality(
+            self, training_sets, training_predictions, eos_id=eos_id, version=version
         )
         self.is_fitted_ = True
         logger.info(f"training | fitted | {time.perf_counter() - t:.1f}s")
@@ -271,7 +264,7 @@ class ErsiliaQuality:
         t_start = time.perf_counter()
         components = self._components()
         training_components = self._training_components()
-        logger.rule(f"ErsiliaQuality · run · {len(query):,} queries")
+        console.set_active_color(console.STEP_COLORS["run"])
         logger.info(
             f"run | n_query={len(query):,} | scores="
             f"[{', '.join(list(components) + list(training_components))}]"
@@ -292,25 +285,12 @@ class ErsiliaQuality:
                 self, query, components, columns, metadata
             )
 
-        training_details = None
-        if self.training_distance is not None:
-            t = time.perf_counter()
-            result = self.training_distance.run(query)
-            columns["training_distance"] = result.score
-            columns["training_distance_raw"] = result.score_raw
-            columns["training_n_columns"] = result.n_columns
-            columns["in_training_any"] = result.in_training_any
-            metadata.update(
-                {f"training_distance_{k}": v for k, v in result.metadata.items()}
-            )
-            training_details = result.details
-            logger.info(
-                f"score 'training_distance' | median={float(result.score.median()):.4f} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
+        training_details = _training_modality.run_training(
+            self, query, columns, metadata
+        )
 
         scores_df = pd.DataFrame(columns, index=list(query.index))
-        logger.scores_summary_table(scores_df)
+        _score_table(scores_df)
         means = " · ".join(
             f"{c}={scores_df[c].mean():.3f}"
             for c in scores_df.columns
@@ -320,7 +300,6 @@ class ErsiliaQuality:
             f"Run complete | {len(scores_df):,} queries | {means or 'no scores'} | "
             f"{time.perf_counter() - t_start:.2f}s"
         )
-        logger.rule()
         return RunResult(
             scores=scores_df, metadata=metadata, training_details=training_details
         )
@@ -586,3 +565,26 @@ class ErsiliaQuality:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _score_table(scores: pd.DataFrame) -> None:
+    """Print the distribution of each calibrated score (curated output only)."""
+    names = [
+        c
+        for c in scores.columns
+        if pd.api.types.is_float_dtype(scores[c]) and not c.endswith(("_raw", "_log"))
+    ]
+    console.table(
+        ("score", "mean", "median", "min", "max"),
+        [
+            (
+                c,
+                *(
+                    f"{getattr(scores[c], f)():.3f}"
+                    for f in ("mean", "median", "min", "max")
+                ),
+            )
+            for c in names
+        ],
+        title="Score summary",
+    )

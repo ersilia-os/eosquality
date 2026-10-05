@@ -3,7 +3,7 @@
 Each subcommand lives in its own module under this package:
 
 - :mod:`eosquality.cli.build` defines ``build``.
-- :mod:`eosquality.cli.download` defines ``download``.
+- :mod:`eosquality.cli.setup` defines ``setup``.
 - :mod:`eosquality.cli.fit` defines ``fit``.
 - :mod:`eosquality.cli.run` defines ``run``.
 
@@ -14,14 +14,14 @@ End-user workflow
 Each release is pinned to a canonical reference library, resolved locally
 from ``$EOSQUALITY_REFERENCE_LIBRARY_PATH`` → ``./data/indices/<library>/``
 → ``~/.eosquality/indices/<library>/``. Fetch it once with
-``eosquality download``; after that the usual path is fit then run::
+``eosquality setup``; after that the usual path is fit then run::
 
     eosquality fit --reference eos4e40_v1.csv --output artifacts/ [--training-sets training_eos4e40_v1/]
     eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
 
-Prefetch the library explicitly (useful for CI or airgapped setups)::
+Fetch the library explicitly (useful for CI or airgapped setups)::
 
-    eosquality download [--force]
+    eosquality setup [--force]
 
 For maintainers / advanced use
 ------------------------------
@@ -38,11 +38,10 @@ import importlib.metadata
 
 import click
 
-from eosquality import set_log_level
 from eosquality.cli.build import build
-from eosquality.cli.download import download
 from eosquality.cli.fit import fit
 from eosquality.cli.run import run
+from eosquality.cli.setup import setup
 
 try:
     _VERSION = importlib.metadata.version("eosquality")
@@ -106,13 +105,12 @@ class _SectionedGroup(click.Group):
 )
 @click.version_option(_VERSION, prog_name="eosquality")
 def cli() -> None:
-    """Show INFO-level progress for every subcommand (``-v`` adds DEBUG)."""
-    set_log_level("INFO")
+    """Every subcommand prints curated progress (``-v`` adds DEBUG logs)."""
 
 
 cli.add_command(fit)
 cli.add_command(run)
-cli.add_command(download)
+cli.add_command(setup)
 cli.add_command(build)
 
 

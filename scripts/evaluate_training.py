@@ -7,10 +7,22 @@ training scores of the held-out 20% predict the surrogate's error there.
 Without an external labelled set this validates the *method*, not the
 Ersilia model itself.
 
-Reported (with 95% bootstrap intervals):
-- Spearman(training_distance, |error|): > 0 means farther ↔ larger error.
-- AUROC of training_distance for flagging the top-quartile errors.
-- Mean |error| per distance quartile.
+Reported for each training score (training_distance, training_distance_raw,
+training_difficulty), with 95% bootstrap intervals where noted:
+- Spearman(score, |error|), with CI: > 0 means a higher score ↔ larger error;
+  0 is the random baseline.
+- AUROC for flagging the top-quartile errors, with CI (random: 0.5).
+- Sparsification gain: how much of the oracle's error reduction (dropping the
+  truly worst molecules first) is recovered by dropping the highest-scored
+  molecules first (random: 0, oracle: 1).
+- Mean |error| per score quartile.
+- UNIQUE's ranking-based metrics (Novartis UNIQUE, ``evaluation_metrics.py``),
+  on cumulative bins of the data ordered by score (``nbins = min(10, n/5)``)
+  with MAE as the bin performance: AUC difference to the oracle ordering
+  (0 is perfect), performance drop (MAE of all data and of the highest-score
+  bin, each over the MAE of the lowest-score bin; > 1 is good), and the
+  increasing/decreasing coefficients (fraction of consecutive bins where MAE
+  goes the expected way; 1 is perfect).
 
     python scripts/evaluate_training.py --csv train.csv [--y-col y] [--max-n 20000]
 """
@@ -24,13 +36,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from rdkit import Chem, RDLogger
-from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from scipy.stats import spearmanr
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import roc_auc_score
 
 from eosquality import ErsiliaQuality
+from eosquality.training.folds import morgan_bits
 
 RDLogger.DisableLog("rdApp.*")
 SEED = 0
@@ -63,26 +75,6 @@ def scaffold_split(smiles: list[str], test_frac: float = 0.2) -> np.ndarray:
     return test
 
 
-def morgan(smiles: list[str]) -> np.ndarray:
-    """Morgan bit fingerprints (radius 2, 2048 bits) as a matrix.
-
-    Parameters
-    ----------
-    smiles : list of str
-        Valid SMILES.
-
-    Returns
-    -------
-    numpy.ndarray
-        ``(n, 2048)`` uint8.
-    """
-    gen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
-    return np.array(
-        [gen.GetFingerprintAsNumPy(Chem.MolFromSmiles(s)) for s in smiles],
-        dtype=np.uint8,
-    )
-
-
 def bootstrap(fn, *arrays, n=500):
     """95% bootstrap interval of a statistic over paired arrays.
 
@@ -111,6 +103,119 @@ def bootstrap(fn, *arrays, n=500):
     return np.percentile(stats, [2.5, 97.5])
 
 
+SCORES = ("training_distance", "training_distance_raw", "training_difficulty")
+
+
+def sparsification_gain(score: np.ndarray, err: np.ndarray) -> float:
+    """Share of the oracle's sparsification area recovered by ``score``.
+
+    Molecules are dropped from the highest score down; after each drop the
+    mean error of those kept is recorded. The area between the random curve
+    (constant mean error) and the score's curve is divided by the same area
+    for the oracle, which drops by true error.
+
+    Parameters
+    ----------
+    score : numpy.ndarray
+        Higher means expected to be worse.
+    err : numpy.ndarray
+        Absolute errors.
+
+    Returns
+    -------
+    float
+        0 for random ranking, 1 for the oracle.
+    """
+
+    def curve(order: np.ndarray) -> np.ndarray:
+        kept = err[order][::-1]  # ascending score: the kept part is a prefix
+        return np.cumsum(kept)[::-1] / np.arange(len(err), 0, -1)
+
+    random_area = err.mean() * len(err)
+    score_area = curve(np.argsort(score)).sum()
+    oracle_area = curve(np.argsort(err)).sum()
+    return float((random_area - score_area) / (random_area - oracle_area))
+
+
+def _cumulative_mae(order: np.ndarray, err: np.ndarray, nbins: int) -> np.ndarray:
+    """MAE of the first 1/nbins, 2/nbins, … of the rows taken in ``order``."""
+    sizes = (np.linspace(0, 1, nbins + 1)[1:] * len(err)).astype(int)
+    return np.array([err[order[:s]].mean() for s in sizes])
+
+
+def unique_ranking_metrics(score: np.ndarray, err: np.ndarray) -> dict:
+    """UNIQUE's ranking-based evaluation metrics for one score.
+
+    Mirrors ``unique.evaluation.evaluation_metrics`` (binning as in
+    ``get_indices_bin``, MAE as the per-bin performance). The two
+    "coefficients" are computed as described there: UNIQUE's own code uses
+    ``<`` for both and sums bin indices instead of counting bins, which this
+    does not copy.
+
+    Parameters
+    ----------
+    score : numpy.ndarray
+        Higher means expected to be worse.
+    err : numpy.ndarray
+        Absolute errors.
+
+    Returns
+    -------
+    dict
+        ``auc_difference``, ``performance_drop_all_vs_low``,
+        ``performance_drop_high_vs_low``, ``increasing_coefficient`` and
+        ``decreasing_coefficient``.
+    """
+    nbins = max(2, min(10, len(err) // 5))
+    x = np.linspace(0, 1, nbins + 1)[1:]
+    increasing = _cumulative_mae(np.argsort(score, kind="stable"), err, nbins)
+    decreasing = _cumulative_mae(np.argsort(-score, kind="stable"), err, nbins)
+    best = _cumulative_mae(np.argsort(err, kind="stable"), err, nbins)
+    return {
+        "auc_difference": float(np.trapezoid(increasing, x) - np.trapezoid(best, x)),
+        "performance_drop_all_vs_low": float(increasing[-1] / increasing[0]),
+        "performance_drop_high_vs_low": float(decreasing[0] / increasing[0]),
+        "increasing_coefficient": float(np.mean(np.diff(increasing) > 0)),
+        "decreasing_coefficient": float(np.mean(np.diff(decreasing) < 0)),
+    }
+
+
+def metrics(score: np.ndarray, err: np.ndarray) -> dict:
+    """Ranking metrics of one score against the surrogate's absolute errors.
+
+    Parameters
+    ----------
+    score : numpy.ndarray
+        Training score of the held-out molecules (NaN rows are dropped).
+    err : numpy.ndarray
+        Absolute errors of the held-out molecules.
+
+    Returns
+    -------
+    dict
+        Spearman, AUROC (with intervals), sparsification gain and error by
+        score quartile.
+    """
+    ok = np.isfinite(score)
+    score, err = score[ok], err[ok]
+    big = err >= np.quantile(err, 0.75)
+    quart = pd.qcut(score, 4, labels=["Q1", "Q2", "Q3", "Q4"], duplicates="drop")
+    return {
+        "n": int(ok.sum()),
+        "spearman": spearmanr(score, err)[0],
+        "spearman_ci": bootstrap(lambda d, e: spearmanr(d, e)[0], score, err),
+        "auroc": roc_auc_score(big, score),
+        "auroc_ci": bootstrap(lambda b, d: roc_auc_score(b, d), big, score),
+        "sparsification_gain": sparsification_gain(score, err),
+        "unique": unique_ranking_metrics(score, err),
+        "error_by_quartile": pd.Series(err)
+        .groupby(quart, observed=True)
+        .mean()
+        .round(4)
+        .to_dict(),
+    }
+
+
 def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
     """Run the scaffold-split method check on one training set.
 
@@ -124,7 +229,7 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
     Returns
     -------
     dict
-        Sizes, Spearman, AUROC (with intervals) and error by distance quartile.
+        Sizes, label kind and :func:`metrics` for each training score.
     """
     df = df.dropna(subset=["smiles", "y"]).reset_index(drop=True)
     df = df[df.smiles.map(lambda s: Chem.MolFromSmiles(s) is not None)].reset_index(
@@ -142,9 +247,12 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
         q = pd.DataFrame(
             {"key": [str(i) for i in test_df.index], "input": test_df.smiles}
         )
-        distance = eq.run(q).scores["training_distance"].to_numpy()
+        scores = eq.run(q).scores
 
-    X_tr, X_te = morgan(train_df.smiles.tolist()), morgan(test_df.smiles.tolist())
+    X_tr, X_te = (
+        morgan_bits(train_df.smiles.tolist()),
+        morgan_bits(test_df.smiles.tolist()),
+    )
     if binary:
         model = RandomForestClassifier(n_estimators=300, n_jobs=-1, random_state=SEED)
         model.fit(X_tr, train_df.y)
@@ -153,27 +261,13 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
         model = RandomForestRegressor(n_estimators=300, n_jobs=-1, random_state=SEED)
         model.fit(X_tr, train_df.y)
         err = np.abs(model.predict(X_te) - test_df.y.to_numpy())
-
-    ok = np.isfinite(distance)
-    distance, err = distance[ok], err[ok]
-    rho = spearmanr(distance, err)[0]
-    rho_ci = bootstrap(lambda d, e: spearmanr(d, e)[0], distance, err)
-    big = err >= np.quantile(err, 0.75)
-    auc = roc_auc_score(big, distance)
-    auc_ci = bootstrap(lambda b, d: roc_auc_score(b, d), big, distance)
-    quart = pd.qcut(
-        distance, 4, labels=["Q1 (near)", "Q2", "Q3", "Q4 (far)"], duplicates="drop"
-    )
-    by_q = pd.Series(err).groupby(quart, observed=True).mean()
     return {
         "n_train": len(train_df),
-        "n_test": int(ok.sum()),
+        "n_test": len(test_df),
         "binary": binary,
-        "spearman": rho,
-        "spearman_ci": rho_ci,
-        "auroc": auc,
-        "auroc_ci": auc_ci,
-        "error_by_distance_quartile": by_q.round(4).to_dict(),
+        "scores": {
+            c: metrics(scores[c].to_numpy(), err) for c in SCORES if c in scores
+        },
     }
 
 
@@ -191,13 +285,25 @@ def report(name: str, r: dict) -> None:
         f"\n== {name} | n_train={r['n_train']:,} n_test={r['n_test']:,} | "
         f"{'binary' if r['binary'] else 'continuous'} y"
     )
-    print(
-        f"Spearman(distance, |error|) = {r['spearman']:.3f}  95% CI [{r['spearman_ci'][0]:.3f}, {r['spearman_ci'][1]:.3f}]"
-    )
-    print(
-        f"AUROC top-quartile error  = {r['auroc']:.3f}  95% CI [{r['auroc_ci'][0]:.3f}, {r['auroc_ci'][1]:.3f}]"
-    )
-    print("mean |error| by distance quartile:", r["error_by_distance_quartile"])
+    for score, m in r["scores"].items():
+        lo, hi = m["spearman_ci"]
+        alo, ahi = m["auroc_ci"]
+        print(f"-- {score} (n={m['n']:,})")
+        print(
+            f"   Spearman(score, |error|) = {m['spearman']:.3f}  [{lo:.3f}, {hi:.3f}]"
+        )
+        print(f"   AUROC top-quartile error = {m['auroc']:.3f}  [{alo:.3f}, {ahi:.3f}]")
+        print(f"   sparsification gain      = {m['sparsification_gain']:.3f}")
+        print(f"   mean |error| by quartile: {m['error_by_quartile']}")
+        u = m["unique"]
+        print(
+            "   UNIQUE: AUC difference = "
+            f"{u['auc_difference']:.3f} | performance drop all/low = "
+            f"{u['performance_drop_all_vs_low']:.2f}, high/low = "
+            f"{u['performance_drop_high_vs_low']:.2f} | increasing/decreasing "
+            f"coefficient = {u['increasing_coefficient']:.2f}/"
+            f"{u['decreasing_coefficient']:.2f}"
+        )
 
 
 def main() -> None:

@@ -1,9 +1,9 @@
 # Command-line interface
 
-There are two steps, plus a one-time download:
+There are two steps, plus a one-time setup:
 
 ```bash
-eosquality download                                        # once per install
+eosquality setup                                           # once per install
 eosquality fit --reference eos4e40_v1.csv -o art_eos4e40/  # once per model
 eosquality run -i query_eos4e40_v1.csv -a art_eos4e40/ -o scores.csv
 ```
@@ -13,7 +13,7 @@ eosquality run -i query_eos4e40_v1.csv -a art_eos4e40/ -o scores.csv
 | `fit` gets | Scores |
 |---|---|
 | `--reference` (predictions on the reference library) | reference modality: typicality, extremity, support, consistency, signal |
-| `--training-sets` (per-output-column training sets) | training modality: training_distance |
+| `--training-sets` (per-output-column training sets) | training modality: training_distance, and training_difficulty for columns with labels |
 | both | both |
 
 ```bash
@@ -22,24 +22,35 @@ eosquality fit --training-sets training_eos4e40_v1/ -o art/                     
 eosquality fit --training-sets training_eos4e40_v1/ --artifacts art/                    # add training later
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `training_distance` (calibrated and raw) and the nearest training neighbours. Training scores that use labels `y` and the model's predictions on its training molecules are planned.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `training_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `training_difficulty`, a learned error model; the fit log reports, per column, how well it ranks held-out errors.
 
 **Common behaviour:**
-- By default, the CLI prints INFO-level progress to stderr. With `-v` it also prints DEBUG messages and the diagnostic tables.
-- Each command exits with status 0 on success and 1 on error.
+- **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
+  - a header panel with the inputs;
+  - a section per modality, made of numbered steps (`▪ Step i/N · …`) that close with a timed `✓` line and a short result;
+  - small tables where useful: training columns, error models, the score summary of `run`;
+  - a final summary panel with the outputs and the log file.
+
+  Warnings appear in between. With `-v`, DEBUG messages and full tracebacks are shown too. Progress bars appear only on an interactive terminal.
+- **Log files.** Every record, DEBUG included, goes to a log file with `module:function:line` context:
+  - `fit`: `<artifacts>/eosquality.log`. With `--artifacts`, it is appended to the existing one. If a fit fails, its log is kept in a temporary file whose path is printed.
+  - `run`: `<output>.log` next to the scores CSV, e.g. `scores.log`.
+
+  Variable values are never written into tracebacks, so SMILES don't leak into logs.
+- **Exit status.** Errors print as `✖ error: …` and exit with status 1; success exits with 0.
 - `fit` and `run` refuse to overwrite an existing output path.
 
-## `eosquality download`
+## `eosquality setup`
 
-Fetches the canonical reference library from the public S3 bucket into the user cache:
+Sets eosquality up: fetches the canonical reference library from the public S3 bucket into the user cache:
 - the index folder → `~/.eosquality/indices/<library>/`
 - the source CSV → `~/.eosquality/libraries/<library>.csv`
 
-This is the only command that uses the network. If a valid cached copy already exists, nothing is downloaded.
+This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
 
 | flag | default | |
 |---|---|---|
-| `--force`, `-f` | off | re-download even if cached |
+| `--force`, `-f` | off | fetch again even if cached |
 | `--verbose`, `-v` | off | |
 
 ## `eosquality fit`
@@ -92,9 +103,9 @@ Scores a query CSV against saved artifacts. Every score that was fit is computed
 The output CSV contains:
 - the query's `key` and `input` columns, if present;
 - a calibrated column and a `*_raw` column for each fitted score;
-- for the training modality, `training_distance`, `training_distance_raw`, `training_n_columns` and `in_training_any` (see [api.md](api.md#runresult)).
+- for the training modality, `training_distance`, `training_distance_raw`, `training_difficulty` (when fitted) and `in_training` (see [api.md](api.md#runresult)).
 
-If the artifacts hold a training modality, a second CSV is also written. It has one row per (query, output column), with the per-column distances (calibrated, raw, nearest) and the 5 nearest training molecules (keys, similarities, labels).
+If the artifacts hold a training modality, a second CSV is also written. It has one row per query, with the whole-model distances and difficulty, the distance to the nearest training molecule, and the 5 nearest training molecules over all output columns (keys, similarities, and the columns each belongs to).
 
 For a training-only artifact, the query only needs `key` and `input`.
 

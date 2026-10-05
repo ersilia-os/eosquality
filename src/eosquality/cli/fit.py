@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import time
 
 import click
 import pandas as pd
@@ -11,7 +12,7 @@ from eosquality.cli._common import (
     CliError,
     require_new_path,
     run_command,
-    say,
+    staged_log,
     verbose_option,
 )
 from eosquality.quality import (
@@ -21,7 +22,11 @@ from eosquality.quality import (
     ErsiliaQuality,
 )
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES
+from eosquality.utils import console
 from eosquality.utils.identifiers import extract_from_path, find_eos_id
+from eosquality.utils.logging import logger
+
+LOG_FILE = "eosquality.log"
 
 
 def model_id_from_name(path: str, fallback_version: str) -> tuple[str, str] | None:
@@ -86,7 +91,7 @@ def _check_inputs(reference, training_sets, output, artifacts) -> None:
 def _read_reference(path: str | None) -> pd.DataFrame | None:
     if path is None:
         return None
-    say(f"→ reading reference CSV: {path}")
+    logger.info(f"fit | reading reference CSV {path}")
     try:
         return pd.read_csv(path)
     except Exception as exc:
@@ -239,7 +244,7 @@ def fit(
     """
 
     options = dict(locals())
-    run_command(lambda: _fit(**options), verbose=verbose)
+    run_command(lambda: _fit(**options), verbose=verbose, command="fit")
 
 
 def _fit(
@@ -260,15 +265,9 @@ def _fit(
     verbose,
 ) -> None:
     _check_inputs(reference, training_sets, output, artifacts)
+    started = time.perf_counter()
     if artifacts is not None:
-        model_id = model_id_from_name(training_sets, version)
-        ErsiliaQuality.add_training(
-            artifacts,
-            training_sets,
-            training_predictions,
-            eos_id=model_id[0] if model_id else None,
-            version=model_id[1] if model_id else None,
-        )
+        _add_training(artifacts, training_sets, training_predictions, version, started)
         return
     require_new_path(output)
     eos_id, model_version = _resolve_model_id(reference, training_sets, version)
@@ -277,18 +276,81 @@ def _fit(
         if scores
         else list(DEFAULT_SCORES)
     )
-    eq = ErsiliaQuality(k=k, verbose=verbose)
-    eq.fit(
-        _read_reference(reference),
-        eos_id=eos_id,
-        version=model_version,
-        vector_index=vector_index,
-        ignore_size=ignore_size,
-        scores=score_list,
-        max_features=_positive_or_none(max_features),
-        max_signal_train_samples=_positive_or_none(max_signal_samples),
-        signal_descriptor=signal_descriptor,
-        training_sets=training_sets,
-        training_predictions=training_predictions,
+    output_path = pathlib.Path(output)
+    console.summary_panel(
+        "eosquality · fit",
+        [
+            ("model", f"{eos_id} {model_version}"),
+            ("reference", console.path(reference) if reference else "—"),
+            ("training sets", console.path(training_sets) if training_sets else "—"),
+            ("scores", ", ".join(score_list) if reference else "—"),
+            ("output", console.path(output_path)),
+        ],
+        icon="◆",
     )
-    eq.save(output)
+    with staged_log(output_path / LOG_FILE) as log_path:
+        logger.info(f"fit | eosquality {eos_id} {model_version} → {output_path}")
+        eq = ErsiliaQuality(k=k, verbose=verbose)
+        eq.fit(
+            _read_reference(reference),
+            eos_id=eos_id,
+            version=model_version,
+            vector_index=vector_index,
+            ignore_size=ignore_size,
+            scores=score_list,
+            max_features=_positive_or_none(max_features),
+            max_signal_train_samples=_positive_or_none(max_signal_samples),
+            signal_descriptor=signal_descriptor,
+            training_sets=training_sets,
+            training_predictions=training_predictions,
+        )
+        with console.section("Save") as section:
+            eq.save(output_path)
+            section.summary = f"{console.folder_size(output_path)}"
+    _fit_summary(eq, output_path, log_path, started)
+
+
+def _add_training(artifacts, training_sets, training_predictions, version, started):
+    """``fit --artifacts``: add the training modality to existing artifacts."""
+    model_id = model_id_from_name(training_sets, version)
+    folder = pathlib.Path(artifacts)
+    console.summary_panel(
+        "eosquality · fit (add training)",
+        [
+            ("artifacts", console.path(folder)),
+            ("training sets", console.path(training_sets)),
+        ],
+        icon="◆",
+    )
+    with logger.log_file(folder / LOG_FILE) as log_path:
+        logger.info(f"fit | adding training sets {training_sets} → {folder}")
+        eq = ErsiliaQuality.add_training(
+            artifacts,
+            training_sets,
+            training_predictions,
+            eos_id=model_id[0] if model_id else None,
+            version=model_id[1] if model_id else None,
+        )
+    _fit_summary(eq, folder, log_path, started)
+
+
+def _fit_summary(eq, folder: pathlib.Path, log_path: pathlib.Path, started) -> None:
+    """Final ``✓ Fit complete`` panel."""
+    eos_id, version = eq._model_id()
+    scores = list(eq._components()) + list(eq._training_components())
+    console.summary_panel(
+        "Fit complete",
+        [
+            ("model", f"{eos_id} {version}"),
+            ("modalities", " + ".join(eq.modalities_)),
+            ("scores", ", ".join(scores)),
+            (
+                "artifacts",
+                f"{console.path(folder)}  [dim]{console.folder_size(folder)}[/]",
+            ),
+            ("log", console.path(log_path)),
+            ("time", console.elapsed(time.perf_counter() - started)),
+        ],
+        color="green",
+        icon="✓",
+    )

@@ -12,13 +12,13 @@ Install the latest version of `eosquality` directly from GitHub:
 pip install git+https://github.com/ersilia-os/eosquality.git
 ```
 
-The CLI is then available as `eosquality`. You need to start by downloading the reference library and its indices:
+The CLI is then available as `eosquality`. Start by setting it up, which fetches the reference library and its indices:
 
 ```bash
-eosquality download
+eosquality setup
 ```
 
-This will take a while. The downloaded library will be stored under `~/.eosquality/`.
+This will take a while. The library is stored under `~/.eosquality/`.
 
 ## Quick start
 
@@ -56,7 +56,8 @@ Reference-modality scores compare a query against the model's own predictions on
 | **Support** | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
-| **Training distance** *(with `--training-sets`)* | How far is the molecule from each output column's training molecules, compared with how close they are to each other? |
+| **Training distance** *(with `--training-sets`)* | How far is the molecule from the model's training molecules, compared with how close they are to each other? One value for the whole model. |
+| **Training difficulty** *(training sets with labels)* | How hard is the molecule to predict, judging by where a learned error model finds the training data hard? One value for the whole model. |
 
 ## Documentation
 

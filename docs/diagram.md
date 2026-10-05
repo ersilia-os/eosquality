@@ -28,7 +28,8 @@ flowchart LR
 flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
-    IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules (raw + calibrated)"]
+    IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (raw + calibrated)"]
+    IDX --> TDF["<b>Training difficulty</b> (columns with y)<br/>surrogate RF, scaffold CV → OOF errors<br/>UQ inputs (kNN, KDE, variance, DiffkNN)<br/>best of 3 UNIQUE feature sets → calibrated rank,<br/>Q66 → one value"]
 ```
 
 ## Run
@@ -42,8 +43,9 @@ flowchart LR
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
     Q -- SMILES --> TDR["Training distance<br/>per column → 66th percentile"]
-    TDR --> DET["training_details.csv<br/>query × column · 5 nearest training molecules"]
-    TYP & EXT & SUP & CON & SIG & TDR --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
+    Q -- SMILES --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
+    TDR & TDF --> DET["training_details.csv<br/>one row per query · 5 nearest training molecules"]
+    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
 ```
 
 ## Save layout
@@ -72,6 +74,9 @@ One subfolder per modality; either or both may be present.
       columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
       indices/c000/ …                     # one VectorIndex per output column
     training_distance/  state.json  loo_mean_distances.npz  metadata.json
+    training_difficulty/  state.json  metadata.json  # iff some column has ≥ 50 labels
+      c000/ …           surrogate.joblib  density.joblib  error_model.joblib
+                        arrays.npz  state.json      # one folder per labelled column
 ```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.

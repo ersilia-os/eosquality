@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import time
 
 import click
 import pandas as pd
@@ -10,11 +11,12 @@ from eosquality.cli._common import (
     CliError,
     require_new_path,
     run_command,
-    say,
     verbose_option,
 )
 from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.quality import ErsiliaQuality
+from eosquality.utils import console
+from eosquality.utils.logging import logger
 
 
 def default_details_path(output: str) -> str:
@@ -57,8 +59,8 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
         "Score query molecules with every score in the artifacts. The output CSV "
         "has the query's 'key' and 'input' columns, then each fitted score with "
         "its '*_raw' companion. If the artifacts hold a training modality, a "
-        "second CSV with one row per (query, output column) and the nearest "
-        "training molecules is written next to it."
+        "second CSV with one row per query and its nearest training molecules "
+        "is written next to it."
     ),
     short_help="Score query data against fitted artifacts.",
 )
@@ -112,28 +114,60 @@ def run(
         if not pathlib.Path(artifacts).is_dir():
             raise CliError(f"artifacts folder '{artifacts}' does not exist.")
         require_new_path(output)
+        started = time.perf_counter()
         details_path = training_details or default_details_path(output)
-        say(f"→ reading query CSV: {input_path}")
-        try:
-            query = pd.read_csv(input_path)
-        except Exception as exc:
-            raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
-        result = _load_artifacts(artifacts).run(query)
+        log_path = pathlib.Path(output).with_suffix(".log")
+        with logger.log_file(log_path):
+            logger.info(f"run | {input_path} against {artifacts} → {output}")
+            try:
+                query = pd.read_csv(input_path)
+            except Exception as exc:
+                raise CliError(
+                    f"could not read query CSV '{input_path}': {exc}"
+                ) from exc
+            eq = _load_artifacts(artifacts)
+            eos_id, version = eq._model_id()
+            console.summary_panel(
+                "eosquality · run",
+                [
+                    ("model", f"{eos_id} {version}"),
+                    ("modalities", " + ".join(eq.modalities_)),
+                    (
+                        "query",
+                        f"{console.path(input_path)}  [dim]{len(query):,} rows[/]",
+                    ),
+                    ("artifacts", console.path(artifacts)),
+                    ("output", console.path(output)),
+                ],
+                icon="◆",
+            )
+            result = eq.run(query)
+            if result.training_details is not None:
+                require_new_path(details_path, "training details path")
+            with console.section("Write outputs") as section:
+                prepend = [c for c in ("key", "input") if c in query.columns]
+                pd.concat(
+                    [
+                        query[prepend].reset_index(drop=True),
+                        result.scores.reset_index(drop=True),
+                    ],
+                    axis=1,
+                ).to_csv(output, index=False)
+                console.success(f"scores → {console.path(output)}")
+                if result.training_details is not None:
+                    result.training_details.to_csv(details_path, index=False)
+                    console.success(f"training details → {console.path(details_path)}")
+                section.summary = f"{len(result.scores.columns)} column(s)"
+        rows = [
+            ("queries", f"{len(query):,}"),
+            ("scores", console.path(output)),
+        ]
         if result.training_details is not None:
-            require_new_path(details_path, "training details path")
-        prepend = [c for c in ("key", "input") if c in query.columns]
-        pd.concat(
-            [
-                query[prepend].reset_index(drop=True),
-                result.scores.reset_index(drop=True),
-            ],
-            axis=1,
-        ).to_csv(output, index=False)
-        say(f"→ scores written: {output}")
-        if result.training_details is not None:
-            result.training_details.to_csv(details_path, index=False)
-            say(f"→ training details written: {details_path}")
-        if not verbose:
-            say(f"Scores saved → {output}", err=False)
+            rows.append(("training details", console.path(details_path)))
+        rows += [
+            ("log", console.path(log_path)),
+            ("time", console.elapsed(time.perf_counter() - started)),
+        ]
+        console.summary_panel("Run complete", rows, color="green", icon="✓")
 
-    run_command(_work, verbose=verbose)
+    run_command(_work, verbose=verbose, command="run")

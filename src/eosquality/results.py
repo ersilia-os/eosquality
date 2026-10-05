@@ -21,16 +21,17 @@ class RunResult:
     that were not fit are absent.
 
     Training-modality columns (when training sets were fit) follow:
-    ``training_distance``, ``training_distance_raw`` (mean distance to the
-    5 nearest training molecules), ``training_n_columns``, ``in_training_any``.
+    ``training_distance``, ``training_distance_raw`` (one whole-model value:
+    Q66 across output columns of the mean distance to the 5 nearest training
+    molecules), ``in_training``.
 
     ``metadata`` has ``n_reference`` (reference modality) plus each
     component's run metadata with keys prefixed by the component name (e.g.
     ``support_k``, ``consistency_n_fp_bins``, ``training_distance_n_columns``).
 
-    ``training_details`` (training modality only) has one row per
-    (query, output column): per-column distances and the nearest training
-    molecules with their similarities and labels.
+    ``training_details`` (training modality only) has one row per query:
+    the whole-model distances and the 5 nearest training molecules over all
+    output columns, with their similarities and columns.
     """
 
     scores: pd.DataFrame

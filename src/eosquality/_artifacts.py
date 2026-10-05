@@ -20,6 +20,7 @@ from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
 from eosquality.library.identity import LIBRARY_ID
 from eosquality.scores.signal import SIGNAL_FORMULA_VERSION
+from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
@@ -246,10 +247,15 @@ def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
     if has_training:
         root = folder / TRAINING_DIR
         instance._training = load_training_state(root)
-        if (root / TrainingDistance.NAME).is_dir():
-            instance.training_distance = TrainingDistance.load(
-                root, shared=instance._shared, training=instance._training
-            )
+        for cls in (TrainingDistance, TrainingDifficulty):
+            if (root / cls.NAME).is_dir():
+                setattr(
+                    instance,
+                    cls.NAME,
+                    cls.load(
+                        root, shared=instance._shared, training=instance._training
+                    ),
+                )
     instance.is_fitted_ = True
     logger.success(
         f"Artifacts loaded from {folder} | modalities={instance.modalities_}"

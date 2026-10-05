@@ -1,24 +1,28 @@
-"""Training distance: how far is the query from each output column's training set?
+"""Training distance: how far is the query from the model's training molecules?
 
-Training mode, X only. For every output column with a training set, the raw
-distance is ``1 − mean Tanimoto similarity`` (Morgan, radius 2, 2048 bits)
-to the query's **k = 5 nearest training molecules** (Sheridan et al. 2004,
-"mean similarity to the 5 nearest neighbours"). A query that is itself a
-training molecule (same standardised SMILES: largest fragment, canonical
-isomeric) drops its own entry, so it gets its leave-one-out value and is
-flagged ``in_training``.
+Training mode, X only. One value per molecule for the whole model, built
+from the output columns' training sets without pooling them:
 
-The calibrated distance is the mid-rank CDF of the raw value against the
-column's own leave-one-out raw values (each training molecule vs its k
-nearest *other* training molecules): ~0.5 for a query as close to the
-training set as a typical training molecule, near 1 when farther than almost
-all of them. Higher is farther. There is no in/out cutoff.
+- **Per column (internal).** The raw distance is ``1 − mean Tanimoto
+  similarity`` (Morgan, radius 2, 2048 bits) to the query's **k = 5 nearest
+  training molecules** (Sheridan et al. 2004). A query that is itself a
+  training molecule (same standardised SMILES: largest fragment, canonical
+  isomeric) drops its own entry, so it gets its leave-one-out value. The
+  calibrated distance is the mid-rank CDF of the raw value against the
+  column's own leave-one-out raw values (each training molecule vs its k
+  nearest *other* training molecules): ~0.5 for a query as close as a typical
+  training molecule, near 1 when farther than almost all of them.
+- **Whole model.** ``training_distance`` and ``training_distance_raw`` are
+  the 66th percentile across columns of the calibrated and the raw values:
+  at least two-thirds of the columns are this close or closer. Calibrated
+  values are percentiles of each column's own training set, so columns of
+  very different sizes and densities combine fairly; a large training set
+  cannot hide that the query is far from a small one.
 
-The per-molecule summaries ``training_distance`` and
-``training_distance_raw`` are the 66th percentile across columns of the
-calibrated and the raw values: at least two-thirds of the columns are this
-close or closer. Per-column values and the nearest training molecules
-(keys, similarities, labels) go to ``TrainingDistanceRunResult.details``.
+Higher is farther; there is no in/out cutoff. ``in_training`` flags queries
+that are a training molecule of any column. The details table has one row
+per query with the 5 nearest training molecules over all columns (keys,
+similarities, the columns each belongs to).
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ from __future__ import annotations
 import json
 import pathlib
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,11 +37,11 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._base import ScoreComponent, read_json, require_file
-from eosquality.scores._helpers import (
-    _cdf_score,
-    _query_fp_distances,
-    _sorted_finite,
-    _standardize,
+from eosquality.scores._helpers import _cdf_score, _sorted_finite, _standardize
+from eosquality.scores._training_helpers import (
+    SUMMARY_QUANTILE,
+    _columns_summary,
+    _nearest_training,
 )
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
@@ -50,22 +53,16 @@ LOO_FILE = "loo_mean_distances.npz"
 # Nearest training neighbours averaged per (molecule, column), and reported
 # in the details table. Capped by the column's precomputed self-kNN.
 K_NEIGHBORS = 5
-# Quantile across columns for the per-molecule summary (the distance analogue
-# of the Q66 aggregate typicality and extremity use over features).
-SUMMARY_QUANTILE = 0.66
 
 DETAIL_COLUMNS = [
     "key",
-    "column",
     "distance",
     "distance_raw",
     "nn1_distance",
-    "k",
-    "n_train",
     "in_training",
     "nn_keys",
     "nn_similarities",
-    "nn_y",
+    "nn_columns",
 ]
 
 
@@ -75,9 +72,8 @@ class TrainingDistanceRunResult:
 
     score: pd.Series  # (n_query,) calibrated summary across columns, in (0, 1]
     score_raw: pd.Series  # (n_query,) raw mean-k distance summary, in [0, 1]
-    n_columns: pd.Series  # (n_query,) columns contributing to the summary
-    in_training_any: pd.Series  # (n_query,) query is a training molecule of a column
-    details: pd.DataFrame  # one row per (query, column)
+    in_training: pd.Series  # (n_query,) query is a training molecule of a column
+    details: pd.DataFrame  # one row per query
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -136,7 +132,7 @@ class TrainingDistance(ScoreComponent):
         Returns
         -------
         TrainingDistanceRunResult
-            Calibrated and raw summaries, per-column details and metadata.
+            Whole-model calibrated and raw distances, details and metadata.
         """
         self._check_fitted()
         assert self._training is not None and self._k is not None
@@ -155,38 +151,24 @@ class TrainingDistance(ScoreComponent):
         raw = np.full((len(query), len(names)), np.nan)
         calibrated = np.full_like(raw, np.nan)
         in_train = np.zeros(raw.shape, dtype=bool)
-        details = []
-        for j, name in enumerate(names):
-            dist, nn_idx, hit = _nearest_training(
-                self._training.indices[name], [std[i] for i in rows], self._k[name]
-            )
-            raw[rows, j] = dist.mean(axis=1)
-            calibrated[rows, j] = _cdf_score(
-                raw[rows, j], self._loo[name], higher_is_higher=True
-            )
-            in_train[rows, j] = hit
-            details.append(
-                _details_rows(
-                    [keys[i] for i in rows],
-                    self._training.columns[name],
-                    calibrated[rows, j],
-                    dist,
-                    nn_idx,
-                    hit,
-                )
-            )
+        raw[rows], calibrated[rows], in_train[rows], neighbours = self._per_column(
+            [std[i] for i in rows]
+        )
+        score = _columns_summary(calibrated)
+        score_raw = _columns_summary(raw)
+        details = _details(
+            [keys[i] for i in rows],
+            score[rows],
+            score_raw[rows],
+            in_train[rows].any(axis=1),
+            [self._training.columns[n] for n in names],
+            neighbours,
+        )
         return TrainingDistanceRunResult(
-            score=pd.Series(_summary(calibrated), index=idx, name="training_distance"),
-            score_raw=pd.Series(_summary(raw), index=idx, name="training_distance_raw"),
-            n_columns=pd.Series(
-                np.isfinite(raw).sum(axis=1), index=idx, name="training_n_columns"
-            ),
-            in_training_any=pd.Series(
-                in_train.any(axis=1), index=idx, name="in_training_any"
-            ),
-            details=pd.concat(details, ignore_index=True)
-            if details
-            else pd.DataFrame(columns=DETAIL_COLUMNS),
+            score=pd.Series(score, index=idx, name="training_distance"),
+            score_raw=pd.Series(score_raw, index=idx, name="training_distance_raw"),
+            in_training=pd.Series(in_train.any(axis=1), index=idx, name="in_training"),
+            details=details,
             metadata={
                 "n_columns": len(names),
                 "columns": names,
@@ -194,6 +176,32 @@ class TrainingDistance(ScoreComponent):
                 "summary_quantile": SUMMARY_QUANTILE,
             },
         )
+
+    def _per_column(self, smiles: list[str]):
+        """Per-column raw and calibrated distances for standardised SMILES.
+
+        Returns ``(raw (n, n_columns), calibrated (n, n_columns),
+        in_training (n, n_columns), neighbours)``, where ``neighbours`` holds
+        one ``(distances (n, k), training indices (n, k))`` pair per column.
+        """
+        assert self._training is not None and self._k is not None
+        assert self._loo is not None
+        names = self._training.column_names
+        raw = np.full((len(smiles), len(names)), np.nan)
+        calibrated = np.full_like(raw, np.nan)
+        in_train = np.zeros(raw.shape, dtype=bool)
+        neighbours = []
+        for j, name in enumerate(names):
+            dist, nn_idx, hit = _nearest_training(
+                self._training.indices[name], smiles, self._k[name]
+            )
+            raw[:, j] = dist.mean(axis=1)
+            calibrated[:, j] = _cdf_score(
+                raw[:, j], self._loo[name], higher_is_higher=True
+            )
+            in_train[:, j] = hit
+            neighbours.append((dist, nn_idx))
+        return raw, calibrated, in_train, neighbours
 
     def _save_own(self, folder: pathlib.Path) -> None:
         assert self._columns is not None and self._k is not None
@@ -242,55 +250,39 @@ class TrainingDistance(ScoreComponent):
         return self._training
 
 
-def _summary(values: np.ndarray) -> np.ndarray:
-    """NaN-ignoring ``SUMMARY_QUANTILE`` across columns (NaN for all-NaN rows)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN rows
-        return np.nanquantile(values, SUMMARY_QUANTILE, axis=1)
+def _details(keys, score, score_raw, in_training, columns, neighbours):
+    """One details row per query: whole-model distances and merged neighbours.
 
-
-def _details_rows(keys, column, calibrated, dist, nn_idx, hit) -> pd.DataFrame:
-    """One details row per query for one training column."""
-    ids = column.ids
+    Each column's nearest training molecules are pooled, deduplicated by
+    standardised SMILES (a molecule in several training sets keeps the key of
+    its first column and lists every column it belongs to) and the
+    ``K_NEIGHBORS`` closest are kept.
+    """
+    nn_keys, nn_sims, nn_cols, nn1 = [], [], [], []
+    for r in range(len(keys)):
+        best: dict[str, tuple[float, str, list[str]]] = {}
+        for column, (dist, nn_idx) in zip(columns, neighbours, strict=True):
+            for d, t in zip(dist[r], nn_idx[r], strict=True):
+                smi = column.smiles[t]
+                if smi in best:
+                    best[smi][2].append(column.name)
+                else:
+                    best[smi] = (float(d), column.ids[t], [column.name])
+        top = sorted(best.values(), key=lambda v: v[0])[:K_NEIGHBORS]
+        nn1.append(top[0][0] if top else np.nan)
+        nn_keys.append("|".join(v[1] for v in top))
+        nn_sims.append("|".join(f"{1 - v[0]:.3f}" for v in top))
+        nn_cols.append("|".join(";".join(v[2]) for v in top))
     return pd.DataFrame(
         {
             "key": keys,
-            "column": column.name,
-            "distance": calibrated,
-            "distance_raw": dist.mean(axis=1) if len(dist) else [],
-            "nn1_distance": dist[:, 0] if len(dist) else [],
-            "k": dist.shape[1],
-            "n_train": column.n,
-            "in_training": hit,
-            "nn_keys": ["|".join(ids[t] for t in row) for row in nn_idx],
-            "nn_similarities": ["|".join(f"{1 - v:.3f}" for v in row) for row in dist],
-            "nn_y": [
-                "|".join(_fmt(column.y[t]) for t in row) if column.y is not None else ""
-                for row in nn_idx
-            ],
+            "distance": score,
+            "distance_raw": score_raw,
+            "nn1_distance": nn1,
+            "in_training": in_training,
+            "nn_keys": nn_keys,
+            "nn_similarities": nn_sims,
+            "nn_columns": nn_cols,
         },
         columns=DETAIL_COLUMNS,
     )
-
-
-def _nearest_training(vi, query_smiles: list[str], k: int):
-    """Top-k training neighbours per query (closest first), self excluded.
-
-    A query that is a training molecule drops its own entry, so it is scored
-    like the leave-one-out calibration table. Returns
-    ``(distances (n, k), indices (n, k), in_training (n,))``, where
-    ``in_training`` marks queries whose standardised SMILES is a training
-    molecule of this column.
-    """
-    if not query_smiles:
-        return np.zeros((0, k)), np.zeros((0, k), dtype=np.int64), np.zeros(0, bool)
-    dist, nn = _query_fp_distances(pd.DataFrame({"input": query_smiles}), vi, k)
-    members = set(vi.smiles)
-    hit = np.array([smi in members for smi in query_smiles])
-    return dist, nn, hit
-
-
-def _fmt(v: float) -> str:
-    if not np.isfinite(v):
-        return ""
-    return str(int(v)) if float(v).is_integer() else f"{v:.4g}"

@@ -110,20 +110,68 @@ Each output column of a model may have its own training set: SMILES, plus option
 
 ### Training distance
 
-Training distance asks how far the query is from the molecules each output column was trained on. It is the classic kNN applicability domain: the mean similarity to the 5 nearest training molecules is among the best structural predictors of prediction error (Sheridan et al., *J. Chem. Inf. Comput. Sci.* 2004). Following the kNN domain of Tropsha and the OECD principle that a domain is judged against the training set itself, the query is compared with how close training molecules are to each other. There is no in/out cutoff: both the raw distance and its calibrated percentile are reported.
-- **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**.
-  - A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value. It is flagged `in_training`.
-  - Values near 1 mean the training set holds nothing similar. Raw values mean the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry.
-- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules.
-  - About 0.5 means the query is as close to the training set as a typical training molecule; near 1 means it is farther than almost all of them. Higher is farther.
-  - The calibrated value is relative to how dense the training set is, so a diverse training set makes the same raw distance look more typical. Read it together with the raw value.
-- **Summary across columns:** `training_distance` (calibrated) and `training_distance_raw` in the scores are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
-- **Column count:** `training_n_columns` counts the columns that contributed.
+Training distance asks how far the query is from the molecules the model was trained on. It gives **one value per molecule for the whole model**. It is the classic kNN applicability domain: the mean similarity to the 5 nearest training molecules is among the best structural predictors of prediction error (Sheridan et al., *J. Chem. Inf. Comput. Sci.* 2004). Following the kNN domain of Tropsha and the OECD principle that a domain is judged against the training set itself, the query is compared with how close training molecules are to each other. There is no in/out cutoff: both a raw distance and a calibrated percentile are reported.
 
-Per-column distances (calibrated, raw and nearest-neighbour) and the 5 nearest training molecules (keys, similarities, labels) are reported in `training_details` for inspection.
+The value is built from each output column's own training set; the sets are **not pooled**:
+- **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**. A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value.
+- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules. About 0.5 means as close as a typical training molecule; near 1 means farther than almost all of them.
+- **Whole model:** `training_distance` (calibrated) and `training_distance_raw` are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
+
+Why not pool the training sets into one? Pooled, a large training set could hide that the query is far from a small one. Each calibrated per-column value is a percentile of that column's own training set, so columns of very different sizes and densities combine fairly.
+
+How to read the two values: higher is farther for both. The raw value means the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry. The calibrated value is relative to how dense the training sets are, so a diverse training set makes the same raw distance look more typical. Read them together.
+
+`in_training` flags a query that is a training molecule of any column. `training_details` lists, per query, the 5 nearest training molecules over all columns (keys, similarities, and the columns each belongs to).
+
+### Training difficulty
+
+Training difficulty asks how hard the query is to predict, judging by the training data. It needs labels `y` and gives **one value per molecule for the whole model**. Distance measures novelty; difficulty also catches regions that are close to the training set but hard to learn: noisy assays, activity cliffs, chemotypes the labels disagree on.
+
+It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own:
+1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
+2. **Inputs**, grouped as in UNIQUE:
+   - **Base UQ methods:**
+     - kNN distance: the mean Tanimoto distance to the 5 nearest *other* training molecules.
+     - Three kernel density estimates on the MACCS keys: Gaussian/Euclidean, Gaussian/Manhattan and exponential/Manhattan. Each bandwidth is chosen by 5-fold grid search over {0.1, 0.5, 1}.
+     - Ensemble variance: across the surrogate's trees.
+     - For binary labels, the top-1 class probability `max(p, 1 − p)`.
+   - **Transformed UQ methods:**
+     - **DiffkNN** on the prediction and on the variance: `|v − mean(v over the 5 nearest training molecules)|`, as UNIQUE defines it.
+     - Two eosquality additions that use labels, which UNIQUE does not have: the similarity-weighted out-of-fold error of those neighbours, and the spread of their labels.
+   - **Data features:** the 166 MACCS keys.
+   - **The prediction** `ŷ`.
+3. **Error model.** As in UNIQUE, a second random forest learning inputs → residual is fitted on three feature sets:
+   - data features + base UQ + prediction;
+   - base UQ + prediction;
+   - transformed UQ + prediction.
+
+   Each gets out-of-fold predictions on the same folds, and the one whose predictions correlate best (Spearman) with the true residuals is kept. Its out-of-fold predictions give the calibration table, and its Spearman value is the **honesty check**: 0 means no better than random.
+
+For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `training_difficulty` is the **66th percentile** across labelled columns, as for distance.
+
+How to read it:
+- It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
+- It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
+- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`, and `training_difficulty_variant_spearman` for all three feature sets) and in the fit log before trusting it. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+
+Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
+
+The surrogate, densities and error model are saved with joblib (pickle), so only load artifacts from a trusted source. The scikit-learn version is recorded, and loading with another version is refused (refit).
+
+**Differences from UNIQUE.** Some are forced by the black-box setting, the rest are choices:
+- **Errors come from a surrogate.** UNIQUE uses the real model's predictions. Ersilia models are black boxes, so we use a surrogate.
+- **Training errors are all out-of-fold.** UNIQUE trains its error model on in-sample TRAIN errors plus out-of-sample CALIBRATION errors. Here every error is out-of-fold.
+- **Training molecules are left out of their own neighbours and kernel.** UNIQUE counts a training molecule as its own nearest neighbour.
+- **Densities are summed exactly.** They are computed in log space; scikit-learn's `score_samples` approximates densities far in the tails. For large training sets, the bandwidth grid search uses at most 2,000 molecules and the densities are built on at most 5,000.
+- **Variant choice.** The feature set is chosen per column by out-of-fold Spearman. UNIQUE picks its best method on a held-out test split, with bootstrap and Wilcoxon tests.
+- **Output.** We report a percentile combined across columns. UNIQUE reports raw predicted errors for one endpoint.
+- **Not included:**
+  - distances converted to variances and summed (UNIQUE's SumOfVariances), which needs a separate calibration set;
+  - LASSO error models;
+  - L2 and signed errors;
+  - input standardisation, which doesn't matter for random forests.
+- **Random-forest settings differ:** 200 trees and `min_samples_leaf=5`, against 50 trees and `max_depth=10` in UNIQUE's examples.
 
 ### Planned
 
-These planned training scores add information beyond the domain:
-- **Training reliability** (needs `y`): how smooth the training labels are around the query.
-- **Training fidelity** (needs `y` plus the model's predictions on its training molecules): the model's local error against those labels.
+- **Conformal intervals** (needs labelled molecules the model did not train on): coverage-guaranteed error intervals.

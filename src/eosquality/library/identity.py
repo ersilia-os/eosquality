@@ -4,9 +4,9 @@ The library is **not** bundled in the wheel and is **not** auto-downloaded.
 Resolution is local-only: env var override → repo ``data/indices/`` →
 ``~/.eosquality/indices/`` user cache. If none of these exist,
 :func:`reference_library_path` raises ``FileNotFoundError`` and asks the user
-to run ``eosquality download`` (which writes to the user cache). The
+to run ``eosquality setup`` (which writes to the user cache). The
 maintainer pushes new libraries to S3 with ``eosvc``; the runtime side only
-hits the network when the user explicitly invokes ``eosquality download``.
+hits the network when the user explicitly invokes ``eosquality setup``.
 
 One canonical name, ``ersilia_reference_library_vN``, is used everywhere:
 the content identity written into each library's ``metadata.json``
@@ -22,7 +22,7 @@ the package. Metadata-only edits (description, citation) do not bump.
 Environment variables:
 
 - ``EOSQUALITY_REFERENCE_BASE_URL``: override the S3 base URL used by
-  ``eosquality download``. Useful for staging a test bucket or for CI.
+  ``eosquality setup``. Useful for staging a test bucket or for CI.
   Must end with ``/``.
 - ``EOSQUALITY_REFERENCE_LIBRARY_PATH``: point at a pre-placed folder
   (e.g. a dev checkout's ``data/indices/ersilia_reference_library_v0/``)
@@ -172,13 +172,13 @@ def reference_library_path() -> pathlib.Path:
     2. ``./data/indices/<library_dirname>/`` relative to the current working
        directory, if present and valid (files + metadata match).
     3. ``~/.eosquality/indices/<library_dirname>/`` user cache, if present
-       and valid (populated by ``eosquality download``).
+       and valid (populated by ``eosquality setup``).
 
     Raises
     ------
     FileNotFoundError
         If none of the above are present. The error message points the user
-        at the explicit ``eosquality download`` command (or the env var, or
+        at the explicit ``eosquality setup`` command (or the env var, or
         the repo's ``data/indices/`` layout) — fit-time resolution never
         downloads automatically.
 
@@ -212,7 +212,7 @@ def reference_library_path() -> pathlib.Path:
         f"  • $EOSQUALITY_REFERENCE_LIBRARY_PATH (unset)\n"
         f"  • {cwd_candidate} (cwd)\n"
         f"  • {cache_candidate} (user cache)\n"
-        f"Run 'eosquality download' to fetch it, or set "
+        f"Run 'eosquality setup' to fetch it, or set "
         f"EOSQUALITY_REFERENCE_LIBRARY_PATH to a local checkout."
     )
 
@@ -226,13 +226,13 @@ def reference_library_csv_path() -> pathlib.Path:
     2. ``./data/libraries/<LIBRARY_ID>.csv`` relative to the current
        working directory.
     3. ``~/.eosquality/libraries/<LIBRARY_ID>.csv`` user cache (populated
-       by ``eosquality download``).
+       by ``eosquality setup``).
 
     Raises
     ------
     FileNotFoundError
         If none of the above are present. Fit-time resolution never
-        downloads automatically; use ``eosquality download`` first.
+        downloads automatically; use ``eosquality setup`` first.
 
     Returns
     -------
@@ -264,6 +264,6 @@ def reference_library_csv_path() -> pathlib.Path:
         f"  • $EOSQUALITY_REFERENCE_LIBRARY_CSV_PATH (unset)\n"
         f"  • {cwd_candidate} (cwd)\n"
         f"  • {cache_candidate} (user cache)\n"
-        f"Run 'eosquality download' to fetch it, or set "
+        f"Run 'eosquality setup' to fetch it, or set "
         f"EOSQUALITY_REFERENCE_LIBRARY_CSV_PATH to a local file."
     )
