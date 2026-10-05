@@ -153,6 +153,15 @@ What the table shows:
 
 The evaluation also reports UNIQUE's ranking metrics and Spearman on the most feature-, label- and discontinuity-shifted test molecules.
 
+The error model's hyperparameters matter little. On five of these endpoints, the mean Spearman over the three black boxes was 0.40–0.42 for every setting tried:
+- the current random forest, 200 trees with `min_samples_leaf=5`;
+- UNIQUE's example, 50 trees with `max_depth=10`;
+- 500 trees with `min_samples_leaf=10`;
+- `max_features="sqrt"`;
+- UNIQUE's LASSO.
+
+Distance alone reached 0.17.
+
 The design of `training_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
 
 To reproduce, download the MoleculeNet CSVs (`delaney-processed.csv`, `Lipophilicity.csv`, `BBBP.csv`, `SAMPL.csv`, `bace.csv` from `deepchemdata.s3-us-west-1.amazonaws.com/datasets/`) and run, for example, `python scripts/evaluate_training.py --csv Lipophilicity.csv --y-col exp`.

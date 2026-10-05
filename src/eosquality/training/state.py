@@ -36,7 +36,10 @@ SUBFOLDER = "training_sets"
 # 2: training_distance (uncalibrated) replaced training_domain.
 # 3: training_distance is the mean distance to the 5 nearest training
 #    molecules, calibrated on the leave-one-out values.
-TRAINING_FORMAT_VERSION = 3
+# 4: training_difficulty uses UNIQUE feature set (i) only (state.json carries
+#    `spearman` and `cv`, no `variant`); training-molecule queries reuse
+#    their out-of-fold inputs (arrays.npz carries `oof_error`).
+TRAINING_FORMAT_VERSION = 4
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

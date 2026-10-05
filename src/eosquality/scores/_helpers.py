@@ -49,6 +49,10 @@ def _nan_aggregate(per_feature: np.ndarray) -> np.ndarray:
     return _row_nanquantile(per_feature, AGGREGATE_QUANTILE)
 
 
+# Rows per block in _row_nanquantile.
+_QUANTILE_CHUNK = 262_144
+
+
 def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
     """Row-wise ``np.nanquantile(values, q, axis=1)`` (linear method), vectorised.
 
@@ -56,6 +60,8 @@ def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
     rows, about 100 s for the 1.35M-row reference library. Sorting each row
     (NaN last) and interpolating at ``q * (n_finite - 1)`` gives identical
     values in well under a second. All-NaN rows (and zero columns) give NaN.
+    It differs from numpy only for infinite values, which numpy turns into
+    NaN when interpolating; no caller produces them.
 
     Parameters
     ----------
@@ -69,10 +75,23 @@ def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
     numpy.ndarray
         ``(n_rows,)`` float64.
     """
-    values = np.asarray(values, dtype=np.float64)
+    values = np.asarray(values)
     n_rows = values.shape[0]
-    if values.shape[1] == 0:
+    if values.ndim != 2 or values.shape[1] == 0:
         return np.full(n_rows, np.nan)
+    # Row blocks bound the temporary copies (sorted values, NaN mask) to a few
+    # hundred MB, whatever the number of rows.
+    out = np.empty(n_rows, dtype=np.float64)
+    for start in range(0, n_rows, _QUANTILE_CHUNK):
+        stop = min(start + _QUANTILE_CHUNK, n_rows)
+        out[start:stop] = _row_nanquantile_block(values[start:stop], q)
+    return out
+
+
+def _row_nanquantile_block(values: np.ndarray, q: float) -> np.ndarray:
+    """:func:`_row_nanquantile` for one block of rows."""
+    values = values.astype(np.float64, copy=False)
+    n_rows = values.shape[0]
     ordered = np.sort(values, axis=1)  # NaN sorts last
     n_finite = np.count_nonzero(~np.isnan(values), axis=1)
     has_values = n_finite > 0

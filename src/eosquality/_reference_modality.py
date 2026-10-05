@@ -294,10 +294,14 @@ def _shared_neighbours(eq, query: pd.DataFrame, query_repr: np.ndarray, steps) -
             out["query_output_distances"] = _query_output_distances(
                 query_repr, eq._shared.ref_repr, indices, distances
             )
-        st.summary = (
-            f"median nearest similarity {float(np.median(1 - distances[:, 0])):.2f}"
-        )
+        st.summary = f"median nearest similarity {_nanmedian(1 - distances[:, 0]):.2f}"
     return out
+
+
+def _nanmedian(values: np.ndarray) -> float:
+    """Median of the finite values (NaN rows are unparsable SMILES); NaN if none."""
+    finite = values[np.isfinite(values)]
+    return float(np.median(finite)) if finite.size else float("nan")
 
 
 def validate_input_column(reference: pd.DataFrame) -> None:

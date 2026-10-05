@@ -128,6 +128,7 @@ class Logger:
         """
         if self._sink_id is not None:
             self.logger.remove(self._sink_id)
+        self._level = level
         handler = RichHandler(
             console=_console,
             rich_tracebacks=True,
@@ -139,6 +140,16 @@ class Logger:
         self._sink_id = self.logger.add(
             handler, format="{message}", level=level, filter=_terminal
         )
+
+    @property
+    def level(self) -> str:
+        """Minimum level of the terminal sink.
+
+        Returns
+        -------
+        str
+        """
+        return self._level
 
     @property
     def verbose(self) -> bool:

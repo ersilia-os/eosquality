@@ -54,7 +54,7 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
     """
     # Global output state is restored on exit, so calling the CLI in-process
     # (tests, notebooks) leaves library use silent again.
-    previous = (console.enabled(), console.active_color(), logger.verbose)
+    previous = (console.enabled(), console.active_color(), logger.verbose, logger.level)
     console.enable(True)
     console.set_active_color(console.STEP_COLORS.get(command, "cyan"))
     if verbose:
@@ -72,6 +72,7 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
         ctx.exit(1)
     finally:
         set_verbosity(previous[2])
+        logger.set_level(previous[3])
         console.enable(previous[0])
         console.set_active_color(previous[1])
 

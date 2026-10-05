@@ -150,7 +150,7 @@ For a query, the error model predicts its error, calibrated as the percentile am
 How to read it:
 - It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
 - It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
-- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: when the surrogate is right, the error `|y − p|` is almost a fixed function of its confidence, which is an input (`probability_top1`). On BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
 
 Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
 
