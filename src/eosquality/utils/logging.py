@@ -45,7 +45,13 @@ class Logger:
         self.set_level(DEFAULT_LEVEL)
 
     def set_level(self, level: str) -> None:
-        """Set the minimum level of the package's stderr sink."""
+        """Set the minimum level of the package's stderr sink.
+
+        Parameters
+        ----------
+        level : str
+            loguru level name.
+        """
         if self._sink_id is not None:
             self.logger.remove(self._sink_id)
         self._sink_id = self.logger.add(
@@ -58,12 +64,23 @@ class Logger:
 
     @property
     def verbose(self) -> bool:
+        """Whether DEBUG output and diagnostic tables are on.
+
+        Returns
+        -------
+        bool
+        """
         return self._verbose
 
     def set_verbosity(self, verbose: bool) -> None:
         """Toggle DEBUG-level output and the Rich diagnostic tables.
 
         ``verbose=False`` restores the quiet library default (WARNING).
+
+        Parameters
+        ----------
+        verbose : bool
+            Turn DEBUG output on or off.
         """
         self._verbose = verbose
         self.set_level("DEBUG" if verbose else DEFAULT_LEVEL)
@@ -73,18 +90,53 @@ class Logger:
     # ------------------------------------------------------------------
 
     def debug(self, text: str) -> None:
+        """Log a message at DEBUG level.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
         self.logger.debug(text)
 
     def info(self, text: str) -> None:
+        """Log a message at INFO level.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
         self.logger.info(text)
 
     def warning(self, text: str) -> None:
+        """Log a message at WARNING level.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
         self.logger.warning(text)
 
     def error(self, text: str) -> None:
+        """Log a message at ERROR level.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
         self.logger.error(text)
 
     def success(self, text: str) -> None:
+        """Log a message at SUCCESS level.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
         self.logger.success(text)
 
     # ------------------------------------------------------------------
@@ -92,7 +144,15 @@ class Logger:
     # ------------------------------------------------------------------
 
     def rule(self, title: str = "", style: str = "dim blue") -> None:
-        """Print a horizontal rule, optionally with a title."""
+        """Print a horizontal rule, optionally with a title.
+
+        Parameters
+        ----------
+        title : str, optional
+            Text in the middle of the rule.
+        style : str, optional
+            rich style.
+        """
         if not self._verbose:
             return
         if title:
@@ -106,7 +166,17 @@ class Logger:
         n_features: int,
         column_names: list[str],
     ) -> None:
-        """Display a summary of the reference population being fitted."""
+        """Display a summary of the reference population being fitted.
+
+        Parameters
+        ----------
+        n_samples : int
+            Reference rows.
+        n_features : int
+            Output columns.
+        column_names : list of str
+            Column names.
+        """
         if not self._verbose:
             return
         table = Table(
@@ -141,6 +211,13 @@ class Logger:
         """Display per-score reference baselines computed during fit.
 
         Only baselines that were fit (non-``None``) are shown.
+
+        Parameters
+        ----------
+        reference_support, reference_typicality, reference_extremity : float or None
+            Reference anchors (``None`` when the score was not fitted).
+        reference_consistency, reference_signal : float or None
+            Reference anchors (``None`` when the score was not fitted).
         """
         if not self._verbose:
             return
@@ -168,21 +245,20 @@ class Logger:
         table.add_column("Metric", style="cyan", no_wrap=True, min_width=22)
         table.add_column("Value", justify="right", min_width=10)
 
-        def _quality_style(v: float) -> str:
-            if v >= 0.7:
-                return "green"
-            if v >= 0.4:
-                return "yellow"
-            return "red"
-
         for name, value in rows:
-            table.add_row(name, f"[{_quality_style(value)}]{value:.4f}[/]")
+            table.add_row(name, f"{value:.4f}")
 
         self._console.print(table)
         self._console.line()
 
     def scores_summary_table(self, scores_df) -> None:
-        """Display a summary of score distributions from a run() call."""
+        """Display a summary of score distributions from a run() call.
+
+        Parameters
+        ----------
+        scores_df : pandas.DataFrame
+            Scores returned by ``run``.
+        """
         if not self._verbose:
             return
         score_cols = ["typicality", "extremity", "support", "consistency", "signal"]

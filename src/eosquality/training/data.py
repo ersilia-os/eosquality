@@ -45,14 +45,32 @@ class TrainingColumn:
 
     @property
     def n(self) -> int:
+        """Number of (unique, standardised) training molecules.
+
+        Returns
+        -------
+        int
+        """
         return len(self.smiles)
 
     @property
     def has_y(self) -> bool:
+        """Whether the training file had a ``y`` column.
+
+        Returns
+        -------
+        bool
+        """
         return self.y is not None
 
     @property
     def has_pred(self) -> bool:
+        """Whether model predictions were matched.
+
+        Returns
+        -------
+        bool
+        """
         return self.pred is not None
 
 
@@ -70,6 +88,19 @@ def load_training(
     binary labels by majority (ties → 1), other labels by median. Columns
     left with fewer than ``MIN_TRAINING_MOLECULES`` molecules are skipped.
     Returns columns in ``output_columns`` order (file-name order otherwise).
+
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        Folder with one ``<column>.csv`` per output column.
+    output_columns : list of str, optional
+        The model's output columns, when known.
+    predictions : str, pathlib.Path or pandas.DataFrame, optional
+        The model's predictions on the training molecules.
+
+    Returns
+    -------
+    dict of str to TrainingColumn
     """
     folder = pathlib.Path(folder)
     if not folder.is_dir():

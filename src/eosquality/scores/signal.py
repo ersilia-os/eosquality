@@ -313,6 +313,11 @@ class Signal(ScoreComponent):
         ----------
         query:
             DataFrame with an ``'input'`` SMILES column.
+
+        Returns
+        -------
+        SignalRunResult
+            Calibrated score, raw Gini and metadata.
         """
         self._check_fitted()
         assert self._learner is not None
@@ -416,6 +421,12 @@ class Signal(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._learner is not None
@@ -426,30 +437,59 @@ class Signal(ScoreComponent):
 
     @property
     def learner_(self) -> SignalLearner:
+        """The fitted XGBoost learner.
+
+        Returns
+        -------
+        SignalLearner
+        """
         self._check_fitted()
         assert self._learner is not None
         return self._learner
 
     @property
     def backend_(self) -> DescriptorBackend:
-        """The fitted descriptor backend (PhyschemBackend or MaccsBackend)."""
+        """The fitted descriptor backend (PhyschemBackend or MaccsBackend).
+
+        Returns
+        -------
+        PhyschemBackend or MaccsBackend
+        """
         self._check_fitted()
         assert self._backend is not None
         return self._backend
 
     @property
     def descriptor_(self) -> str:
-        """The descriptor identifier the artifact was trained with."""
+        """The descriptor identifier the artifact was trained with.
+
+        Returns
+        -------
+        str
+            ``"physchem"`` or ``"maccs"``.
+        """
         return self.backend_.name
 
     @property
     def reference_signal_(self) -> float:
+        """Mean calibrated signal of the val slice (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_signal is not None
         return self._reference_signal
 
     @property
     def reference_signal_raw_(self) -> float:
+        """Mean raw Gini of the val slice.
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_signal_raw is not None
         return self._reference_signal_raw
@@ -460,12 +500,22 @@ class Signal(ScoreComponent):
 
         Use this for offline experimentation with alternative raw-signal
         formulas without recomputing SHAP.
+
+        Returns
+        -------
+        numpy.ndarray or None
         """
         self._check_fitted()
         return self._val_shap_attributions
 
     @property
     def output_columns_(self) -> list[str]:
+        """Output columns the learner was trained on.
+
+        Returns
+        -------
+        list of str
+        """
         self._check_fitted()
         assert self._output_columns is not None
         return list(self._output_columns)

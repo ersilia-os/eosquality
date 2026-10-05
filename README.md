@@ -2,7 +2,7 @@
 
 # Quality of Ersilia predictions
 
-Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` tries to quantify, via multiple metrics, whether a given run output from Ersilia is "trustworthy". It does **not** estimate the probability that a prediction is correct.
+Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` tries to quantify, via multiple metrics, whether a given run output from Ersilia is "trustworthy". It does **not** estimate the probability that a prediction is correct. Per-column normalisation is done with [`eosframes`](https://github.com/ersilia-os/eosframes).
 
 ## Installation
 
@@ -68,8 +68,6 @@ Reference-modality scores compare a query against the model's own predictions on
 
 ## About the Ersilia Open Source Initiative
 
-The [Ersilia Open Source Initiative](https://ersilia.io) is a tech-nonprofit fueling sustainable research in the Global South. Ersilia's main asset is the [Ersilia Model Hub](https://github.com/ersilia-os/ersilia), an open-source repository of AI/ML models for drug discovery.
+The [Ersilia Open Source Initiative](https://ersilia.io) is a tech-nonprofit organization fueling sustainable research in the Global South. Ersilia's main asset is the [Ersilia Model Hub](https://github.com/ersilia-os/ersilia), an open-source repository of AI/ML models for antimicrobial drug discovery.
 
-`eosquality` is designed to score predictions produced by [Ersilia Model Hub](https://github.com/ersilia-os/ersilia) models. The library is built on [`eosframes`](https://github.com/ersilia-os/eosframes) as a per-column normalization backend.
-
-![Ersilia Logo](https://raw.githubusercontent.com/ersilia-os/eosquality/main/assets/Ersilia_Brand.png)
+![Ersilia Logo](assets/Ersilia_Brand.png)

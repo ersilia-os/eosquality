@@ -168,7 +168,21 @@ def run_reference(
     columns: dict[str, pd.Series],
     metadata: dict[str, Any],
 ) -> None:
-    """Run the reference-modality components, filling ``columns``/``metadata``."""
+    """Run the reference-modality components, filling ``columns``/``metadata``.
+
+    Parameters
+    ----------
+    eq : ErsiliaQuality
+        The fitted orchestrator.
+    query : pandas.DataFrame
+        Query predictions.
+    components : dict
+        Fitted reference components, by name, in canonical order.
+    columns : dict of str to pandas.Series
+        Output score columns; filled in place.
+    metadata : dict
+        Run metadata; filled in place.
+    """
     assert eq._shared is not None
     validate_against_schema(query, eq._shared.schema)
     t = time.perf_counter()
@@ -232,6 +246,17 @@ def run_reference(
 
 
 def emit_reference_report(eq, reference: pd.DataFrame, shared: SharedFitState) -> None:
+    """Log the reference anchors of the fitted reference scores.
+
+    Parameters
+    ----------
+    eq : ErsiliaQuality
+        The fitted orchestrator.
+    reference : pandas.DataFrame
+        The reference predictions.
+    shared : SharedFitState
+        The fitted shared state.
+    """
     logger.info(
         f"Reference: {len(reference):,} samples · {len(shared.schema.columns)} features"
     )
@@ -259,6 +284,13 @@ def emit_reference_report(eq, reference: pd.DataFrame, shared: SharedFitState) -
 
 
 def validate_input_column(reference: pd.DataFrame) -> None:
+    """Require a non-empty ``input`` SMILES column without NaN.
+
+    Parameters
+    ----------
+    reference : pandas.DataFrame
+        The reference predictions.
+    """
     if "input" not in reference.columns:
         raise SchemaError(
             "Reference DataFrame must contain an 'input' column with SMILES "
@@ -279,6 +311,13 @@ def validate_input_column(reference: pd.DataFrame) -> None:
 
 
 def check_unique_keys(reference: pd.DataFrame) -> None:
+    """Require unique values in the ``key`` column, if present.
+
+    Parameters
+    ----------
+    reference : pandas.DataFrame
+        The reference predictions.
+    """
     if "key" not in reference.columns:
         return
     keys = reference["key"].astype(str)

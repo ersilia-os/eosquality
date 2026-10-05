@@ -22,7 +22,23 @@ N_BINS = 40
 HALF_WIDTH = 0.42
 
 
+def _column(df, sets, name):
+    return [df.loc[df.query_set == s, name].to_numpy(float) for s in sets]
+
+
 def plot_violins(ax, values_by_set, colors, lo, hi):
+    """Stepped, peak-normalised histogram silhouettes, first row on top.
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw into.
+    values_by_set : list of numpy.ndarray
+        Values per row, top to bottom.
+    colors : list
+        One colour per row.
+    lo, hi : float
+        x-axis range.
+    """
     bins = np.linspace(lo, hi, N_BINS + 1)
     centers = 0.5 * (bins[:-1] + bins[1:])
     for pos, (values, color) in enumerate(zip(values_by_set, colors, strict=True), 1):
@@ -35,6 +51,7 @@ def plot_violins(ax, values_by_set, colors, lo, hi):
 
 
 def main():
+    """Command-line entry point (see the module docstring for usage)."""
     args = parse_args(__doc__)
     df = load_scores(args.scores_dir)
     if "support_log" not in df.columns:
@@ -48,12 +65,9 @@ def main():
 
     gray = stylia.ErsiliaColors().gray
 
-    def column(name):
-        return [df.loc[df.query_set == s, name].to_numpy(float) for s in sets]
-
     fig, axs = stylia.create_figure(1, 3)
     ax = axs.next()
-    plot_violins(ax, column("support_raw"), colors, 0, 1)
+    plot_violins(ax, _column(df, sets, "support_raw"), colors, 0, 1)
     for x in (0.4, 0.6, 0.8):
         ax.axvline(x, color=gray, linestyle="--")
     ax.set_yticklabels(labels)
@@ -66,14 +80,14 @@ def main():
     )
 
     ax = axs.next()
-    plot_violins(ax, column("support"), colors, 0, 1)
+    plot_violins(ax, _column(df, sets, "support"), colors, 0, 1)
     ax.set_yticklabels([])
     stylia.label(
         ax, xlabel="Support (calibrated)", ylabel="", title="Linear scale", abc="B"
     )
 
     ax = axs.next()
-    values = column("support_log")
+    values = _column(df, sets, "support_log")
     hi = float(np.ceil(np.nanmax(np.concatenate(values))))
     plot_violins(ax, values, colors, 0, hi)
     for x in (2, 3):

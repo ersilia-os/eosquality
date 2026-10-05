@@ -219,7 +219,19 @@ def _download_one(src: str, dst: pathlib.Path, progress: Progress) -> int:
 def is_library_cached_and_valid(
     library_dir: pathlib.Path, expected_library_id: str
 ) -> bool:
-    """Return True if every expected file is present and metadata matches."""
+    """Return True if every expected file is present and metadata matches.
+
+    Parameters
+    ----------
+    library_dir : pathlib.Path
+        Candidate library folder.
+    expected_library_id : str
+        Required ``library_name`` in its ``metadata.json``.
+
+    Returns
+    -------
+    bool
+    """
     if not library_dir.is_dir():
         return False
     for filename in _LIBRARY_FILES:
@@ -252,6 +264,20 @@ def ensure_single_file_downloaded(
     Atomically writes to a sibling ``.part`` path first, then renames into
     ``dest``. If ``dest`` already exists and ``force`` is False, returns it
     without touching the network.
+
+    Parameters
+    ----------
+    url : str
+        Public HTTPS URL of the file.
+    dest : pathlib.Path
+        Local destination path.
+    force : bool, optional
+        Redownload even if ``dest`` exists.
+
+    Returns
+    -------
+    pathlib.Path
+        ``dest``.
     """
     if not force and dest.is_file():
         _console.print(

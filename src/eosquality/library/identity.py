@@ -52,7 +52,12 @@ DEFAULT_REFERENCE_BASE_URL: str = (
 
 
 def library_major() -> int:
-    """Return the major version number encoded in :data:`LIBRARY_ID`."""
+    """Return the major version number encoded in :data:`LIBRARY_ID`.
+
+    Returns
+    -------
+    int
+    """
     match = _LIBRARY_ID_RE.match(LIBRARY_ID)
     if match is None:
         raise RuntimeError(
@@ -68,29 +73,53 @@ def library_dirname() -> str:
     Equal to :data:`LIBRARY_ID` — a single canonical name lines up everywhere:
     source CSV stem, ``metadata.json`` ``library_name``, local folder, cache
     path, and S3 URL segment.
+
+    Returns
+    -------
+    str
     """
     return LIBRARY_ID
 
 
 def reference_base_url() -> str:
-    """Effective base URL (env override or baked-in default), guaranteed to end with ``/``."""
+    """Effective base URL (env override or baked-in default), guaranteed to end with ``/``.
+
+    Returns
+    -------
+    str
+    """
     url = os.environ.get("EOSQUALITY_REFERENCE_BASE_URL", DEFAULT_REFERENCE_BASE_URL)
     return url if url.endswith("/") else url + "/"
 
 
 def user_cache_dir() -> pathlib.Path:
-    """Root of the local cache for downloaded library *indices* (``~/.eosquality/indices/``)."""
+    """Root of the local cache for downloaded library *indices* (``~/.eosquality/indices/``).
+
+    Returns
+    -------
+    pathlib.Path
+    """
     return pathlib.Path.home() / ".eosquality" / "indices"
 
 
 def user_library_csv_cache_dir() -> pathlib.Path:
     """Root of the local cache for downloaded library *source CSVs*
-    (``~/.eosquality/libraries/``)."""
+    (``~/.eosquality/libraries/``).
+
+    Returns
+    -------
+    pathlib.Path
+    """
     return pathlib.Path.home() / ".eosquality" / "libraries"
 
 
 def library_csv_filename() -> str:
-    """Filename for the canonical library SMILES CSV (``<LIBRARY_ID>.csv``)."""
+    """Filename for the canonical library SMILES CSV (``<LIBRARY_ID>.csv``).
+
+    Returns
+    -------
+    str
+    """
     return f"{LIBRARY_ID}.csv"
 
 
@@ -106,6 +135,10 @@ def library_csv_url() -> str:
     The base URL is shared between the two via env override
     ``EOSQUALITY_REFERENCE_BASE_URL``; we swap the trailing ``indices/`` for
     ``libraries/``.
+
+    Returns
+    -------
+    str
     """
     indices_url = reference_base_url()
     # Replace trailing "indices/" with "libraries/" to find the sibling prefix.
@@ -148,6 +181,11 @@ def reference_library_path() -> pathlib.Path:
         at the explicit ``eosquality download`` command (or the env var, or
         the repo's ``data/indices/`` layout) — fit-time resolution never
         downloads automatically.
+
+    Returns
+    -------
+    pathlib.Path
+        Folder of the canonical reference library.
     """
     override = os.environ.get("EOSQUALITY_REFERENCE_LIBRARY_PATH")
     if override:
@@ -195,6 +233,11 @@ def reference_library_csv_path() -> pathlib.Path:
     FileNotFoundError
         If none of the above are present. Fit-time resolution never
         downloads automatically; use ``eosquality download`` first.
+
+    Returns
+    -------
+    pathlib.Path
+        Path of the canonical library CSV.
     """
     override = os.environ.get("EOSQUALITY_REFERENCE_LIBRARY_CSV_PATH")
     if override:

@@ -246,22 +246,42 @@ class VectorIndex:
 
     @property
     def library_name(self) -> str:
-        """Library identifier recorded in ``metadata.json`` (``""`` if unset)."""
+        """Library identifier recorded in ``metadata.json`` (``""`` if unset).
+
+        Returns
+        -------
+        str
+        """
         return str(self._config.get("library_name", "") or "")
 
     @property
     def index_dir(self) -> pathlib.Path:
-        """Folder holding this index (and the library's descriptor files)."""
+        """Folder holding this index (and the library's descriptor files).
+
+        Returns
+        -------
+        pathlib.Path
+        """
         return pathlib.Path(self._h5_path).parent
 
     @property
     def n_reference(self) -> int:
-        """Number of molecules in the index."""
+        """Number of molecules in the index.
+
+        Returns
+        -------
+        int
+        """
         return len(self._smiles)
 
     @property
     def smiles(self) -> list[str]:
-        """Reference SMILES, in index row order."""
+        """Reference SMILES, in index row order.
+
+        Returns
+        -------
+        list of str
+        """
         return self._smiles
 
     # ------------------------------------------------------------------
@@ -309,6 +329,11 @@ class VectorIndex:
         ----------
         k:
             Number of neighbors to return. Must be ≤ max_k.
+
+        Returns
+        -------
+        numpy.ndarray
+            int32 neighbour row indices, closest first.
         """
         max_k = self._config["max_k"]
         if k > max_k:
@@ -319,7 +344,18 @@ class VectorIndex:
         return np.ascontiguousarray(self._knn_indices[:, :k])
 
     def self_knn_distances(self, k: int) -> np.ndarray:
-        """Return precomputed self-kNN Tanimoto distances, shape (n_ref, k)."""
+        """Return precomputed self-kNN Tanimoto distances, shape (n_ref, k).
+
+        Parameters
+        ----------
+        k : int
+            Number of neighbours (at most ``max_k``).
+
+        Returns
+        -------
+        numpy.ndarray
+            float32 Tanimoto distances, closest first.
+        """
         max_k = self._config["max_k"]
         if k > max_k:
             raise ValueError(f"Requested k={k} exceeds the pre-computed max_k={max_k}.")

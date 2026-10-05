@@ -17,7 +17,17 @@ _console = Console(stderr=True, highlight=False)
 
 
 def make_progress(label: str) -> Progress:
-    """Return a not-yet-started progress bar titled ``label``."""
+    """Return a not-yet-started progress bar titled ``label``.
+
+    Parameters
+    ----------
+    label : str
+        Title shown next to the bar.
+
+    Returns
+    -------
+    rich.progress.Progress
+    """
     return Progress(
         SpinnerColumn(),
         TextColumn(f"[bold cyan]{label}[/bold cyan]"),

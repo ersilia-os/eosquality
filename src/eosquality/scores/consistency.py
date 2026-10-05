@@ -305,6 +305,12 @@ class Consistency(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._knn is not None
@@ -315,25 +321,48 @@ class Consistency(ScoreComponent):
 
     @property
     def n_bins_(self) -> int:
-        """Number of FP-distance bins in the fitted calibration."""
+        """Number of FP-distance bins in the fitted calibration.
+
+        Returns
+        -------
+        int
+        """
         self._check_fitted()
         assert self._sorted_self_distances_per_bin is not None
         return len(self._sorted_self_distances_per_bin)
 
     @property
     def fp_bin_edges_(self) -> np.ndarray:
+        """FP-distance bin edges (outer ones ``±inf``).
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._fp_bin_edges is not None
         return self._fp_bin_edges
 
     @property
     def sorted_self_distances_per_bin_(self) -> list[np.ndarray]:
+        """Per bin, the sorted reference output distances (the CDF tables).
+
+        Returns
+        -------
+        list of numpy.ndarray
+        """
         self._check_fitted()
         assert self._sorted_self_distances_per_bin is not None
         return self._sorted_self_distances_per_bin
 
     @property
     def reference_consistency_(self) -> float:
+        """Mean calibrated consistency of the reference (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_consistency is not None
         return self._reference_consistency

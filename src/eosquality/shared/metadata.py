@@ -45,7 +45,18 @@ def _detect_kind(series: pd.Series) -> str:
 
 
 def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
-    """Compute ColumnCharacteristics for a single numeric column."""
+    """Compute ColumnCharacteristics for a single numeric column.
+
+    Parameters
+    ----------
+    series : pandas.Series
+        One numeric column.
+
+    Returns
+    -------
+    ColumnCharacteristics
+        Kind, sparsity and missing fraction.
+    """
     n = len(series)
     missing_fraction = float(series.isna().sum() / n) if n > 0 else 0.0
     sparsity = float((series == 0).sum() / n) if n > 0 else 0.0

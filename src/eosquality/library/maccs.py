@@ -42,7 +42,22 @@ def compute_maccs(
     n_jobs: int | None = None,
     show_progress: bool | None = None,
 ) -> np.ndarray:
-    """Compute the ``(n, 166)`` uint8 MACCS matrix, rows in input order."""
+    """Compute the ``(n, 166)`` uint8 MACCS matrix, rows in input order.
+
+    Parameters
+    ----------
+    smiles : iterable of str
+        Input SMILES.
+    n_jobs : int, optional
+        Worker processes for large inputs (default: every CPU).
+    show_progress : bool, optional
+        Show a progress bar; ``None`` shows it only for parallel runs.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, 166)`` uint8 bits; unparsable SMILES give an all-zero row.
+    """
     smiles_list = list(smiles)
     out = np.empty((len(smiles_list), N_MACCS), dtype=np.uint8)
     return map_rows(

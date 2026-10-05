@@ -25,6 +25,18 @@ ABBREV = {
 
 
 def plot_heatmap(ax, corr, labels, cmap):
+    """Draw an annotated correlation heatmap.
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw into.
+    corr : numpy.ndarray
+        Square correlation matrix.
+    labels : list of str
+        Row/column labels.
+    cmap : stylia.DivergingColormap
+        Fitted colormap.
+    """
     colors = np.asarray(cmap.transform(corr.ravel())).reshape(*corr.shape, -1)
     ax.imshow(colors)
     for (r, c), v in np.ndenumerate(corr):
@@ -35,6 +47,7 @@ def plot_heatmap(ax, corr, labels, cmap):
 
 
 def main():
+    """Command-line entry point (see the module docstring for usage)."""
     args = parse_args(__doc__)
     df = load_scores(args.scores_dir)
     models = present(MODELS, df["model"].unique())

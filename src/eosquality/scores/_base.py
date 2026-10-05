@@ -68,7 +68,18 @@ class ScoreComponent:
     # ------------------------------------------------------------------
 
     def save(self, root: str | pathlib.Path) -> pathlib.Path:
-        """Persist ``shared/`` (+ ``knn/``) and this component's subfolder."""
+        """Persist ``shared/`` (+ ``knn/``) and this component's subfolder.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            Folder to write into.
+
+        Returns
+        -------
+        pathlib.Path
+            ``root``.
+        """
         self._check_fitted()
         if self.USES_SHARED:
             assert self._shared is not None
@@ -87,6 +98,16 @@ class ScoreComponent:
 
         Used by :class:`~eosquality.quality.ErsiliaQuality`, which writes
         the shared upstream state once for all components.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            Folder to write the component subfolder into.
+
+        Returns
+        -------
+        pathlib.Path
+            ``root``.
         """
         self._check_fitted()
         folder = pathlib.Path(root) / self.NAME
@@ -115,6 +136,22 @@ class ScoreComponent:
 
         ``shared`` / ``knn`` / ``training`` may be passed in when already
         loaded (the orchestrator does this); otherwise they are read from disk.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            Folder holding the component subfolder (and ``shared/`` / ``knn/``).
+        shared : SharedFitState, optional
+            Already-loaded shared state.
+        knn : KnnFitState, optional
+            Already-loaded kNN state.
+        training : TrainingFitState, optional
+            Already-loaded training state (training-mode components).
+
+        Returns
+        -------
+        ScoreComponent
+            The loaded component.
         """
         folder = pathlib.Path(root) / cls.NAME
         if not folder.is_dir():
@@ -158,16 +195,34 @@ class ScoreComponent:
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         raise NotImplementedError
 
     @property
     def shared_(self) -> SharedFitState:
+        """The shared fit state.
+
+        Returns
+        -------
+        SharedFitState
+        """
         self._check_fitted()
         assert self._shared is not None
         return self._shared
 
     @property
     def knn_(self) -> KnnFitState:
+        """The kNN state (kNN-using components only).
+
+        Returns
+        -------
+        KnnFitState
+        """
         self._check_fitted()
         if self._knn is None:
             raise AttributeError(f"{type(self).__name__} does not use a kNN state.")
@@ -175,10 +230,22 @@ class ScoreComponent:
 
     @property
     def fit_duration_seconds_(self) -> float | None:
+        """Wall-clock fit duration.
+
+        Returns
+        -------
+        float or None
+        """
         return self._fit_duration_seconds
 
     @property
     def fit_timestamp_(self) -> str | None:
+        """UTC fit timestamp (ISO 8601).
+
+        Returns
+        -------
+        str or None
+        """
         return self._fit_timestamp
 
     def _check_fitted(self) -> None:
@@ -189,7 +256,20 @@ class ScoreComponent:
 
 
 def require_file(path: pathlib.Path, component: str) -> pathlib.Path:
-    """Raise a uniform "incomplete artifact" error when ``path`` is missing."""
+    """Raise a uniform "incomplete artifact" error when ``path`` is missing.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Required file.
+    component : str
+        Component name for the error message.
+
+    Returns
+    -------
+    pathlib.Path
+        ``path``.
+    """
     if not path.is_file():
         raise FileNotFoundError(
             f"Missing {path}. The {component} artifact is incomplete (or was "
@@ -199,6 +279,19 @@ def require_file(path: pathlib.Path, component: str) -> pathlib.Path:
 
 
 def read_json(path: pathlib.Path, component: str) -> dict[str, Any]:
-    """Read a required JSON file from a component folder."""
+    """Read a required JSON file from a component folder.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Required JSON file.
+    component : str
+        Component name for the error message.
+
+    Returns
+    -------
+    dict
+        The parsed JSON.
+    """
     with open(require_file(path, component)) as f:
         return json.load(f)

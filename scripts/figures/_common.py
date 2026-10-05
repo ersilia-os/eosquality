@@ -39,11 +39,33 @@ _FNAME_RE = re.compile(r"^scores_(.+)_1000_(eos\w+)_v1\.csv$")
 
 
 def model_label(model: str) -> str:
+    """Display label ``"<eos id> (<endpoint>)"`` of a model.
+
+    Parameters
+    ----------
+    model : str
+        EOS model id.
+
+    Returns
+    -------
+    str
+    """
     tag = MODEL_LABELS.get(model)
     return f"{model} ({tag})" if tag else model
 
 
 def parse_args(description: str) -> argparse.Namespace:
+    """Parse the common ``--scores-dir`` / ``--out-dir`` / ``--suffix`` flags.
+
+    Parameters
+    ----------
+    description : str
+        Help text of the script.
+
+    Returns
+    -------
+    argparse.Namespace
+    """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--scores-dir", type=pathlib.Path, default=DEFAULT_SCORES_DIR)
     parser.add_argument("--out-dir", type=pathlib.Path, default=DEFAULT_OUT_DIR)
@@ -52,7 +74,17 @@ def parse_args(description: str) -> argparse.Namespace:
 
 
 def load_scores(scores_dir: pathlib.Path) -> pd.DataFrame:
-    """Long table of every score CSV, tagged with ``query_set`` and ``model``."""
+    """Long table of every score CSV, tagged with ``query_set`` and ``model``.
+
+    Parameters
+    ----------
+    scores_dir : pathlib.Path
+        Folder with ``scores_<set>_1000_<eos>_v1.csv`` files.
+
+    Returns
+    -------
+    pandas.DataFrame
+    """
     frames = []
     for csv in sorted(scores_dir.glob("scores_*_v1.csv")):
         m = _FNAME_RE.match(csv.name)
@@ -67,7 +99,19 @@ def load_scores(scores_dir: pathlib.Path) -> pd.DataFrame:
 
 
 def present(values: list[str], available) -> list[str]:
-    """``values`` restricted to ``available``, plus any extras sorted."""
+    """``values`` restricted to ``available``, plus any extras sorted.
+
+    Parameters
+    ----------
+    values : list of str
+        Preferred order.
+    available : iterable of str
+        Values actually present.
+
+    Returns
+    -------
+    list of str
+    """
     available = set(available)
     ordered = [v for v in values if v in available]
     return ordered + sorted(available - set(ordered))

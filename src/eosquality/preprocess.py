@@ -47,7 +47,18 @@ class PreprocessPipeline:
     # ------------------------------------------------------------------
 
     def fit_transform(self, df: pd.DataFrame) -> np.ndarray:
-        """Fit the eosframes scaler on *df* and return the scaled feature array."""
+        """Fit the eosframes scaler on *df* and return the scaled feature array.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Reference predictions with the schema's columns.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n, n_columns)`` float64 scaled values in ``[-1, 1]`` (NaN kept).
+        """
         feature_cols = list(self._schema.column_names)
         logger.debug(
             f"Fitting normalization (eosframes) | {len(feature_cols)} column(s) | "
@@ -70,7 +81,18 @@ class PreprocessPipeline:
         return result
 
     def transform(self, df: pd.DataFrame) -> np.ndarray:
-        """Apply the fitted eosframes scaler to *df*; returns the feature array."""
+        """Apply the fitted eosframes scaler to *df*; returns the feature array.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Predictions with the schema's columns.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n, n_columns)`` float64 scaled values.
+        """
         if self._params is None:
             raise RuntimeError("PreprocessPipeline must be fitted before transform().")
         feature_cols = list(self._schema.column_names)
@@ -81,7 +103,13 @@ class PreprocessPipeline:
     # ------------------------------------------------------------------
 
     def get_state(self) -> dict:
-        """Return a serialisable state dict for persistence."""
+        """Return a serialisable state dict for persistence.
+
+        Returns
+        -------
+        dict
+            ``schema``, ``scaler_params`` and ``binary_class_freq``.
+        """
         if self._params is None:
             raise RuntimeError("PreprocessPipeline must be fitted before get_state().")
         return {
@@ -92,7 +120,18 @@ class PreprocessPipeline:
 
     @classmethod
     def from_state(cls, state: dict) -> PreprocessPipeline:
-        """Reconstruct a fitted pipeline from a persisted state dict."""
+        """Reconstruct a fitted pipeline from a persisted state dict.
+
+        Parameters
+        ----------
+        state : dict
+            A dict from :meth:`get_state`.
+
+        Returns
+        -------
+        PreprocessPipeline
+            A fitted pipeline.
+        """
         pipeline = cls(schema=state["schema"])
         pipeline._params = state["scaler_params"]
         pipeline._binary_class_freq = state["binary_class_freq"]
@@ -104,7 +143,12 @@ class PreprocessPipeline:
 
     @property
     def binary_class_freq(self) -> dict[str, float]:
-        """Per binary-column frequency of the 'high' class in the reference."""
+        """Per binary-column frequency of the 'high' class in the reference.
+
+        Returns
+        -------
+        dict of str to float
+        """
         if self._binary_class_freq is None:
             raise RuntimeError(
                 "PreprocessPipeline must be fitted before binary_class_freq."

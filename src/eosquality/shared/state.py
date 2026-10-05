@@ -49,7 +49,12 @@ class SharedFitState:
     ref_repr: np.ndarray | None = None
 
     def selected_indices(self) -> np.ndarray:
-        """Map ``selected_columns`` back to positional indices in ``schema``."""
+        """Map ``selected_columns`` back to positional indices in ``schema``.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         name_to_idx = {n: i for i, n in enumerate(self.schema.column_names)}
         return np.asarray(
             [name_to_idx[c] for c in self.selected_columns], dtype=np.int64
@@ -61,6 +66,15 @@ class SharedFitState:
         Returns ``arr`` unchanged when no reduction was applied (the
         selected set equals the full schema). Otherwise slices the trailing
         axis to the selected indices.
+
+        Parameters
+        ----------
+        arr : numpy.ndarray
+            Array whose last axis has one entry per schema column.
+
+        Returns
+        -------
+        numpy.ndarray
         """
         if len(self.selected_columns) == len(self.schema.column_names):
             return arr

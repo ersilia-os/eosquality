@@ -229,7 +229,13 @@ class SignalLearner:
     # ------------------------------------------------------------------
 
     def save(self, folder: pathlib.Path) -> None:
-        """Write ``learner.json`` + ``learner.ubj`` into ``folder``."""
+        """Write ``learner.json`` + ``learner.ubj`` into ``folder``.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The ``signal/`` folder.
+        """
         self._check_fitted()
         assert self._model is not None
         assert self._r2_val is not None
@@ -245,7 +251,17 @@ class SignalLearner:
 
     @classmethod
     def load(cls, folder: pathlib.Path) -> SignalLearner:
-        """Reconstruct from ``learner.json`` + ``learner.ubj`` in ``folder``."""
+        """Reconstruct from ``learner.json`` + ``learner.ubj`` in ``folder``.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The ``signal/`` folder.
+
+        Returns
+        -------
+        SignalLearner
+        """
         payload = read_json(folder / LEARNER_STATE_FILE, "signal")
         model = xgb.XGBRegressor()
         model.load_model(str(require_file(folder / LEARNER_MODEL_FILE, "signal")))
@@ -263,6 +279,12 @@ class SignalLearner:
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the learner is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._model is not None
             and self._best_iteration is not None
@@ -271,30 +293,60 @@ class SignalLearner:
 
     @property
     def model_(self) -> xgb.XGBRegressor:
+        """The fitted XGBoost regressor.
+
+        Returns
+        -------
+        xgboost.XGBRegressor
+        """
         self._check_fitted()
         assert self._model is not None
         return self._model
 
     @property
     def best_iteration_(self) -> int:
+        """Index of the last boosting round kept.
+
+        Returns
+        -------
+        int
+        """
         self._check_fitted()
         assert self._best_iteration is not None
         return self._best_iteration
 
     @property
     def output_columns_(self) -> list[str]:
+        """Names of the regression targets.
+
+        Returns
+        -------
+        list of str
+        """
         self._check_fitted()
         assert self._output_columns is not None
         return list(self._output_columns)
 
     @property
     def r2_val_(self) -> np.ndarray:
+        """Per-output R² on the full val slice.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._r2_val is not None
         return self._r2_val
 
     @property
     def params_(self) -> dict[str, Any]:
+        """Training hyperparameters.
+
+        Returns
+        -------
+        dict
+        """
         self._check_fitted()
         return dict(self._params or {})
 

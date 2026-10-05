@@ -141,7 +141,15 @@ def add_training(
 
 
 def write_manifest(eq, folder: pathlib.Path) -> None:
-    """Write the top-level ``manifest.json`` summary."""
+    """Write the top-level ``manifest.json`` summary.
+
+    Parameters
+    ----------
+    eq : ErsiliaQuality
+        The fitted orchestrator.
+    folder : pathlib.Path
+        Artifacts folder.
+    """
     eos_id, version = eq._model_id()
     manifest: dict[str, Any] = {
         "eos_id": eos_id,
@@ -276,6 +284,13 @@ def check_artifacts_compatibility(
     canonical library must match this install's :data:`LIBRARY_ID`; those
     fit on a custom index must record its path. The package major version
     must also match.
+
+    Parameters
+    ----------
+    shared : SharedFitState
+        Loaded shared state of the reference modality.
+    has_index_scores : bool
+        Whether any loaded reference score uses the vector index.
     """
     if not has_index_scores:
         return

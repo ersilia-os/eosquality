@@ -47,12 +47,25 @@ _check_library_matches_package_major()
 
 
 def set_verbosity(verbose: bool) -> None:
-    """Enable (DEBUG + diagnostic tables) or disable (WARNING only) log output."""
+    """Enable (DEBUG + diagnostic tables) or disable (WARNING only) log output.
+
+    Parameters
+    ----------
+    verbose : bool
+        ``True`` for DEBUG output and the diagnostic tables; ``False`` for
+        warnings only.
+    """
     _logger.set_verbosity(verbose)
 
 
 def set_log_level(level: str) -> None:
-    """Set the package log level (e.g. ``"INFO"`` to see progress messages)."""
+    """Set the package log level (e.g. ``"INFO"`` to see progress messages).
+
+    Parameters
+    ----------
+    level : str
+        A loguru level name such as ``"DEBUG"``, ``"INFO"`` or ``"WARNING"``.
+    """
     _logger.set_level(level)
 
 

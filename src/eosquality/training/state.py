@@ -53,13 +53,31 @@ class TrainingFitState:
 
     @property
     def column_names(self) -> list[str]:
+        """Output columns with a training set, in order.
+
+        Returns
+        -------
+        list of str
+        """
         return list(self.columns)
 
 
 def fit_training(
     columns: dict[str, TrainingColumn], *, eos_id: str, version: str
 ) -> TrainingFitState:
-    """Build one Morgan :class:`VectorIndex` per training column (in a temp dir)."""
+    """Build one Morgan :class:`VectorIndex` per training column (in a temp dir).
+
+    Parameters
+    ----------
+    columns : dict of str to TrainingColumn
+        Loaded training sets.
+    eos_id, version : str
+        Model id and version, stored with the training state.
+
+    Returns
+    -------
+    TrainingFitState
+    """
     workdir = tempfile.TemporaryDirectory(prefix="eosquality_training_")
     indices: dict[str, VectorIndex] = {}
     for i, (name, column) in enumerate(columns.items()):

@@ -35,6 +35,18 @@ def save_shared(state: SharedFitState, root: str | pathlib.Path) -> pathlib.Path
     - ``reference_repr.npy`` — float64 ``(n_ref, n_selected)`` matrix of
       eosframes-scaled values, projected onto ``selected_columns``. Read by
       Consistency at run time.
+
+    Parameters
+    ----------
+    state : SharedFitState
+        The shared state.
+    root : str or pathlib.Path
+        Folder to write ``shared/`` into.
+
+    Returns
+    -------
+    pathlib.Path
+        The ``shared`` folder.
     """
     folder = pathlib.Path(root) / SUBFOLDER
     folder.mkdir(parents=True, exist_ok=True)

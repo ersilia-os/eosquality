@@ -19,10 +19,11 @@ The canonical library lives under `data/indices/ersilia_reference_library_v0/` (
 ## Common Commands
 
 ```bash
-ruff check src tests scripts
-black src tests scripts
-pytest -q                       # ~12 s; builds a tiny custom library from tests/fixtures/
-bash scripts/run_all_scores.sh  # refit + score the 5 example models into output/ (hours)
+ruff check src tests scripts     # lint (org config + bugbear/pyupgrade)
+ruff format src tests scripts    # formatting: ruff format only, no black
+pre-commit install               # runs ruff-check and ruff-format on commit
+pytest -q                        # ~20 s; builds a tiny custom library from tests/fixtures/
+bash scripts/run_all_scores.sh   # refit + score the 5 example models into output/ (~30 min)
 conda run -n stylia python scripts/figures/<figure>.py   # writes docs/figures/
 ```
 
@@ -122,6 +123,14 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 3. For new shared upstream state, extend `SharedFitState` (always on, cheap) or `KnnFitState` (kNN tier).
 4. Any change to what saved files mean (formula, layout, calibration) must bump `ARTIFACT_FORMAT_VERSION` in `shared/metadata.py`.
 5. Add tests under `tests/`; the `library`, `reference` and `query` fixtures in `conftest.py` build a tiny custom library.
+
+## Code Conventions
+
+- **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used.
+- **Dependencies** are pinned to exact versions in `pyproject.toml`; bump them deliberately.
+- **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `error:` lines and exit status 1.
+- **Size limits:** modules stay under 600 lines and functions under 80; split them before they grow past that.
+- **Docstrings:** every public module, class, function and method in `src/` and `scripts/` has a NumPy-style docstring, with `Parameters` and `Returns` sections where they apply. Test functions in `tests/` are exempt from the docstring rules; pytest test names and fixtures are self-describing.
 
 ## Documentation Maintenance
 

@@ -37,7 +37,20 @@ SEED = 0
 
 
 def scaffold_split(smiles: list[str], test_frac: float = 0.2) -> np.ndarray:
-    """Boolean test mask: whole scaffold groups, random order, until ~test_frac."""
+    """Boolean test mask: whole scaffold groups, random order, until ~test_frac.
+
+    Parameters
+    ----------
+    smiles : list of str
+        Molecules to split.
+    test_frac : float, optional
+        Target fraction of molecules in the test split.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask, ``True`` for test molecules.
+    """
     scaffolds = [MurckoScaffold.MurckoScaffoldSmiles(smiles=s) for s in smiles]
     groups = pd.Series(range(len(smiles))).groupby(scaffolds).apply(list).tolist()
     rng = np.random.default_rng(SEED)
@@ -51,6 +64,18 @@ def scaffold_split(smiles: list[str], test_frac: float = 0.2) -> np.ndarray:
 
 
 def morgan(smiles: list[str]) -> np.ndarray:
+    """Morgan bit fingerprints (radius 2, 2048 bits) as a matrix.
+
+    Parameters
+    ----------
+    smiles : list of str
+        Valid SMILES.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, 2048)`` uint8.
+    """
     gen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
     return np.array(
         [gen.GetFingerprintAsNumPy(Chem.MolFromSmiles(s)) for s in smiles],
@@ -59,6 +84,22 @@ def morgan(smiles: list[str]) -> np.ndarray:
 
 
 def bootstrap(fn, *arrays, n=500):
+    """95% bootstrap interval of a statistic over paired arrays.
+
+    Parameters
+    ----------
+    fn : callable
+        Statistic of the resampled arrays.
+    *arrays : numpy.ndarray
+        Paired arrays, resampled together.
+    n : int, optional
+        Bootstrap replicates.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``[lower, upper]``.
+    """
     rng = np.random.default_rng(SEED)
     stats = []
     for _ in range(n):
@@ -71,6 +112,20 @@ def bootstrap(fn, *arrays, n=500):
 
 
 def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
+    """Run the scaffold-split method check on one training set.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        ``smiles`` and ``y`` columns.
+    name : str, optional
+        Column name used for the temporary training file.
+
+    Returns
+    -------
+    dict
+        Sizes, Spearman, AUROC (with intervals) and error by distance quartile.
+    """
     df = df.dropna(subset=["smiles", "y"]).reset_index(drop=True)
     df = df[df.smiles.map(lambda s: Chem.MolFromSmiles(s) is not None)].reset_index(
         drop=True
@@ -123,6 +178,15 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
 
 
 def report(name: str, r: dict) -> None:
+    """Print one evaluation result.
+
+    Parameters
+    ----------
+    name : str
+        Dataset name.
+    r : dict
+        Output of :func:`evaluate`.
+    """
     print(
         f"\n== {name} | n_train={r['n_train']:,} n_test={r['n_test']:,} | "
         f"{'binary' if r['binary'] else 'continuous'} y"
@@ -137,6 +201,7 @@ def report(name: str, r: dict) -> None:
 
 
 def main() -> None:
+    """Command-line entry point (see the module docstring for usage)."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
