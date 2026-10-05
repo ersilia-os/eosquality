@@ -98,3 +98,9 @@ def extract_from_path(path: str | os.PathLike) -> tuple[str, str]:
         "Rename the file to match the pattern '<eos_id>_<version>.csv' "
         "(e.g. 'eos4e40_v1.csv')."
     )
+
+
+def find_eos_id(path: str | os.PathLike) -> str | None:
+    """Return the first EOS identifier in a filename, or ``None`` if absent."""
+    m = _EOS_ID_ANYWHERE_RE.search(os.path.basename(str(path)))
+    return m.group(1) if m else None

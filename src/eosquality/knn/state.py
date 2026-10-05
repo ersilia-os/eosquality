@@ -15,17 +15,10 @@ class KnnFitState:
 
     - ``k`` — number of neighbors used.
 
-    The vector index itself is *not* persisted as a path. It is
-    resolved at run time via the canonical library resolver in
-    :mod:`eosquality.library.identity`, using
-    ``shared.metadata.library_id`` as the key. This keeps saved
-    artifacts portable across machines.
-
-    The scaled reference matrix (``ref_repr``) used to live here too,
-    but is now sourced from ``SharedFitState.ref_repr`` to avoid a
-    duplicated 100MB-scale ``.npy`` on disk. Consistency reads
-    ``shared.ref_repr`` directly when computing output-space neighbor
-    distances.
+    The vector index is not part of this state: at run time it is
+    resolved from ``shared.metadata`` (canonical library by
+    ``library_id``, or a recorded custom index path). The scaled
+    reference matrix lives in ``SharedFitState.ref_repr``.
 
     Two more fields are populated at fit time and dropped on save/load:
 

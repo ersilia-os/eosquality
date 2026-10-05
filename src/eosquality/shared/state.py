@@ -22,8 +22,8 @@ class SharedFitState:
 
     The ``splits`` field carries the train / val / test row indices produced
     by :class:`~eosquality.shared.splitter.Splitter` against ``n_samples``.
-    Scores that need a held-out slice (e.g. the future Signal score) should
-    read these directly so every consumer agrees on a single split per fit.
+    Scores that need a held-out slice (currently Signal) read these directly
+    so every consumer agrees on a single split per fit.
 
     The ``selected_columns`` field carries the post-reduction subset of
     feature column names. It is always a subset (or full copy) of
@@ -34,9 +34,9 @@ class SharedFitState:
     The ``ref_repr`` field carries the eosframes-scaled reference matrix
     projected onto ``selected_columns`` — shape ``(n_ref, n_selected)``.
     Set by :func:`fit_shared` after the scaler runs and persisted by
-    :func:`save_shared` as ``shared/reference_repr.npy`` for offline
-    inspection. ``None`` only on freshly-constructed instances that have
-    not been fit yet or loaded from a pre-feature artifact.
+    :func:`save_shared` as ``shared/reference_repr.npy``; score fits reuse
+    it instead of re-scaling the reference, and Consistency reads it at run
+    time to compute output-space neighbor distances.
     """
 
     schema: Schema

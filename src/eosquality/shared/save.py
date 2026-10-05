@@ -12,7 +12,6 @@ from eosquality.shared.splitter import Splitter
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
-
 SUBFOLDER = "shared"
 
 
@@ -32,12 +31,10 @@ def save_shared(state: SharedFitState, root: str | pathlib.Path) -> pathlib.Path
       fixed :class:`Splitter`, plus the seed and ratios for provenance.
     - ``selected_columns.json`` — names of the columns kept after the
       fit-time correlation-cluster reduction. Equals the full schema when
-      no reduction was applied; older artifacts without this file fall
-      back to the full schema at load time.
+      no reduction was applied.
     - ``reference_repr.npy`` — float64 ``(n_ref, n_selected)`` matrix of
-      eosframes-scaled values, projected onto ``selected_columns``. Saved
-      whenever ``state.ref_repr`` is populated (always true after
-      :func:`fit_shared`). Useful for offline inspection / debugging.
+      eosframes-scaled values, projected onto ``selected_columns``. Read by
+      Consistency at run time.
     """
     folder = pathlib.Path(root) / SUBFOLDER
     folder.mkdir(parents=True, exist_ok=True)

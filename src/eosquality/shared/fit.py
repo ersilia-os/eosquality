@@ -15,7 +15,6 @@ from eosquality.shared.splitter import Splitter
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
-
 DEFAULT_MAX_FEATURES = 10
 
 
@@ -25,15 +24,14 @@ def fit_shared(
     version: str,
     *,
     library_id: str = "",
+    vector_index_path: str = "",
     max_features: int | None = DEFAULT_MAX_FEATURES,
-) -> tuple[SharedFitState, np.ndarray]:
+) -> SharedFitState:
     """Compute the shared fit state from a raw reference DataFrame.
 
-    Returns ``(state, ref_repr)`` — the second value is the scaled
-    reference array (``np.ndarray`` of shape ``(n_ref, n_selected)``).
-    When ``max_features`` triggers a reduction, ``ref_repr`` is already
-    projected onto ``state.selected_columns``, so downstream index-aware
-    fits and per-score fits see the reduced view directly.
+    The scaled reference matrix is available as ``state.ref_repr``
+    (``(n_ref, n_selected)``); when ``max_features`` triggers a reduction
+    it is already projected onto ``state.selected_columns``.
 
     Parameters
     ----------
@@ -53,6 +51,7 @@ def fit_shared(
     schema = infer_schema(reference)
     metadata = compute_metadata(reference, eos_id=eos_id, version=version)
     metadata.library_id = library_id
+    metadata.vector_index_path = vector_index_path
 
     logger.reference_table(
         n_samples=len(reference),
@@ -107,4 +106,4 @@ def fit_shared(
         ref_repr=ref_repr,
         selected_columns=selected_columns,
     )
-    return state, ref_repr
+    return state

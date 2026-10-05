@@ -4,119 +4,117 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an Ersilia Python package template for developing and distributing AI/ML tools, primarily for antimicrobial drug discovery research. The template provides the scaffold for Ersilia ecosystem packages.
+`eosquality` scores Ersilia Model Hub predictions for how they compare with the same model's predictions on a fixed reference library (about 1.35M molecules). There are five calibrated scores: typicality, extremity, support, consistency and signal. The reference is the model's own behaviour, **not** ground truth. See `docs/concepts.md`.
 
 ## Setup
 
-Create a Conda environment and install in editable mode with dev dependencies:
-
 ```bash
-conda create -n my_env python=3.12
-conda activate my_env
-pip install -e ".[dev]"
+conda create -n eosquality python=3.12
+conda activate eosquality
+pip install -e ".[dev]"        # add ",viz" for the figure scripts (stylia)
 ```
+
+The canonical library lives under `data/indices/ersilia_reference_library_v0/` (gitignored, via eosvc) or `~/.eosquality/` (`eosquality download`). Library resolution looks in `./data/indices/` relative to the **current working directory**. When running from elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH`.
 
 ## Common Commands
 
 ```bash
-# Format code
-black src/
-
-# Lint
-flake8 src/
+ruff check src tests scripts
+black src tests scripts
+pytest -q                       # ~12 s; builds a tiny custom library from tests/fixtures/
+bash scripts/run_all_scores.sh  # refit + score the 5 example models into output/ (hours)
+conda run -n stylia python scripts/figures/<figure>.py   # writes docs/figures/
 ```
+
+The package is installed in editable mode. A long `run_all_scores.sh` run imports `src/` at each CLI call, so edits made while it runs leak into later models. Pin a snapshot with `PYTHONPATH=<frozen copy>/src`.
 
 ## Architecture
 
-The package is organized as **per-score components** (one class per score) sitting on top of two **shared upstream layers** (one always present, one only when an index-aware score is fit), plus a thin orchestrator and a few flat infrastructure modules.
+The package is organized as **per-score components** (one class per score) on top of two **shared upstream layers**, plus a thin orchestrator and a few flat infrastructure modules.
 
 ### Per-score components — `scores/`
 
-Each score is its own class with `.fit()` / `.run()` / `.save()` / `.load()`. They can be used standalone or composed by `ErsiliaQuality`. Save layout is per-component subfolders under one root.
+Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bookkeeping, `metadata.json` and save/load:
+- `save(root)` writes `shared/`, then `knn/` (if `USES_KNN`), then the component's own subfolder.
+- `save_component(root)` writes only the component's own subfolder.
+- `load(root, shared=None, knn=None)` reads `shared/` and `knn/` from disk unless they are passed in.
 
-- **`scores/typicality.py`** — `Typicality`. Density-based per-feature typicality from int8-quantized count LUTs. **Needs only `SharedFitState`; never touches the vector index.**
-- **`scores/extremity.py`** — `Extremity`. Position-based per-feature extremity from eosframes-scaled values. Also needs only `SharedFitState`.
-- **`scores/support.py`** — `Support`. CDF-based support score using FP-selected kNN Tanimoto distances. Needs `SharedFitState` + `KnnFitState`.
-- **`scores/consistency.py`** — `Consistency`. CDF-based output-space neighborhood-noise score, **conditioned on the FP-distance regime**. The reference is partitioned into `N_FP_BINS` quantile bins on `mean_fp_distances`; each bin gets its own sorted output-space self-distance CDF (`reference_self_distances_per_bin.npz`). At run time, each query is routed to the bin containing its own mean FP distance and scored against that bin's CDF — so "is my prediction surprising for the FP-distance regime I'm in?" replaces the previous unconditional CDF. Same dependencies as Support.
-- **`scores/signal.py`** — `Signal` (umbrella) + `SignalLearner`. **Provisional, opt-in:** not in `DEFAULT_SCORES`; callers must request it explicitly (e.g. `scores=DEFAULT_SCORES + ("signal",)`). Validated via `ALL_SCORES`. SHAP-attribution Gini score: fits one XGBoost regressor on `X = <chosen descriptor>` → `Y =` eosframes-scaled model outputs projected onto `shared.selected_columns`. The descriptor is chosen at fit time via `Signal.fit(..., descriptor=...)` (or CLI `--signal-descriptor`): `physchem` (default — 217 RDKit physicochemical descriptors, loaded from precomputed `physchem_scaled.npy` in the library folder) or `maccs` (167-bit RDKit MACCS structural fingerprint, computed on the fly via `MACCSkeys.GenMACCSKeys`). Backends live in `scores/_descriptors.py` (`PhyschemBackend`, `MaccsBackend`) and expose the same `compute_reference_subset(reference, indices)` / `query_matrix(smiles_list)` interface; `Signal` just plugs one in. The chosen descriptor is recorded in `umbrella.json` and recovered at load time — there is no run-time override. At run time, per-query `|SHAP|` attributions are reduced to the **Gini coefficient** of the per-feature attribution distribution (high → focused on a few features; low → scattered uniformly), calibrated through the reference val slice's own Gini distribution. The raw-score formula is tagged via `SIGNAL_FORMULA_VERSION = "gini_v2"` in `umbrella.json` (v2 introduced the required `descriptor` field); legacy artifacts fail load with a clear "refit" message. The full `(n_val, n_features)` `|SHAP|` matrix is persisted as `signal/val_shap_attributions.npy` so alternative raw-score formulas can be prototyped offline without recomputing SHAP. **Needs `SharedFitState` and the canonical vector-index folder** (the physchem backend reads the pre-computed descriptors from there; the MACCS backend accepts the index for symmetry but doesn't read from disk) **but not `KnnFitState`** — joins the index-aware set without joining the kNN-using set. Uses `shared.splits` (train/val) at fit time. Early-stopping eval is sampled to `EARLY_STOP_VAL_MAX = 5000` rows; the full val slice is still used for the reported `r2_val` and the calibration aggregates.
-- **`scores/_descriptors.py`** — feature backends for the Signal score (`PhyschemBackend`, `MaccsBackend`, `make_backend`, `load_backend`). Each backend hides "where reference values come from" (precomputed library file vs on-the-fly RDKit), "what query-side computation looks like", and "what state has to be persisted in `signal/`" behind a uniform interface so `Signal` is descriptor-agnostic.
-- **`scores/_helpers.py`** — private module hosting cross-score helpers (`_make_pipeline`, `_make_query_repr`, `_resolve_shared_and_knn`, `_resolve_vector_index`, `_query_fp_distances`, `_query_output_distances`, `_component_metadata`, `_cdf_score`, `_score_from_aggregates`). `_cdf_score(values, sorted_self, n_reference, *, higher_is_higher)` is the single source of truth for every CDF-calibrated score; `_score_from_aggregates` is a `higher_is_higher=True` wrapper used by typicality / extremity / signal, and `Support._support_from_distances` / `Consistency._consistency_from_distances_binned` are `higher_is_higher=False` wrappers used by the distance-based scores. Score classes import from here so no single score "owns" a shared helper.
+Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
+
+- **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
+- **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
+- **`scores/support.py`** — `Support`. The raw value is the Tanimoto similarity of the **nearest library analogue** (`support_raw`). It is calibrated against the library's own nearest-other-molecule similarities (`vi.self_knn_distances(1)`). Also emits `support_log = −log10(support)`. Needs `SharedFitState` + `KnnFitState`.
+- **`scores/_binning.py`** — conditional (binned) CDF calibration used by Consistency: `quantile_bin_edges` (merges ties and small bins), `assign_bins`, `partition_and_sort`, `binned_cdf_score`, and edge/npz save-load helpers.
+- **`scores/consistency.py`** — `Consistency`. Output-space L1 distance to the k FP neighbours, calibrated **per FP-distance bin**. The bins start as up to `N_FP_BINS = 10` quantile bins on `mean_fp_distances`. Duplicate edges are merged, and bins smaller than `min(1000, n/20)` are merged into a neighbour. `n_bins_` is the number of bins actually used.
+- **`scores/signal.py`** — `Signal` + `SignalLearner`. **Provisional, opt-in** (not in `DEFAULT_SCORES`).
+  - **Model.** One XGBoost regressor from a descriptor (`physchem` default, or `maccs`) to the scaled, selected outputs.
+  - **Training data.** At most `max_train_samples` rows of `shared.splits.train_indices` (local subset; the shared split is never modified). Early stopping uses `EARLY_STOP_VAL_MAX = 5000` val rows.
+  - **Score.** The per-query Gini of `|SHAP|`, calibrated on the full val slice. `SIGNAL_FORMULA_VERSION = "gini_v2"`.
+  - **State.** The descriptor is recorded in `umbrella.json`, with no run-time override. Needs the index folder for the descriptor matrices, but not `KnnFitState`.
+- **`scores/_descriptors.py`** — `PhyschemBackend` and `MaccsBackend`, which share one interface (`compute_reference_subset`, `query_matrix`, `save_state`, `from_library`, `load_state`).
+  - Reference rows are gathered from the library's memory-mapped `physchem_scaled.npy` / `maccs.npy`.
+  - Query rows are computed with the same `library/physchem.py` / `library/maccs.py` functions the build used.
+  - Physchem checks that RDKit's descriptor list matches the library's.
+- **`scores/_helpers.py`** — cross-score helpers:
+  - **Calibration.** `_cdf_score` is the single CDF implementation (mid-rank, NaN passes through, `n` comes from the array). `_score_from_aggregates` is its higher-is-higher wrapper. `_sorted_finite` builds a CDF table from finite values. `_nan_aggregate` is the NaN-ignoring Q66 shared by typicality and extremity.
+  - **Preprocessing.** `_make_pipeline`, `_make_query_repr`, and `_reference_repr`, which reuses `shared.ref_repr` when it is row-aligned with the reference.
+  - **State resolution.** `_resolve_shared`, `_resolve_shared_and_knn`, `_resolve_vector_index` and `_custom_index_path`.
+  - **Distances.** `_query_fp_distances` (top-(k+1), dropping the neighbour that is the query molecule itself) and `_query_output_distances` (chunked, NaN-aware L1).
 
 ### Shared upstream layers
 
-- **`shared/`** — `SharedFitState` (schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, `ref_repr`) + `fit_shared` / `save_shared` / `load_shared` + the `metadata.py` module that defines `FitMetadata` / `compute_metadata` + `splitter.py` (`Splitter` + `Split` — fixed 80/10/10 deterministic split of the reference, seed=0, used by fit-time diagnostics that need a held-out slice) + `feature_selection.py` (correlation-cluster medoid reduction to a configurable `max_features` cap). The post-reduction scaled reference matrix lives once in `SharedFitState.ref_repr` and is persisted as `shared/reference_repr.npy`; Consistency reads it from here at run time. Persisted under `<root>/shared/`. Required by every score.
-- **`knn/`** — `KnnFitState` (just `k`; with fit-time-only `mean_fp_distances` + `reference_knn_indices`) + `fit_knn` / `save_knn` / `load_knn`. Persisted under `<root>/knn/` as just `state.json` — `ref_repr` is no longer carried here, it lives in `shared/`. `fit_knn` only reads the precomputed FP self-kNN from the vector index — no neighbor search and no output-space arithmetic. Consistency then computes its own output-space means inside `Consistency.fit`, so a Support-only fit pays nothing for output-space distances. The vector-index path is **not** persisted; at run time it is resolved by `shared.metadata.library_id` via `library.identity.reference_library_path()` so saved artifacts are portable.
+- **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
+  - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, and `ref_repr` (the scaled, feature-selected reference matrix, read by Consistency at run time).
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 4). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **`splitter.py`.** Fixed 80/10/10 split with seed 0.
+  - **`feature_selection.py`.** Correlation-cluster medoids, capped at `max_features`.
+- **`knn/`** — `KnnFitState` holds `k`, plus the fit-time-only `mean_fp_distances` and `reference_knn_indices`. `fit_knn` slices the precomputed self-kNN from the index. Only `{"k": …}` is persisted.
 
 ### Orchestrator + flat infrastructure modules
 
-- **`quality.py`** — `ErsiliaQuality`. Thin orchestrator: fits shared + knn once, then each requested score on top. `fit(..., scores=[...])` selects components — pass `scores=["typicality"]` to skip the vector index entirely. `.save()` writes a top-level `manifest.json` + `shared/` + (optionally) `knn/` + each score's subfolder; `.load()` discovers which subfolders are present and reconstructs accordingly.
-- **`vectorindex.py`** — flat module. Morgan FP kNN backend (`.build` for the library, `.load`/`.query`/`.self_knn_indices` for `knn/` fit and run).
-- **`preprocess.py`** — flat module. `PreprocessPipeline`, a thin wrapper around `eosframes.fit`/`transform`. Also computes `binary_class_freq` at fit time so the persisted state stays self-contained.
-- **`schema/`** — `Schema`/`ColumnSpec` dataclasses and column inference / validation.
-- **`library/`** — *maintenance-only, model-independent.* `identity.py` resolves the canonical library by name (env override → repo `data/indices/` → `~/.eosquality/` cache → S3); `download.py` does the S3 fetch. The canonical index ships via `data/indices/` and S3.
-- **`cli/`** — unified CLI package. `cli/__init__.py` is the dispatcher (entry point `eosquality.cli:main`). One subcommand handler per module: `cli/build.py` (`index`), `cli/download.py` (`download`), `cli/fit.py` (`fit`), `cli/run.py` (`run`). Each exports a `register_subparsers` function.
-- **`config.py`**, **`exceptions.py`**, **`utils/`** — config dataclasses, custom exceptions, and helpers (logging, stats, identifiers, arrays).
+- **`quality.py`** — `ErsiliaQuality`.
+  - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `_SCORE_ORDER`.
+  - **`run`.** Validates and scales the query once, runs the FP kNN once, and returns `RunResult(scores, metadata)`. Score columns come in `name, name_raw` pairs, plus `support_log`; metadata keys are prefixed `<component>_`.
+  - **`save`.** Writes `shared/` and `knn/` once, then `save_component` for each score, plus `manifest.json`.
+  - **`load`.** Reads `shared/` and `knn/` once and passes them into each component's `load`.
+- **`vectorindex.py`** — `VectorIndex`, the Morgan/FPSim2 kNN index.
+  - **API.** `build`, `load` (memory-mapped kNN arrays), `query`, `self_knn_indices` / `self_knn_distances`, and the properties `library_name`, `index_dir`, `smiles`, `n_reference`.
+  - **Resume.** `build` resumes only when the SMILES digest and parameters match.
+  - **Single-threaded queries.** FPSim2 queries run with `n_workers=1` on purpose, because the order of tied neighbours is unstable with more threads.
+- **`basic_descriptors.py`** — `BasicDescriptors.build_physchem` / `build_maccs`, used by `eosquality build`.
+- **`preprocess.py`** — `PreprocessPipeline`, a thin wrapper around `eosframes.fit` / `transform`.
+- **`schema/`** — `Schema` / `ColumnSpec` and column inference / validation.
+- **`library/`** — library identity and the descriptor builders.
+  - `identity.py` resolves the canonical library locally: env override → `./data/indices/` → `~/.eosquality/`. It never touches the network.
+  - `download.py` is used only by `eosquality download`.
+  - `physchem.py` / `maccs.py` contain the descriptor functions shared by build and query.
+- **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`, which sets the INFO log level. Subcommands: `build`, `download`, `fit` (with `--vector-index`), `run`.
+- **`utils/`**
+  - `logging.py`: a loguru logger bound with `extra["eosquality"]` and a filtered sink. Quiet (WARNING) as a library, INFO in the CLI, DEBUG with `set_verbosity(True)`.
+  - `progress.py`: rich progress bars.
+  - `parallel.py`: `map_rows`, serial below 5,000 items, otherwise a process pool.
+  - `identifiers.py`: EOS id / version parsing.
+- **`config.py`**, **`exceptions.py`** — `ErsiliaQualityConfig(neighbors=NeighborConfig(k))`. Exceptions: `SchemaError`, `NotFittedError`, `IncompatibleArtifactsError`, and its subclass `ArtifactVersionError`.
 
 ### Save layout
 
-```
-<root>/
-  manifest.json              # informational summary written by ErsiliaQuality.save
-  shared/                    # always present
-    schema.json
-    scaler.json
-    binary_class_freq.json
-    metadata.json
-    reference_ids.json       # JSON list (was joblib)
-    splits.json              # fixed 80/10/10 train/val/test indices (seed=0)
-    selected_columns.json    # output columns kept after correlation-cluster reduction
-    reference_repr.npy       # (n_ref, n_selected) eosframes-scaled reference matrix
-  knn/                       # iff any of support / consistency was fit
-    state.json               # {"k": int} — index path resolved by library_id; ref_repr is read from shared/
-  typicality/                # iff typicality was fit
-    state.json               # reference_typicality baseline + per-column count LUTs
-    reference_self_aggregates.npy   # sorted reference Q66 aggregates for CDF lookup
-    metadata.json
-  extremity/                 # iff extremity was fit
-    state.json               # reference_extremity baseline
-    reference_self_aggregates.npy   # sorted reference Q66 aggregates for CDF lookup
-    metadata.json
-  support/
-    state.json               # reference_support baseline
-    reference_self_distances.npy    # sorted reference mean-FP-distance CDF
-    metadata.json
-  consistency/
-    state.json               # reference_consistency baseline + fp_bin_edges
-    reference_self_distances_per_bin.npz   # one sorted CDF per FP-distance bin
-    metadata.json
-  signal/                    # iff signal was fit
-    learner.json             # XGBoost best_iteration, r2_val (full val slice), params
-    learner.ubj              # XGBoost model (binary, on the chosen descriptor)
-    physchem_scaler.json     # ONLY for descriptor=physchem: per-descriptor
-                             # scaler params; lets query-side physchem be
-                             # computed without re-resolving the library
-                             # (absent for descriptor=maccs)
-    umbrella.json            # formula_version, descriptor (physchem|maccs),
-                             # reference_signal, sorted_self_aggregates,
-                             # output_columns
-    val_shap_attributions.npy # (n_val, n_features) float32 |SHAP| matrix on
-                             # val slice; provisional, for offline formula iteration
-    metadata.json            # component bookkeeping (timestamp, duration)
-```
-
-Each score class' `save(root)` writes `<root>/shared/` + (if relevant) `<root>/knn/` + its own subfolder. Each `load(root)` reads the same. `ErsiliaQuality.load(root)` discovers all present subfolders and reconstructs whichever components are present. The top-level `manifest.json` is informational only — the loader does not consult it.
-
-Per-component `metadata.json` files carry only component-specific bookkeeping (`component`, `fit_timestamp`, `fit_duration_seconds`, `k`); shared dataset information (`n_samples`, `n_features`, `eosquality_version`, `library_id`) lives once in `shared/metadata.json`.
+See `docs/diagram.md`. Each component's `metadata.json` carries only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`. Dataset information lives once, in `shared/metadata.json`. `manifest.json` is informational, and the loader does not read it.
 
 ### When adding new functionality
 
 1. Decide whether it's a **score component**, **shared upstream state**, or **infrastructure**.
-2. New score → add a class under `scores/<name>.py` modeled on `Typicality` (no VI) or `Support` (VI-aware), and wire it into `ErsiliaQuality.fit` / `run` / `save` / `load` + the `DEFAULT_SCORES` tuple.
-3. New shared upstream → extend `SharedFitState` (always-on, cheap) or `KnnFitState` (kNN-tier).
+2. For a new score, subclass `ScoreComponent` under `scores/<name>.py`, modelled on `Typicality` (no index) or `Support` (index-aware). Then add it to `_SCORE_ORDER` / `_SCORE_CLASSES` in `quality.py`, to the dispatch in `ErsiliaQuality.run`, and to `DEFAULT_SCORES` / `ALL_SCORES`.
+3. For new shared upstream state, extend `SharedFitState` (always on, cheap) or `KnnFitState` (kNN tier).
+4. Any change to what saved files mean (formula, layout, calibration) must bump `ARTIFACT_FORMAT_VERSION` in `shared/metadata.py`.
+5. Add tests under `tests/`; the `library`, `reference` and `query` fixtures in `conftest.py` build a tiny custom library.
 
 ## Documentation Maintenance
 
-User-visible docs live in two places: `README.md` (landing page only — install, quick start, links to docs) and `docs/` (everything else). Keep both current in the same pass as the code. When any user-visible change lands, update the corresponding doc alongside the implementation. Do not let docs describe removed or deprecated behavior; stale docs are worse than no docs.
+User-visible docs live in two places:
+- `README.md` is the landing page only: install, quick start, links to docs. Keep it compact, with no diagrams.
+- `docs/` holds everything else.
+
+Keep both current in the same pass as the code. When any user-visible change lands, update the corresponding doc alongside the implementation. Do not let docs describe removed or deprecated behavior; stale docs are worse than no docs.
 
 Scope of "user-visible" and where it's documented:
 - Output columns exposed by `RunResult.scores` and other public DataFrame/dataclass fields → `docs/api.md`.
@@ -125,9 +123,10 @@ Scope of "user-visible" and where it's documented:
 - Workflow narrative (how many steps the user sees, what each produces) → `docs/cli.md` and `docs/diagram.md`.
 - Concept/math explanations when the underlying formula changes → `docs/concepts.md`.
 - Versioning policy, library identity, compatibility guarantees, maintainer release steps → `docs/reference-library.md`.
+- Current results, figures, limitations, open questions → `docs/status.md` (regenerate `docs/figures/` with `scripts/figures/`).
 - Install command or top-level pitch → `README.md`.
 
-Prefer editing existing sections over appending a "Changelog" — the docs describe *current* state, not history (git log is authoritative for history). If a removed feature is worth preserving context for, call it out in the relevant PR description or commit message, not in the docs.
+Prefer editing existing sections over appending a "Changelog". The docs describe the *current* state, not history; git log is authoritative for history. If context about a removed feature is worth preserving, put it in the PR description or commit message, not in the docs.
 
 ## Interaction Style
 

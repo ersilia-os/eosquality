@@ -9,9 +9,14 @@ import pandas as pd
 
 from eosquality import set_verbosity
 from eosquality.exceptions import SchemaError
-from eosquality.quality import ALL_SCORES, DEFAULT_SCORES, ErsiliaQuality
+from eosquality.quality import (
+    ALL_SCORES,
+    DEFAULT_SCORES,
+    MIN_REFERENCE_SAMPLES,
+    ErsiliaQuality,
+)
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES
-from eosquality.utils.identifiers import extract_from_path
+from eosquality.utils.identifiers import extract_from_path, find_eos_id
 
 
 def _parse_scores(s: str) -> list[str]:
@@ -44,25 +49,15 @@ def cmd_fit(args: argparse.Namespace) -> int:
     try:
         eos_id, version = extract_from_path(args.input)
     except ValueError:
-        try:
-            from eosquality.utils.identifiers import _EOS_ID_ANYWHERE_RE
-
-            basename = os.path.basename(args.input)
-            m = _EOS_ID_ANYWHERE_RE.search(basename)
-            if m:
-                eos_id = m.group(1)
-                version = args.version
-            else:
-                print(
-                    f"error: could not find a valid EOS identifier in filename "
-                    f"'{os.path.basename(args.input)}'. "
-                    "Rename the file to include the model ID and version "
-                    "(e.g. 'eos4e40_v1.csv').",
-                    file=sys.stderr,
-                )
-                return 1
-        except Exception as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        eos_id, version = find_eos_id(args.input), args.version
+        if eos_id is None:
+            print(
+                f"error: could not find a valid EOS identifier in filename "
+                f"'{os.path.basename(args.input)}'. "
+                "Rename the file to include the model ID and version "
+                "(e.g. 'eos4e40_v1.csv').",
+                file=sys.stderr,
+            )
             return 1
 
     print(f"→ reading reference CSV: {args.input}", file=sys.stderr)
@@ -92,6 +87,7 @@ def cmd_fit(args: argparse.Namespace) -> int:
             reference,
             eos_id=eos_id,
             version=version,
+            vector_index=args.vector_index,
             ignore_size=args.ignore_size,
             scores=scores,
             max_features=max_features,
@@ -112,9 +108,6 @@ def cmd_fit(args: argparse.Namespace) -> int:
             verbose=args.verbose,
         )
         return 1
-    except ValueError as exc:
-        _print_error("fit failed", exc, verbose=args.verbose)
-        return 1
     except Exception as exc:
         _print_error("fit failed", exc, verbose=args.verbose)
         return 1
@@ -129,11 +122,11 @@ def register_subparsers(subparsers) -> None:
         help="Fit a reference population and save artifacts.",
         description=(
             "Fit a reference population from a CSV file and persist the artifacts. "
-            "The reference library is resolved locally (env override → "
-            "./data/indices/ersilia_reference_library_vN/ → ~/.eosquality/ "
-            "cache); fit never downloads — run 'eosquality download' first if "
-            "the library isn't cached yet. Set EOSQUALITY_REFERENCE_LIBRARY_PATH "
-            "to point at a non-canonical folder for internal testing."
+            "The canonical reference library is resolved locally (env override "
+            "EOSQUALITY_REFERENCE_LIBRARY_PATH → ./data/indices/<library>/ → "
+            "~/.eosquality/indices/<library>/); fit never downloads — run "
+            "'eosquality download' first if the library isn't cached yet. Use "
+            "--vector-index to fit against a non-canonical index instead."
         ),
     )
     fit_p.add_argument(
@@ -149,6 +142,18 @@ def register_subparsers(subparsers) -> None:
         required=True,
         metavar="PATH",
         help="Output folder for the saved artifacts (e.g. artifacts/).",
+    )
+    fit_p.add_argument(
+        "--vector-index",
+        default=None,
+        dest="vector_index",
+        metavar="PATH",
+        help=(
+            "Fit against a non-canonical vector index folder built with "
+            "'eosquality build' (default: the canonical reference library). "
+            "The folder's absolute path is recorded in the artifacts and must "
+            "still exist at run time."
+        ),
     )
     fit_p.add_argument(
         "--k",
@@ -172,7 +177,7 @@ def register_subparsers(subparsers) -> None:
         action="store_true",
         dest="ignore_size",
         help=(
-            f"Skip the minimum-row check ({10_000:,} rows required). "
+            f"Skip the minimum-row check ({MIN_REFERENCE_SAMPLES:,} rows required). "
             "For development and testing only."
         ),
     )
@@ -206,11 +211,10 @@ def register_subparsers(subparsers) -> None:
         dest="max_signal_samples",
         metavar="N",
         help=(
-            "Cap on the number of training rows the 'signal' score actually "
-            "fits its XGBoost models on (default: 1000, for fast iteration). "
-            "Pass 0 or a negative value to use the full training slice. "
-            "The validation slice is never subsampled. Ignored when 'signal' "
-            "is not in the score set."
+            "Cap on the number of training rows the 'signal' XGBoost model is "
+            "fit on (default: 1000, for fast iteration). Pass 0 or a negative "
+            "value to use the full training slice. Calibration always uses the "
+            "full validation slice. Ignored when 'signal' is not in the score set."
         ),
     )
     fit_p.add_argument(
@@ -220,17 +224,16 @@ def register_subparsers(subparsers) -> None:
         dest="signal_descriptor",
         help=(
             "Feature backend the 'signal' score uses (default: physchem). "
-            "'physchem' = 217 RDKit physicochemical descriptors (precomputed "
-            "in the library). 'maccs' = 167-bit RDKit MACCS fingerprint "
-            "(computed on demand). The chosen descriptor is recorded in the "
-            "saved artifact; 'eosquality run' uses whichever was set at fit "
-            "time. Ignored when 'signal' is not in the score set."
+            "'physchem' = RDKit physicochemical descriptors; 'maccs' = MACCS "
+            "structural keys. Both are precomputed in the library. The choice "
+            "is recorded in the saved artifact and used by 'eosquality run'. "
+            "Ignored when 'signal' is not in the score set."
         ),
     )
     fit_p.add_argument(
         "--verbose",
         "-v",
         action="store_true",
-        help="Print informative progress and diagnostic tables.",
+        help="Print debug messages and diagnostic tables.",
     )
     fit_p.set_defaults(func=cmd_fit)

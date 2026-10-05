@@ -1,9 +1,9 @@
-"""Shared kNN fit state for index-aware scores.
+"""Shared kNN fit state for Support and Consistency.
 
-Support and Consistency both consume the same FP-selected neighbor indices
-plus the output-space distances to those neighbors. ``fit_knn`` computes
-this once; each score then derives its own per-score reduction (sorted
-self-distances for Support, median k-distance for Consistency).
+``fit_knn`` slices the reference's precomputed FP self-kNN (indices +
+Tanimoto distances) from the vector index once per fit. Support reduces the
+distances to its CDF; Consistency uses the indices to compute output-space
+neighbor distances against ``shared.ref_repr``. Only ``k`` is persisted.
 """
 
 from eosquality.knn.fit import fit_knn

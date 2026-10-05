@@ -1,17 +1,15 @@
 """Fetch the canonical reference library from its public S3 URL.
 
 The library is not shipped in the wheel — it lives in a public S3 bucket and
-is downloaded lazily on first use into a user cache (``~/.eosquality/``).
-The maintainer side uses ``eosvc`` to push updates to S3, but at runtime we
-do not depend on ``eosvc`` — plain HTTPS is enough for public objects.
+is fetched into a user cache (``~/.eosquality/``) only when the user runs
+``eosquality download``. The maintainer side uses ``eosvc`` to push updates
+to S3; at runtime plain HTTPS is enough for public objects.
 
 Two public functions:
 
-- :func:`ensure_library_downloaded` fetches the index folder (five files:
-  ``vector_index.h5``, ``knn_distances.npy``, ``knn_indices.npy``,
-  ``smiles.csv``, ``metadata.json``) into a temp directory and atomically
-  moves it into the cache. Partial downloads never leave a half-populated
-  cache folder.
+- :func:`ensure_library_downloaded` fetches the index folder (every file in
+  ``_LIBRARY_FILES``) into a temp directory and atomically moves it into the
+  cache. Partial downloads never leave a half-populated cache folder.
 - :func:`ensure_single_file_downloaded` does the same atomic-fetch for one
   file (used for the source SMILES CSV).
 
@@ -42,11 +40,8 @@ from rich.progress import (
 
 # Files that make up a complete reference library folder. Must stay in sync
 # with what ``eosquality build`` emits — the FP index (``VectorIndex.build``)
-# plus the basic-descriptor matrices (``BasicDescriptors.build_physchem`` /
-# ``BasicDescriptors.build_maccs``). The physchem files are required by the
-# Signal score's default ``physchem`` backend; ``maccs.npy`` is currently
-# unused by fit-time code but is shipped for consumers of the canonical
-# library folder.
+# plus the descriptor matrices (``BasicDescriptors``). The physchem files
+# and ``maccs.npy`` are read by the Signal score's two descriptor backends.
 _LIBRARY_FILES: tuple[str, ...] = (
     "vector_index.h5",
     "knn_distances.npy",
@@ -61,6 +56,8 @@ _LIBRARY_FILES: tuple[str, ...] = (
 # Chunk size for streamed copy. 256 KB is the sweet spot for progress
 # update frequency vs syscall overhead on typical networks.
 _CHUNK_BYTES = 256 * 1024
+# Per-socket-operation timeout; a stalled connection fails instead of hanging.
+_TIMEOUT_SECONDS = 60
 
 # Downloads are a user-triggered, non-trivial operation: always show progress
 # on stderr regardless of the global logger verbosity. Stdout stays clean for
@@ -101,7 +98,7 @@ def ensure_library_downloaded(
         base_url = base_url + "/"
     library_dir = cache_dir / dirname
 
-    if not force and _is_library_cached_and_valid(library_dir, expected_library_id):
+    if not force and is_library_cached_and_valid(library_dir, expected_library_id):
         _console.print(
             f"[dim]↪ reference library cached [/dim]"
             f"[cyan]{dirname}[/cyan] [dim]→[/dim] {library_dir}"
@@ -180,7 +177,7 @@ def _download_one(src: str, dst: pathlib.Path, progress: Progress) -> int:
     bar — progress text still shows bytes downloaded.
     """
     try:
-        response = urllib.request.urlopen(src)
+        response = urllib.request.urlopen(src, timeout=_TIMEOUT_SECONDS)
     except urllib.error.HTTPError as exc:
         raise LibraryDownloadError(
             f"HTTP {exc.code} fetching {src}: {exc.reason}"
@@ -219,7 +216,7 @@ def _download_one(src: str, dst: pathlib.Path, progress: Progress) -> int:
     return written
 
 
-def _is_library_cached_and_valid(
+def is_library_cached_and_valid(
     library_dir: pathlib.Path, expected_library_id: str
 ) -> bool:
     """Return True if every expected file is present and metadata matches."""

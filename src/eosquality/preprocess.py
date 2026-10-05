@@ -8,7 +8,7 @@ and emits a per-kind robust transform into a documented float region inside
 ``[-1, 1]``.
 
 This module keeps the eosquality-facing surface (``fit_transform``,
-``transform``, ``raw_numeric_values``, ``get_state``, ``from_state``) so the
+``transform``, ``get_state``, ``from_state``) so the
 quality API and per-score code don't need to change. State persists as the
 plain JSON-serialisable dict returned by ``eosframes.fit`` — see the
 ``shared/`` save/load helpers.
@@ -20,10 +20,9 @@ or persisted here.
 
 from __future__ import annotations
 
+import eosframes
 import numpy as np
 import pandas as pd
-
-import eosframes
 
 from eosquality.schema.models import Schema
 from eosquality.utils.logging import logger
@@ -77,22 +76,6 @@ class PreprocessPipeline:
         feature_cols = list(self._schema.column_names)
         return self._transform_to_array(df[feature_cols])
 
-    def raw_numeric_values(self, df: pd.DataFrame) -> np.ndarray:
-        """Return raw float values for the fitted columns, shape (n, n_features).
-
-        Typicality re-quantizes the eosframes scaled output rather than reading
-        the raw values, but the kNN distance fallback and external callers may
-        still want the unscaled array.
-        """
-        if self._params is None:
-            raise RuntimeError(
-                "PreprocessPipeline must be fitted before raw_numeric_values()."
-            )
-        feature_cols = list(self._schema.column_names)
-        if not feature_cols:
-            return np.empty((len(df), 0))
-        return df[feature_cols].to_numpy(dtype=float)
-
     # ------------------------------------------------------------------
     # Serialization state
     # ------------------------------------------------------------------
@@ -108,7 +91,7 @@ class PreprocessPipeline:
         }
 
     @classmethod
-    def from_state(cls, state: dict) -> "PreprocessPipeline":
+    def from_state(cls, state: dict) -> PreprocessPipeline:
         """Reconstruct a fitted pipeline from a persisted state dict."""
         pipeline = cls(schema=state["schema"])
         pipeline._params = state["scaler_params"]
@@ -149,9 +132,10 @@ def _compute_binary_class_freq(
 
     The eosframes binary transform snaps every non-NaN value to whichever of
     ``{low, high}`` is closer. We replicate that snap here over the raw
-    reference and record the resulting fraction of 1s, so query-time
-    typicality can grade a 1 against ``freq_high`` and a 0 against
-    ``1 - freq_high``. NaNs are excluded from the denominator; a column
+    reference and record the resulting fraction of 1s as a descriptive
+    statistic in ``shared/binary_class_freq.json`` (no score reads it;
+    typicality's density LUTs already capture class balance). NaNs are
+    excluded from the denominator; a column
     whose reference is entirely NaN gets a sentinel 0.5 (balanced — no
     information either way).
     """

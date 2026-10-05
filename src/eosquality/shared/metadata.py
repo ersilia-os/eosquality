@@ -17,7 +17,7 @@ from eosquality.utils.logging import logger
 class ColumnCharacteristics:
     """Detected characteristics of a single numeric column."""
 
-    kind: str  # "binary" | "proportion" | "count" | "continuous"
+    kind: str  # "binary" | "count" | "continuous"
     sparsity: float  # fraction of exact zeros (NaN not counted as zero)
     missing_fraction: float  # fraction of NaN values
 
@@ -57,6 +57,17 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
     )
 
 
+# On-disk artifact format. Bump whenever saved files change meaning or
+# layout so older artifacts fail at load with a clear "refit" message
+# instead of producing silently different scores.
+#   2 — mid-rank CDF calibration, NaN-ignoring aggregates, merged
+#       consistency FP bins, signal CDF as .npy, custom index paths.
+#   3 — support calibrated per fingerprint-size bin (reverted in 4).
+#   4 — support = nearest-analogue similarity, one reference CDF;
+#       support_log output column.
+ARTIFACT_FORMAT_VERSION = 4
+
+
 @dataclass
 class FitMetadata:
     """Provenance and dataset statistics for a fitted reference population."""
@@ -71,8 +82,12 @@ class FitMetadata:
     fit_timestamp: str  # ISO 8601 UTC
     eosquality_version: str  # package version
     column_characteristics: dict[str, ColumnCharacteristics]  # per-column kind/sparsity
-    library_id: str = ""  # e.g. "ersilia_reference_library_v1"
+    library_id: str = ""  # e.g. "ersilia_reference_library_v0"
     fit_duration_seconds: float = 0.0  # wall time spent in fit_shared
+    # Absolute path of a non-canonical vector index; "" for the canonical
+    # library, which is resolved by library_id at run time instead.
+    vector_index_path: str = ""
+    format_version: int = ARTIFACT_FORMAT_VERSION
 
 
 def compute_metadata(

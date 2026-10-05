@@ -5,12 +5,14 @@ import importlib.metadata as _importlib_metadata
 from packaging.version import Version as _Version
 
 from eosquality.library.identity import LIBRARY_ID, library_major
-from eosquality.quality import ErsiliaQuality, RunResult
+from eosquality.quality import ALL_SCORES, DEFAULT_SCORES, ErsiliaQuality, RunResult
 from eosquality.scores import (
     Consistency,
     ConsistencyRunResult,
     Extremity,
     ExtremityRunResult,
+    Signal,
+    SignalRunResult,
     Support,
     SupportRunResult,
     Typicality,
@@ -45,11 +47,18 @@ _check_library_matches_package_major()
 
 
 def set_verbosity(verbose: bool) -> None:
-    """Enable or disable informative log output globally."""
+    """Enable (DEBUG + diagnostic tables) or disable (WARNING only) log output."""
     _logger.set_verbosity(verbose)
 
 
+def set_log_level(level: str) -> None:
+    """Set the package log level (e.g. ``"INFO"`` to see progress messages)."""
+    _logger.set_level(level)
+
+
 __all__ = [
+    "ALL_SCORES",
+    "DEFAULT_SCORES",
     "ErsiliaQuality",
     "RunResult",
     "Typicality",
@@ -60,5 +69,8 @@ __all__ = [
     "ConsistencyRunResult",
     "Extremity",
     "ExtremityRunResult",
+    "Signal",
+    "SignalRunResult",
+    "set_log_level",
     "set_verbosity",
 ]

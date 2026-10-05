@@ -7,40 +7,46 @@ top. Each score remains independently saveable / loadable.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from eosquality.config import ErsiliaQualityConfig, NeighborConfig
-from eosquality.exceptions import NotFittedError, SchemaError
-from eosquality.knn.fit import fit_knn
-from eosquality.library.identity import (
-    LIBRARY_ID,
-    reference_library_csv_path,
-    reference_library_path,
+from eosquality.exceptions import (
+    IncompatibleArtifactsError,
+    NotFittedError,
+    SchemaError,
 )
-from eosquality.preprocess import PreprocessPipeline
+from eosquality.knn.fit import fit_knn
+from eosquality.knn.load import load_knn
+from eosquality.knn.save import save_knn
+from eosquality.library.identity import LIBRARY_ID, reference_library_path
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._helpers import (
+    _custom_index_path,
+    _make_query_repr,
     _query_fp_distances,
     _query_output_distances,
     _resolve_vector_index,
 )
 from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
-from eosquality.scores.signal import Signal
+from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
 from eosquality.scores.support import Support
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES, fit_shared
+from eosquality.shared.load import load_shared
+from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.identifiers import validate_eos_id, validate_version
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
-
 
 MIN_REFERENCE_SAMPLES = 10_000
 
@@ -54,6 +60,23 @@ DEFAULT_SCORES: tuple[str, ...] = (
 # Signal is opt-in (provisional): users must pass ``scores=DEFAULT_SCORES + ("signal",)``
 # or similar to enable it. Validation uses this set, not DEFAULT_SCORES.
 ALL_SCORES: tuple[str, ...] = DEFAULT_SCORES + ("signal",)
+# Canonical component order: fit, run, save, output columns and metadata.
+_SCORE_ORDER: tuple[str, ...] = (
+    "typicality",
+    "extremity",
+    "support",
+    "consistency",
+    "signal",
+)
+_SCORE_CLASSES = {
+    "typicality": Typicality,
+    "extremity": Extremity,
+    "support": Support,
+    "consistency": Consistency,
+    "signal": Signal,
+}
+# Scores that need the vector index at fit time (Signal reads the library's
+# descriptor matrices from the index folder; it never queries the index).
 _INDEX_AWARE = frozenset({"support", "consistency", "signal"})
 _KNN_USERS = frozenset({"support", "consistency"})
 
@@ -62,11 +85,17 @@ _KNN_USERS = frozenset({"support", "consistency"})
 class RunResult:
     """Combined result returned by :meth:`ErsiliaQuality.run`.
 
-    ``scores`` is a per-query DataFrame whose columns are exactly the
-    fitted components, in canonical order: ``typicality``, ``extremity``,
-    ``support``, ``consistency``, ``signal``. A fit that skips some
-    components yields a DataFrame missing those columns; the order of
-    the remaining columns is unchanged.
+    ``scores`` is a per-query DataFrame with the columns of each fitted
+    component, in canonical order: ``typicality``, ``typicality_raw``,
+    ``extremity``, ``extremity_raw``, ``support``, ``support_raw``,
+    ``support_log``, ``consistency``, ``consistency_raw``, ``signal``,
+    ``signal_raw``. The calibrated column is in ``(0, 1]``; ``*_raw`` is the
+    pre-calibration value; ``support_log = −log10(support)``. Components
+    that were not fit are absent.
+
+    ``metadata`` has ``n_reference`` plus each component's run metadata
+    with keys prefixed by the component name (e.g. ``support_k``,
+    ``consistency_n_fp_bins``, ``signal_descriptor``).
     """
 
     scores: pd.DataFrame
@@ -128,7 +157,7 @@ class ErsiliaQuality:
         max_features: int | None = DEFAULT_MAX_FEATURES,
         max_signal_train_samples: int | None = 1000,
         signal_descriptor: str = "physchem",
-    ) -> "ErsiliaQuality":
+    ) -> ErsiliaQuality:
         """Fit the selected scores on a reference DataFrame.
 
         Parameters
@@ -139,8 +168,8 @@ class ErsiliaQuality:
             Pass e.g. ``scores=["typicality"]`` to skip the vector index
             entirely. ``"signal"`` is provisionally opt-in — request it
             explicitly (e.g. ``scores=DEFAULT_SCORES + ("signal",)``)
-            since it pays an ``N+1``-XGBoost training cost. Valid names
-            are listed in ``ALL_SCORES``.
+            since it trains an XGBoost model and computes SHAP values.
+            Valid names are listed in ``ALL_SCORES``.
         max_features:
             Cap on the number of features retained after fit-time
             correlation-cluster medoid selection. Defaults to
@@ -148,22 +177,28 @@ class ErsiliaQuality:
             reduction. Support is unaffected (it uses fingerprints only);
             typicality, extremity, consistency, and signal see the
             reduced set.
+        vector_index:
+            Optional path to a non-canonical vector index folder (built with
+            ``eosquality build``). Default ``None`` uses the canonical
+            reference library. A custom index's absolute path is recorded
+            in the artifact and must still exist at run time.
+        ignore_size:
+            Skip the ``MIN_REFERENCE_SAMPLES`` row-count check (testing only).
         max_signal_train_samples:
-            Cap on the number of training rows the ``signal`` score
-            actually fits its XGBoost models on. Defaults to ``1000``
-            for fast iteration during development. Pass ``None`` or
-            ``0`` to use the full training slice (~80% of the
-            reference). The val slice is never subsampled — early
-            stopping and calibration always see the full validation
-            set. Ignored when ``signal`` is not in ``scores``.
+            Cap on the number of training rows the ``signal`` XGBoost model
+            is fit on. Defaults to ``1000`` for fast iteration. Pass
+            ``None`` or ``0`` to use the full training slice (~80% of the
+            reference). Calibration and the reported ``r2_val`` always use
+            the full validation slice; only the per-round early-stopping
+            eval set is sampled to 5,000 rows. Ignored when ``signal`` is
+            not in ``scores``.
         signal_descriptor:
-            Feature backend the ``signal`` score uses. ``"physchem"``
-            (default) — 217 RDKit physicochemical descriptors (loaded
-            precomputed from the library). ``"maccs"`` — 167-bit RDKit
-            MACCS structural fingerprint (computed on demand at fit +
-            run time). The chosen descriptor is recorded in the saved
-            artifact and used unchanged at run time. Ignored when
-            ``signal`` is not in ``scores``.
+            Feature backend the ``signal`` score uses: ``"physchem"``
+            (default; RDKit physicochemical descriptors) or ``"maccs"``
+            (MACCS structural keys). Both are read precomputed from the
+            library for the reference and computed on the fly for queries.
+            Recorded in the saved artifact and used unchanged at run time.
+            Ignored when ``signal`` is not in ``scores``.
         """
         validate_eos_id(eos_id)
         validate_version(version)
@@ -176,12 +211,16 @@ class ErsiliaQuality:
 
         needs_index = bool(scores_set & _INDEX_AWARE)
         needs_knn = bool(scores_set & _KNN_USERS)
-        using_canonical_library = needs_index and not vector_index
 
         if reference.empty:
             raise SchemaError("Reference DataFrame is empty.")
         if needs_index:
             self._validate_input_column(reference)
+
+        # A re-fit replaces every component, including ones not requested now.
+        for name in _SCORE_ORDER:
+            setattr(self, name, None)
+        self.is_fitted_ = False
 
         t_start = time.perf_counter()
         logger.rule(f"ErsiliaQuality · fit · {eos_id} {version}")
@@ -190,45 +229,32 @@ class ErsiliaQuality:
             f"scores=[{', '.join(sorted(scores_set))}]"
         )
 
-        vi: VectorIndex | None = None
-        library_id = ""
-
-        if needs_index:
-            t = time.perf_counter()
-            logger.info("vector index | loading…")
-            if using_canonical_library:
-                _validate_reference_against_library_csv(reference)
-                vector_index = reference_library_path()
-            vi = VectorIndex.load(vector_index)
-            if using_canonical_library:
-                if len(reference) != len(vi._smiles):
-                    raise ValueError(
-                        f"Reference has {len(reference):,} rows but the vector "
-                        f"index has {len(vi._smiles):,} molecules. Fit requires "
-                        "matching row counts."
-                    )
-            else:
-                vi.validate_smiles(list(reference["input"]))
-            library_id = str(vi._config.get("library_name", "") or "")
-            logger.info(
-                f"vector index | loaded | n_ref={len(vi._smiles):,} | "
-                f"{time.perf_counter() - t:.1f}s"
-            )
-
         if not ignore_size and len(reference) < MIN_REFERENCE_SAMPLES:
             raise ValueError(
-                f"Reference dataset has {len(reference):,} rows. "
-                f"Fitting requires at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
-                "Pass ignore_size=True to bypass this check (not recommended for production use)."
+                f"Reference dataset has {len(reference):,} rows. Fitting requires "
+                f"at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
+                "Pass ignore_size=True to bypass this check (not recommended "
+                "for production use)."
             )
-
         self._check_unique_keys(reference)
 
-        shared, _ = fit_shared(
+        vi: VectorIndex | None = None
+        if needs_index:
+            t = time.perf_counter()
+            vi = VectorIndex.load(vector_index or reference_library_path())
+            # The reference must be the index's molecules, in index order.
+            vi.validate_smiles(list(reference["input"]))
+            logger.info(
+                f"vector index | loaded {vi.library_name or '(unnamed)'} | "
+                f"n_ref={vi.n_reference:,} | {time.perf_counter() - t:.1f}s"
+            )
+
+        shared = fit_shared(
             reference,
             eos_id=eos_id,
             version=version,
-            library_id=library_id,
+            library_id=vi.library_name if vi is not None else "",
+            vector_index_path=_custom_index_path(vi) if vi is not None else "",
             max_features=max_features,
         )
         self._shared = shared
@@ -297,17 +323,7 @@ class ErsiliaQuality:
         self._emit_reference_report(reference, shared)
 
         t_total = time.perf_counter() - t_start
-        fitted = [
-            n
-            for n, v in (
-                ("typicality", self.typicality),
-                ("extremity", self.extremity),
-                ("support", self.support),
-                ("consistency", self.consistency),
-                ("signal", self.signal),
-            )
-            if v is not None
-        ]
+        fitted = list(self._components())
         logger.success(
             f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | {t_total:.2f}s"
         )
@@ -317,238 +333,106 @@ class ErsiliaQuality:
     def run(self, query: pd.DataFrame) -> RunResult:
         """Score query samples against the fitted reference population.
 
-        Computes the FP-selected kNN once for index-aware scores (Support
-        + Consistency) and reuses the result across them; per-score
-        :meth:`run` methods are called with the precomputed arrays.
+        Validates and scales the query once, computes the FP-selected kNN
+        once for Support + Consistency, and passes the precomputed arrays
+        to each component's :meth:`run`.
 
         Parameters
         ----------
         query:
             DataFrame with the same numeric columns as the reference,
-            plus an ``'input'`` SMILES column if any index-aware score
-            (Support or Consistency) was fit.
+            plus an ``'input'`` SMILES column if Support, Consistency or
+            Signal was fit.
 
         Returns
         -------
         RunResult
-            ``scores`` is a per-query DataFrame whose columns are exactly
-            the fitted components, in canonical order (``typicality``,
-            ``extremity``, ``support``, ``consistency``). Components
-            that were not fit are simply absent from the DataFrame.
-            ``metadata`` aggregates per-score metadata dicts (Consistency
-            keys are prefixed with ``consistency_`` to avoid colliding
-            with Support's ``n_reference`` / ``k``).
+            See :class:`RunResult` for the column layout and metadata keys.
         """
         self._check_fitted()
         assert self._shared is not None
 
         t_start = time.perf_counter()
+        components = self._components()
         logger.rule(f"ErsiliaQuality · run · {len(query):,} queries")
-        loaded_scores = [
-            n
-            for n, v in (
-                ("typicality", self.typicality),
-                ("extremity", self.extremity),
-                ("support", self.support),
-                ("consistency", self.consistency),
-                ("signal", self.signal),
-            )
-            if v is not None
-        ]
-        logger.info(
-            f"run | n_query={len(query):,} | scores=[{', '.join(loaded_scores)}]"
-        )
+        logger.info(f"run | n_query={len(query):,} | scores=[{', '.join(components)}]")
 
-        t = time.perf_counter()
         validate_against_schema(query, self._shared.schema)
-        logger.info(f"run | schema validated | {time.perf_counter() - t:.2f}s")
-
-        needs_input_col = (
-            self.support is not None
-            or self.consistency is not None
-            or self.signal is not None
-        )
+        needs_input_col = bool(set(components) & _INDEX_AWARE)
         if needs_input_col and "input" not in query.columns:
             raise SchemaError(
                 "Query DataFrame must contain an 'input' column with SMILES strings."
             )
 
         t = time.perf_counter()
-        logger.info("run | preprocessing query (eosframes transform + feature filter)…")
-        pipeline = PreprocessPipeline.from_state(
-            {
-                "schema": self._shared.schema,
-                "scaler_params": self._shared.scaler_params,
-                "binary_class_freq": self._shared.binary_class_freq,
-            }
-        )
-        query_repr = self._shared.filter_features(pipeline.transform(query))
+        query_repr = _make_query_repr(self._shared, query)
         logger.info(
-            f"run | query_repr ready | shape={query_repr.shape} | "
+            f"run | query scaled | shape={query_repr.shape} | "
             f"{time.perf_counter() - t:.2f}s"
         )
 
+        # FP kNN once, shared by Support and Consistency.
         query_fp_indices: np.ndarray | None = None
         query_fp_distances: np.ndarray | None = None
         query_output_distances: np.ndarray | None = None
-        vi: VectorIndex | None = None
         if self.support is not None or self.consistency is not None:
-            t = time.perf_counter()
-            logger.info("run | resolving vector index…")
             vi = self._get_vector_index()
-            logger.info(
-                f"run | vector index ready | n_ref={len(vi._smiles):,} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
-            knn = (self.support or self.consistency)._knn  # type: ignore[union-attr]
-            assert knn is not None
+            knn = (self.support or self.consistency).knn_  # type: ignore[union-attr]
             t = time.perf_counter()
-            logger.info(f"run | FP kNN query | k={knn.k} | {len(query):,} queries…")
             query_fp_distances, query_fp_indices = _query_fp_distances(query, vi, knn.k)
             logger.info(
-                f"run | FP kNN done | median dist="
-                f"{float(np.median(query_fp_distances)):.4f} | "
+                f"run | FP kNN | k={knn.k} | median dist="
+                f"{float(np.median(query_fp_distances)) if len(query) else float('nan'):.4f} | "
                 f"{time.perf_counter() - t:.2f}s"
             )
             if self.consistency is not None:
-                t = time.perf_counter()
-                logger.info(
-                    f"run | output-space neighbor distances | "
-                    f"{len(query):,} × k={knn.k}…"
-                )
+                assert self._shared.ref_repr is not None
                 query_output_distances = _query_output_distances(
                     query_repr, self._shared.ref_repr, query_fp_indices
                 )
-                logger.info(
-                    f"run | output-space distances done | "
-                    f"{time.perf_counter() - t:.2f}s"
-                )
-        # Signal is now self-contained: it computes its own physchem
-        # descriptors from query SMILES and uses the scaler params it
-        # persisted in its own subfolder, so no vector-index lookup is
-        # needed here.
 
         columns: dict[str, pd.Series] = {}
         metadata: dict[str, Any] = {"n_reference": len(self._shared.reference_ids)}
-
-        if self.typicality is not None:
+        for name, component in components.items():
             t = time.perf_counter()
-            logger.info("score 'typicality' | running…")
-            typicality_result = self.typicality.run(query, query_repr=query_repr)
-            columns["typicality"] = typicality_result.score
-            columns["typicality_raw"] = typicality_result.score_raw
-            metadata.update(typicality_result.metadata)
+            if name in ("typicality", "extremity"):
+                result = component.run(query, query_repr=query_repr)
+            elif name == "support":
+                result = component.run(
+                    query,
+                    query_fp_indices=query_fp_indices,
+                    query_fp_distances=query_fp_distances,
+                )
+            elif name == "consistency":
+                result = component.run(
+                    query,
+                    query_repr=query_repr,
+                    query_fp_indices=query_fp_indices,
+                    query_fp_distances=query_fp_distances,
+                    query_output_distances=query_output_distances,
+                )
+            else:
+                result = component.run(query)
+            columns[name] = result.score
+            columns[f"{name}_raw"] = result.score_raw
+            if hasattr(result, "score_log"):
+                columns[f"{name}_log"] = result.score_log
+            metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
             logger.info(
-                f"score 'typicality' | done | calibrated mean="
-                f"{float(typicality_result.score.mean()):.4f} "
-                f"raw mean={float(typicality_result.score_raw.mean()):.4f} | "
+                f"score {name!r} | mean={float(result.score.mean()):.4f} "
+                f"raw mean={float(result.score_raw.mean()):.4f} | "
                 f"{time.perf_counter() - t:.2f}s"
             )
 
-        if self.extremity is not None:
-            t = time.perf_counter()
-            logger.info("score 'extremity' | running…")
-            extremity_result = self.extremity.run(query, query_repr=query_repr)
-            columns["extremity"] = extremity_result.score
-            columns["extremity_raw"] = extremity_result.score_raw
-            metadata.update(extremity_result.metadata)
-            logger.info(
-                f"score 'extremity' | done | calibrated mean="
-                f"{float(extremity_result.score.mean()):.4f} "
-                f"raw mean={float(extremity_result.score_raw.mean()):.4f} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
-
-        if self.support is not None:
-            t = time.perf_counter()
-            logger.info("score 'support' | running…")
-            support_result = self.support.run(
-                query,
-                query_fp_indices=query_fp_indices,
-                query_fp_distances=query_fp_distances,
-            )
-            columns["support"] = support_result.score
-            columns["support_raw"] = support_result.score_raw
-            metadata.update(support_result.metadata)
-            logger.info(
-                f"score 'support' | done | calibrated mean="
-                f"{float(support_result.score.mean()):.4f} "
-                f"raw mean dist={float(support_result.score_raw.mean()):.4f} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
-
-        if self.consistency is not None:
-            t = time.perf_counter()
-            logger.info("score 'consistency' | running…")
-            consistency_result = self.consistency.run(
-                query,
-                query_repr=query_repr,
-                query_fp_indices=query_fp_indices,
-                query_fp_distances=query_fp_distances,
-                query_output_distances=query_output_distances,
-            )
-            columns["consistency"] = consistency_result.score
-            columns["consistency_raw"] = consistency_result.score_raw
-            # Prefix Consistency's metadata keys so they don't collide with
-            # Support's ``n_reference`` / ``k`` (both index-aware scores
-            # report the same field names).
-            metadata.update(
-                {f"consistency_{k}": v for k, v in consistency_result.metadata.items()}
-            )
-            logger.info(
-                f"score 'consistency' | done | calibrated mean="
-                f"{float(consistency_result.score.mean()):.4f} "
-                f"raw mean dist={float(consistency_result.score_raw.mean()):.4f} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
-
-        if self.signal is not None:
-            t = time.perf_counter()
-            logger.info("score 'signal' | running…")
-            signal_result = self.signal.run(query)
-            columns["signal"] = signal_result.score
-            columns["signal_raw"] = signal_result.score_raw
-            metadata.update(
-                {f"signal_{k}": v for k, v in signal_result.metadata.items()}
-            )
-            logger.info(
-                f"score 'signal' | done | calibrated mean="
-                f"{float(signal_result.score.mean()):.4f} "
-                f"features mean={float(signal_result.score_raw.mean()):.2f} | "
-                f"{time.perf_counter() - t:.2f}s"
-            )
-
-        ordered = [
-            c
-            for c in (
-                "typicality",
-                "typicality_raw",
-                "extremity",
-                "extremity_raw",
-                "support",
-                "support_raw",
-                "consistency",
-                "consistency_raw",
-                "signal",
-                "signal_raw",
-            )
-            if c in columns
-        ]
-        scores_df = pd.DataFrame(
-            {c: columns[c] for c in ordered}, index=list(query.index)
-        )
-
+        scores_df = pd.DataFrame(columns, index=list(query.index))
         logger.scores_summary_table(scores_df)
-        t_total = time.perf_counter() - t_start
         means = " · ".join(f"{c}={scores_df[c].mean():.3f}" for c in scores_df.columns)
         logger.success(
-            f"Run complete | {len(scores_df):,} queries | {means or 'no scores'} | {t_total:.2f}s"
+            f"Run complete | {len(scores_df):,} queries | {means or 'no scores'} | "
+            f"{time.perf_counter() - t_start:.2f}s"
         )
         logger.rule()
-        return RunResult(
-            scores=scores_df,
-            metadata=metadata,
-        )
+        return RunResult(scores=scores_df, metadata=metadata)
 
     # ------------------------------------------------------------------
     # Save / load
@@ -557,68 +441,44 @@ class ErsiliaQuality:
     def save(self, path: str | pathlib.Path) -> pathlib.Path:
         """Write fitted artifacts to a folder.
 
-        Each fitted score writes its own subfolder under ``path``:
-        ``shared/`` (always), ``knn/`` (iff support or consistency was
-        fit), ``typicality/``, ``support/``, ``consistency/``,
-        ``extremity/`` (each iff that score was fit). The save calls
-        are idempotent on overlapping ``shared/`` / ``knn/`` writes.
-
-        Also writes a top-level ``manifest.json`` summarizing the fit
-        for easy inspection (this file is informational only — the
+        Writes ``shared/`` once, ``knn/`` once (iff support or consistency
+        was fit), then each fitted component's own subfolder, plus a
+        top-level ``manifest.json`` summary (informational only — the
         loader does not consult it).
         """
         self._check_fitted()
         assert self._shared is not None
         folder = pathlib.Path(path)
         folder.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Saving artifacts → {folder}")
-        if self.typicality is not None:
-            self.typicality.save(folder)
-        if self.support is not None:
-            self.support.save(folder)
-        if self.consistency is not None:
-            self.consistency.save(folder)
-        if self.extremity is not None:
-            self.extremity.save(folder)
-        if self.signal is not None:
-            self.signal.save(folder)
+        components = self._components()
+        save_shared(self._shared, folder)
+        knn_owner = self.support or self.consistency
+        if knn_owner is not None:
+            save_knn(knn_owner.knn_, folder)
+        for component in components.values():
+            component.save_component(folder)
         self._write_manifest(folder)
         logger.info(f"Artifacts saved → {folder}")
         return folder
 
     def _write_manifest(self, folder: pathlib.Path) -> None:
         """Write the top-level ``manifest.json`` summary."""
-        import json
-
         assert self._shared is not None
-        scores: list[str] = []
-        k_used: int | None = None
-        signal_meta: dict[str, Any] | None = None
-        if self.typicality is not None:
-            scores.append("typicality")
-        if self.extremity is not None:
-            scores.append("extremity")
-        if self.support is not None:
-            scores.append("support")
-            k_used = self.support.knn_.k
-        if self.consistency is not None:
-            scores.append("consistency")
-            k_used = self.consistency.knn_.k
+        knn_owner = self.support or self.consistency
+        signal_meta = None
         if self.signal is not None:
-            scores.append("signal")
-            from eosquality.scores.signal import SIGNAL_FORMULA_VERSION
-
             signal_meta = {
                 "formula_version": SIGNAL_FORMULA_VERSION,
                 "descriptor": self.signal.descriptor_,
                 "n_features": int(self.signal.backend_.n_features),
             }
         manifest = {
-            "scores": scores,
+            "format_version": self._shared.metadata.format_version,
+            "scores": list(self._components()),
             "n_samples": self._shared.metadata.n_samples,
             "n_features": self._shared.metadata.n_features,
             "n_features_selected": len(self._shared.selected_columns),
-            "k": k_used,
+            "k": knn_owner.knn_.k if knn_owner is not None else None,
             "signal": signal_meta,
             "library_id": self._shared.metadata.library_id,
             "fit_timestamp": self._shared.metadata.fit_timestamp,
@@ -628,12 +488,12 @@ class ErsiliaQuality:
             json.dump(manifest, f, indent=2)
 
     @classmethod
-    def load(cls, path: str | pathlib.Path) -> "ErsiliaQuality":
+    def load(cls, path: str | pathlib.Path) -> ErsiliaQuality:
         """Reconstruct an orchestrator from a saved folder.
 
-        Walks the subfolders under ``path`` and loads each per-score
-        component that's present. At least one score subfolder must
-        exist. Library / package compatibility is enforced when any
+        Reads ``shared/`` (and ``knn/`` if present) once, then loads every
+        component whose subfolder exists. At least one score subfolder
+        must exist. Library / package compatibility is enforced when any
         index-aware score is found.
         """
         folder = pathlib.Path(path)
@@ -644,53 +504,25 @@ class ErsiliaQuality:
                 f"Expected a directory, got a file: {folder}. "
                 "Artifacts are stored as a folder — pass the folder path."
             )
-        logger.info(f"loading artifacts from {folder}")
-        instance = cls()
-        if (folder / "typicality").is_dir():
-            logger.info("  loading typicality…")
-            instance.typicality = Typicality.load(folder)
-        if (folder / "support").is_dir():
-            logger.info("  loading support…")
-            instance.support = Support.load(folder)
-        if (folder / "consistency").is_dir():
-            logger.info("  loading consistency…")
-            instance.consistency = Consistency.load(folder)
-        if (folder / "extremity").is_dir():
-            logger.info("  loading extremity…")
-            instance.extremity = Extremity.load(folder)
-
-        first_shared = next(
-            (
-                c._shared
-                for c in (
-                    instance.typicality,
-                    instance.support,
-                    instance.consistency,
-                    instance.extremity,
-                )
-                if c is not None
-            ),
-            None,
-        )
-        if first_shared is None and (folder / "signal").is_dir():
-            # Signal can be the only score on disk; load shared directly.
-            from eosquality.shared.load import load_shared
-
-            first_shared = load_shared(folder)
-        if first_shared is None:
+        present = [n for n in _SCORE_ORDER if (folder / n).is_dir()]
+        if not present:
             raise FileNotFoundError(
                 f"No score subfolders found under {folder} — nothing to load."
             )
-        if (folder / "signal").is_dir():
-            instance.signal = Signal.load(folder, shared=first_shared)
-        instance._shared = first_shared
+        logger.info(f"loading artifacts from {folder} | scores=[{', '.join(present)}]")
+        shared = load_shared(folder)
+        knn = load_knn(folder) if set(present) & _KNN_USERS else None
         _check_artifacts_compatibility(
-            instance._shared,
-            has_index_scores=any(
-                s is not None
-                for s in (instance.support, instance.consistency, instance.signal)
-            ),
+            shared, has_index_scores=bool(set(present) & _INDEX_AWARE)
         )
+        instance = cls(k=knn.k if knn is not None else 5)
+        instance._shared = shared
+        for name in present:
+            setattr(
+                instance,
+                name,
+                _SCORE_CLASSES[name].load(folder, shared=shared, knn=knn),
+            )
         instance.is_fitted_ = True
         logger.success(f"Artifacts loaded from {folder}")
         return instance
@@ -780,18 +612,21 @@ class ErsiliaQuality:
                 "This ErsiliaQuality instance is not fitted yet. Call fit() first."
             )
 
+    def _components(self) -> dict[str, Any]:
+        """Fitted components keyed by name, in canonical order."""
+        return {
+            name: getattr(self, name)
+            for name in _SCORE_ORDER
+            if getattr(self, name) is not None
+        }
+
     def _get_vector_index(self) -> VectorIndex:
         """Load (and cache) the VectorIndex backing the index-aware scores.
 
-        Resolution is by ``shared.metadata.library_id`` via the canonical
-        library resolver — the artifact does not store an index path.
+        See :func:`eosquality.scores._helpers._resolve_vector_index`.
         """
         if self._vector_index_cache is not None:
             return self._vector_index_cache
-        if self.support is None and self.consistency is None and self.signal is None:
-            raise RuntimeError(
-                "No vector-index-aware score is loaded; cannot resolve a VectorIndex."
-            )
         assert self._shared is not None
         self._vector_index_cache = _resolve_vector_index(self._shared)
         return self._vector_index_cache
@@ -820,17 +655,13 @@ class ErsiliaQuality:
     def _check_unique_keys(reference: pd.DataFrame) -> None:
         if "key" not in reference.columns:
             return
-        seen: set[str] = set()
-        dupes: list[tuple[int, str]] = []
-        for idx, key in enumerate(reference["key"]):
-            k = str(key)
-            if k in seen:
-                dupes.append((idx, k))
-            else:
-                seen.add(k)
-        if dupes:
+        keys = reference["key"].astype(str)
+        dupes = keys[keys.duplicated()]
+        if len(dupes):
             n_shown = min(5, len(dupes))
-            examples = ", ".join(f"row {i}: {k!r}" for i, k in dupes[:n_shown])
+            examples = ", ".join(
+                f"row {i}: {k!r}" for i, k in list(dupes.items())[:n_shown]
+            )
             raise ValueError(
                 f"Duplicate keys in reference: {len(dupes)} duplicate(s). "
                 f"First {n_shown}: [{examples}]. "
@@ -853,15 +684,15 @@ class ErsiliaQuality:
             return
         logger.reference_report_table(
             reference_support=self.support.reference_support_ if self.support else None,
-            reference_typicality=self.typicality.reference_typicality_
-            if self.typicality
-            else None,
-            reference_extremity=self.extremity.reference_extremity_
-            if self.extremity
-            else None,
-            reference_consistency=self.consistency.reference_consistency_
-            if self.consistency
-            else None,
+            reference_typicality=(
+                self.typicality.reference_typicality_ if self.typicality else None
+            ),
+            reference_extremity=(
+                self.extremity.reference_extremity_ if self.extremity else None
+            ),
+            reference_consistency=(
+                self.consistency.reference_consistency_ if self.consistency else None
+            ),
             reference_signal=self.signal.reference_signal_ if self.signal else None,
         )
 
@@ -874,65 +705,36 @@ class ErsiliaQuality:
 def _check_artifacts_compatibility(
     shared: SharedFitState, has_index_scores: bool
 ) -> None:
-    """Reject artifacts fit against a different reference library.
+    """Reject artifacts fit against a different reference library or major.
 
-    The compatibility check only applies to index-aware artifacts (the only
-    ones where library identity actually matters). A typicality-only fit
-    has ``library_id == ""`` by construction and is portable.
+    Only index-aware artifacts are checked (a typicality/extremity-only fit
+    has ``library_id == ""`` and is portable). Artifacts fit on the
+    canonical library must match this install's :data:`LIBRARY_ID`; those
+    fit on a custom index must record its path. The package major version
+    must also match.
     """
     if not has_index_scores:
         return
     import importlib.metadata as _md
 
-    from packaging.version import Version
+    from packaging.version import InvalidVersion, Version
 
-    from eosquality.exceptions import IncompatibleArtifactsError
-
-    if shared.metadata.library_id != LIBRARY_ID:
+    library_id = shared.metadata.library_id
+    if library_id != LIBRARY_ID and not shared.metadata.vector_index_path:
         raise IncompatibleArtifactsError(
-            f"Artifacts were fit against reference library "
-            f"{shared.metadata.library_id!r} but this install ships {LIBRARY_ID!r}. "
-            "Install a compatible eosquality release or refit against the current library."
+            f"Artifacts were fit against reference library {library_id!r} but "
+            f"this install ships {LIBRARY_ID!r}. Install a compatible "
+            "eosquality release or refit against the current library."
         )
     try:
         current = _md.version("eosquality")
-    except _md.PackageNotFoundError:
-        return
-    try:
         saved_major = Version(shared.metadata.eosquality_version).major
         current_major = Version(current).major
-    except Exception:
+    except (_md.PackageNotFoundError, InvalidVersion):
         return
     if saved_major != current_major:
         raise IncompatibleArtifactsError(
             f"Artifacts were fit with eosquality {shared.metadata.eosquality_version} "
             f"(major={saved_major}) but this install is {current} "
             f"(major={current_major}). Install a matching eosquality release or refit."
-        )
-
-
-def _validate_reference_against_library_csv(reference: pd.DataFrame) -> None:
-    """Ensure reference.input is a prefix of the canonical library SMILES."""
-    csv_path = reference_library_csv_path()
-    lib_df = pd.read_csv(csv_path, usecols=["smiles"])
-    library_smiles = list(lib_df["smiles"])
-    ref_smiles = list(reference["input"])
-    if len(ref_smiles) > len(library_smiles):
-        raise ValueError(
-            f"Reference has {len(ref_smiles):,} rows but the canonical "
-            f"library {csv_path.name} has only {len(library_smiles):,}. "
-            "Reference must be a prefix of the canonical library."
-        )
-    mismatches = [
-        i for i, (a, b) in enumerate(zip(ref_smiles, library_smiles)) if a != b
-    ]
-    if mismatches:
-        n_shown = min(3, len(mismatches))
-        examples = "; ".join(
-            f"row {i}: reference={ref_smiles[i]!r} vs library={library_smiles[i]!r}"
-            for i in mismatches[:n_shown]
-        )
-        raise ValueError(
-            f"SMILES mismatch against canonical library {csv_path.name}: "
-            f"{len(mismatches)} row(s) differ. First {n_shown}: [{examples}]."
         )

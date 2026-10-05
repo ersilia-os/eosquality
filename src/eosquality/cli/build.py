@@ -4,6 +4,7 @@ Release / maintenance tool. End users do not normally call this; the
 canonical reference library ships with each release. Used to prepare a
 replacement library for the next release, or to build a non-canonical
 index for internal testing (pass the result to ``fit --vector-index``).
+Writes the Morgan FP index plus the physchem and MACCS descriptor matrices.
 """
 
 import argparse

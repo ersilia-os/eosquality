@@ -3,9 +3,9 @@
 # matching 1000-molecule query in data/run_examples/, using *all* quality
 # scores (typicality, extremity, support, consistency, signal).
 #
-# Produces, in outputs/:
-#   outputs/artifacts_<eos>/                          per-model fit artifacts
-#   outputs/scores_<dataset>_<eos>_v1.csv             per-(model, dataset) scores
+# Produces, in output/ (or $OUT_DIR):
+#   output/artifacts_<eos>/                           per-model fit artifacts
+#   output/scores_<dataset>_<eos>_v1.csv              per-(model, dataset) scores
 #
 # Auto-discovers both the model list and the per-model query list — no
 # hardcoded MODELS / DATASETS arrays. To skip a model, remove its fit
@@ -17,8 +17,9 @@ set -eu
 cd "$(dirname "$0")/.."
 
 ALL_SCORES="typicality,extremity,support,consistency,signal"
+OUT_DIR="${OUT_DIR:-output}"
 
-mkdir -p outputs
+mkdir -p "$OUT_DIR"
 
 shopt -s nullglob
 FIT_FILES=(data/fit_examples/emh_paper_*_v1.csv)
@@ -34,7 +35,7 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
     STRIPPED="${BASENAME#emh_paper_}"     # eos4e40_v1.csv
     EOS="${STRIPPED%_v1.csv}"             # eos4e40
 
-    ARTIFACTS="outputs/artifacts_${EOS}"
+    ARTIFACTS="$OUT_DIR/artifacts_${EOS}"
     echo "==> [$EOS] eosquality fit (all scores) → $ARTIFACTS"
     rm -rf "$ARTIFACTS"
     eosquality fit \
@@ -54,9 +55,10 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
     for QUERY_INPUT in "${QUERY_FILES[@]}"; do
         QBASE="${QUERY_INPUT##*/}"                  # drugs_1000_eos4e40_v1.csv
         DATASET="${QBASE%_${EOS}_v1.csv}"           # drugs_1000
-        OUTPUT="outputs/scores_${DATASET}_${EOS}_v1.csv"
+        OUTPUT="$OUT_DIR/scores_${DATASET}_${EOS}_v1.csv"
 
         echo "==> [$EOS] eosquality run ($DATASET) → $OUTPUT"
+        rm -f "$OUTPUT"
         eosquality run \
             -i "$QUERY_INPUT" \
             -a "$ARTIFACTS" \
@@ -64,4 +66,4 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
     done
 done
 
-echo "==> done. score CSVs in outputs/."
+echo "==> done. score CSVs in $OUT_DIR/."
