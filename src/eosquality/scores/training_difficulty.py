@@ -127,6 +127,7 @@ class TrainingDifficulty(ScoreComponent):
                 + f" → {model.variant} | "
                 f"{time.perf_counter() - t:.1f}s"
             )
+            _warn_if_degraded(name, model)
         self._finish_fit(t0)
         return self
 
@@ -173,6 +174,7 @@ class TrainingDifficulty(ScoreComponent):
                 "spearman": {n: m.spearman for n, m in self._models.items()},
                 "n_labelled": {n: m.n_labelled for n, m in self._models.items()},
                 "variant": {n: m.variant for n, m in self._models.items()},
+                "cv": {n: m.cv for n, m in self._models.items()},
                 "variant_spearman": {
                     n: m.variant_spearman for n, m in self._models.items()
                 },
@@ -223,3 +225,18 @@ class TrainingDifficulty(ScoreComponent):
         self._check_fitted()
         assert self._models is not None
         return self._models
+
+
+def _warn_if_degraded(name: str, model: EndpointErrorModel) -> None:
+    """Warn when a column's error model is less trustworthy than usual."""
+    if model.cv == "random":
+        logger.warning(
+            f"training difficulty | column {name!r}: too few or too unbalanced "
+            "Murcko scaffolds for scaffold folds; random folds were used, so its "
+            "out-of-fold errors (and Spearman) are optimistic."
+        )
+    if not np.isfinite(model.spearman):
+        logger.warning(
+            f"training difficulty | column {name!r}: the error model could not be "
+            "validated (constant out-of-fold errors); its ranking is uninformative."
+        )

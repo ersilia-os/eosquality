@@ -162,3 +162,32 @@ def test_kde_matches_brute_force(smiles):
             rest = np.delete(maccs, i, axis=0)
             assert loo[i, j] == pytest.approx(brute(maccs[i : i + 1], rest)[0])
         np.testing.assert_allclose(plain[:, j], brute(new, maccs))
+
+
+def test_congeneric_series_falls_back_to_random_folds(tmp_path):
+    from eosquality.training.folds import cv_folds
+
+    subs = ["C", "CC", "Cl", "F", "Br", "O", "N", "OC", "C#N", "CO", "S", "I"]
+    smi = sorted({f"c1cc({a})ccc1{b}" for a in subs for b in subs})[:80]
+    folds, kind = cv_folds(smi, np.ones(len(smi), dtype=bool))
+    assert kind == "random" and len(set(folds)) == 5
+    folder = tmp_path / "training_eos0aaa_v1"
+    folder.mkdir()
+    y = np.random.default_rng(0).normal(size=len(smi))
+    pd.DataFrame({"smiles": smi, "y": y}).to_csv(folder / "mw.csv", index=False)
+    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)  # no crash
+    assert eq.training_difficulty.models_["mw"].cv == "random"
+
+
+def test_training_molecules_get_their_out_of_fold_difficulty(fitted):
+    from eosquality.scores._helpers import _cdf_score
+
+    training = fitted._training
+    column, vi = training.columns["mw"], training.indices["mw"]
+    model = fitted.training_difficulty.models_["mw"]
+    predicted = model.predict(column, vi, column.smiles[:25])
+    np.testing.assert_allclose(predicted, model.oof_error[:25])
+    calibrated = _cdf_score(
+        model.oof_error, model.sorted_oof_error, higher_is_higher=True
+    )
+    assert np.nanmean(calibrated) == pytest.approx(0.5, abs=0.01)

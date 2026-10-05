@@ -49,6 +49,48 @@ def scaffold_folds(smiles: list[str], n_folds: int = 5, seed: int = 0) -> np.nda
     return folds
 
 
+def cv_folds(
+    smiles: list[str],
+    labelled: np.ndarray,
+    n_folds: int = 5,
+    seed: int = 0,
+    max_fold_fraction: float = 0.4,
+) -> tuple[np.ndarray, str]:
+    """Scaffold folds when they make a usable split, else seeded random folds.
+
+    Scaffold-grouped folds give honest out-of-fold errors, but a congeneric
+    training set (one or a few Murcko scaffolds) cannot fill ``n_folds``
+    folds, and one dominant scaffold leaves a fold so large that its
+    surrogate is trained on a handful of molecules. In those cases the
+    molecules are assigned to folds at random instead.
+
+    Parameters
+    ----------
+    smiles : list of str
+        Valid SMILES.
+    labelled : numpy.ndarray
+        ``(n,)`` bool, the molecules the folds must split well.
+    n_folds : int, optional
+        Number of folds.
+    seed : int, optional
+        Seed for the group order and the random fallback.
+    max_fold_fraction : float, optional
+        Largest share of the labelled molecules one scaffold fold may hold.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, str)
+        Fold id per molecule, and ``"scaffold"`` or ``"random"``.
+    """
+    folds = scaffold_folds(smiles, n_folds, seed)
+    counts = np.bincount(folds[labelled], minlength=n_folds)
+    n_labelled = int(labelled.sum())
+    if (counts > 0).sum() == n_folds and counts.max() <= max_fold_fraction * n_labelled:
+        return folds, "scaffold"
+    rng = np.random.default_rng(seed)
+    return rng.permutation(len(smiles)) % n_folds, "random"
+
+
 def morgan_bits(smiles: list[str]) -> np.ndarray:
     """Morgan bit fingerprints (radius 2, 2048 bits) as a matrix.
 

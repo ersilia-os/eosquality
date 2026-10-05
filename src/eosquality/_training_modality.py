@@ -69,9 +69,9 @@ def fit_training_modality(
                 models = eq.training_difficulty.models_
                 st.summary = f"{len(models)} error model(s)"
             console.table(
-                ("column", "labels", "feature set", "Spearman"),
+                ("column", "labels", "folds", "feature set", "Spearman"),
                 [
-                    (n, f"{m.n_labelled:,}", m.variant, f"{m.spearman:.3f}")
+                    (n, f"{m.n_labelled:,}", m.cv, m.variant, f"{m.spearman:.3f}")
                     for n, m in models.items()
                 ],
             )

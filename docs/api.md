@@ -107,7 +107,7 @@ Scores that were not fit are left out. A row with no usable output feature has N
 - `signal_descriptor`
 - `signal_formula_version`
 - `training_distance_n_columns`, `training_distance_columns`, `training_distance_k`
-- `training_difficulty_columns`, `training_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error, for the chosen feature set), `training_difficulty_variant` (per column: the chosen feature set), `training_difficulty_variant_spearman` (per column: Spearman of each feature set), `training_difficulty_n_labelled`
+- `training_difficulty_columns`, `training_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error, for the chosen feature set), `training_difficulty_variant` (per column: the chosen feature set), `training_difficulty_variant_spearman` (per column: Spearman of each feature set), `training_difficulty_cv` (per column: `scaffold` or `random` folds), `training_difficulty_n_labelled`
 
 ### `training_details`
 

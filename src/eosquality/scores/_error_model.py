@@ -56,7 +56,7 @@ from eosquality.scores._base import read_json, require_file
 from eosquality.scores._density import KDE_NAMES, TrainingDensity
 from eosquality.scores._training_helpers import _nearest_training
 from eosquality.training.data import TrainingColumn
-from eosquality.training.folds import morgan_bits, scaffold_folds
+from eosquality.training.folds import cv_folds, morgan_bits
 from eosquality.vectorindex import VectorIndex
 
 # Minimum labelled training molecules for an endpoint to get an error model.
@@ -94,6 +94,8 @@ class EndpointErrorModel:
     sorted_oof_error: np.ndarray  # ascending OOF predicted errors (CDF table)
     n_labelled: int
     variant_spearman: dict[str, float] = field(default_factory=dict)
+    cv: str = "scaffold"  # "scaffold", or "random" when scaffolds cannot split
+    oof_error: np.ndarray | None = None  # (n,) OOF predicted error per molecule
 
     @property
     def spearman(self) -> float:
@@ -138,6 +140,18 @@ class EndpointErrorModel:
             return np.zeros(0)
         dist, nn, _ = _nearest_training(vi, smiles, self.k)
         surrogate = _surrogate_predict(self.surrogate, morgan_bits(smiles), self.binary)
+        # A query that is a training molecule gets exactly its fit-time inputs:
+        # its out-of-fold prediction and variance (the final surrogate saw its
+        # label) and its self-kNN neighbours (FPSim2 may order ties differently).
+        index = {s: i for i, s in enumerate(column.smiles)}
+        rows = np.array([index.get(s, -1) for s in smiles])
+        known = rows >= 0
+        if known.any():
+            t = rows[known]
+            dist[known] = vi.self_knn_distances(self.k)[t]
+            nn[known] = vi.self_knn_indices(self.k)[t]
+            surrogate[known, 0] = self.oof_prediction[t]
+            surrogate[known, 1] = self.oof_variance[t]
         maccs = compute_maccs(smiles, show_progress=False)
         position = {
             column.smiles[r]: p for p, r in enumerate(self.density.reference_rows)
@@ -156,7 +170,13 @@ class EndpointErrorModel:
             maccs=maccs,
             binary=self.binary,
         )
-        return self.error_model.predict(_variant_matrix(blocks, self.variant))
+        predicted = self.error_model.predict(_variant_matrix(blocks, self.variant))
+        if known.any() and self.oof_error is not None:
+            # The final error model saw training molecules; their out-of-fold
+            # prediction is the value the calibration table was built from.
+            own = self.oof_error[rows[known]]
+            predicted[known] = np.where(np.isfinite(own), own, predicted[known])
+        return predicted
 
     def save(self, folder: pathlib.Path) -> None:
         """Write the models, arrays and ``state.json`` into ``folder``.
@@ -176,6 +196,7 @@ class EndpointErrorModel:
             oof_prediction=self.oof_prediction,
             oof_variance=self.oof_variance,
             sorted_oof_error=self.sorted_oof_error,
+            oof_error=self.oof_error,
         )
         state = {
             "name": self.name,
@@ -183,6 +204,7 @@ class EndpointErrorModel:
             "k": self.k,
             "variant": self.variant,
             "variant_spearman": self.variant_spearman,
+            "cv": self.cv,
             "n_labelled": self.n_labelled,
             "features": self.features,
             "sklearn_version": sklearn.__version__,
@@ -230,10 +252,12 @@ class EndpointErrorModel:
             oof_prediction=arrays["oof_prediction"],
             oof_variance=arrays["oof_variance"],
             sorted_oof_error=arrays["sorted_oof_error"],
+            oof_error=arrays.get("oof_error"),
             n_labelled=int(state["n_labelled"]),
             variant_spearman={
                 k: float(v) for k, v in state["variant_spearman"].items()
             },
+            cv=state.get("cv", "scaffold"),
         )
 
 
@@ -272,7 +296,7 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
     binary = column.y_kind == "binary"
     labelled = np.isfinite(y)
     X = morgan_bits(column.smiles)
-    folds = scaffold_folds(column.smiles, N_FOLDS, SEED)
+    folds, cv = cv_folds(column.smiles, labelled, N_FOLDS, SEED)
     surrogate_oof = _oof(
         lambda: _new_surrogate(binary),
         X,
@@ -318,8 +342,10 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
         oof_prediction=prediction,
         oof_variance=variance,
         sorted_oof_error=np.sort(oof_error[target & np.isfinite(oof_error)]),
+        oof_error=oof_error,
         n_labelled=int(labelled.sum()),
         variant_spearman=variant_spearman,
+        cv=cv,
     )
 
 

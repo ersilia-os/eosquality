@@ -128,7 +128,7 @@ How to read the two values: higher is farther for both. The raw value means the 
 Training difficulty asks how hard the query is to predict, judging by the training data. It needs labels `y` and gives **one value per molecule for the whole model**. Distance measures novelty; difficulty also catches regions that are close to the training set but hard to learn: noisy assays, activity cliffs, chemotypes the labels disagree on.
 
 It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own:
-1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
+1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. A congeneric training set, with fewer usable Murcko scaffolds than folds or one scaffold holding over 40% of the labelled molecules, falls back to random folds; the fit warns that its out-of-fold errors are then optimistic, and the metadata records `cv`. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
 2. **Inputs**, grouped as in UNIQUE:
    - **Base UQ methods:**
      - kNN distance: the mean Tanimoto distance to the 5 nearest *other* training molecules.
@@ -155,6 +155,8 @@ How to read it:
 - Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`, and `training_difficulty_variant_spearman` for all three feature sets) and in the fit log before trusting it. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
 
 Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
+
+A query that is itself a training molecule gets its own out-of-fold predicted error, the value the calibration table was built from. Re-using the final surrogate and error model for it would be in-sample, since both were trained on its label, and would rate it optimistically easy.
 
 The surrogate, densities and error model are saved with joblib (pickle), so only load artifacts from a trusted source. The scikit-learn version is recorded, and loading with another version is refused (refit).
 
