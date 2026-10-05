@@ -78,26 +78,32 @@ def ensure_library_downloaded(
 ) -> pathlib.Path:
     """Return a local path to the reference library, fetching it if missing.
 
+    Files are fetched into a temporary folder, the library identity is
+    verified, and only then is the folder moved into the cache, so a failed
+    download never leaves a half-populated cache.
+
     Parameters
     ----------
-    base_url:
-        Public HTTPS prefix under which library folders live. Must end with
-        ``/``. Example: ``https://eosvc-public.s3.amazonaws.com/eosquality/indices/``.
-    dirname:
-        Folder name on S3 and in the local cache (e.g. ``ersilia_reference_library_v0``).
-    cache_dir:
-        Parent directory for cached libraries. The resolved library path is
+    base_url : str
+        Public HTTPS prefix under which library folders live, e.g.
+        ``https://eosvc-public.s3.amazonaws.com/eosquality/indices/``.
+    dirname : str
+        Folder name on S3 and in the cache, e.g. ``ersilia_reference_library_v0``.
+    cache_dir : pathlib.Path
+        Parent directory of cached libraries.
+    expected_library_id : str
+        Required ``library_name`` of the downloaded ``metadata.json``.
+    force : bool, optional
+        Redownload even when a valid cached copy exists.
+
+    Returns
+    -------
+    pathlib.Path
         ``cache_dir / dirname``.
-    expected_library_id:
-        Value that the downloaded ``metadata.json`` ``library_name`` must equal.
-        Protects against a stale or wrong bucket being configured.
-    force:
-        If True, redownload even when a cached copy exists.
     """
     if not base_url.endswith("/"):
         base_url = base_url + "/"
     library_dir = cache_dir / dirname
-
     if not force and is_library_cached_and_valid(library_dir, expected_library_id):
         _console.print(
             f"[dim]↪ reference library cached [/dim]"
@@ -106,44 +112,16 @@ def ensure_library_downloaded(
         return library_dir
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-
     _console.rule(f"[bold]Downloading reference library[/bold] [cyan]{dirname}[/cyan]")
     _console.print(f"[dim]source:[/dim]      {base_url}{dirname}/")
     _console.print(f"[dim]destination:[/dim] {library_dir}")
-    if force:
-        _console.print("[dim]mode:[/dim]        force (redownloading)")
-
-    total_bytes = 0
     with tempfile.TemporaryDirectory(prefix=f".{dirname}.", dir=cache_dir) as tmp_str:
         tmp_dir = pathlib.Path(tmp_str)
-        with _build_progress() as progress:
-            for filename in _LIBRARY_FILES:
-                src = f"{base_url}{dirname}/{filename}"
-                dst = tmp_dir / filename
-                total_bytes += _download_one(src, dst, progress)
-
-        # Integrity: the library_name inside the just-fetched metadata.json
-        # must match what we asked for. Mismatch means the remote was moved
-        # out from under us or the base URL is misconfigured.
-        fetched_id = _read_library_name(tmp_dir / "metadata.json")
-        if fetched_id != expected_library_id:
-            raise LibraryDownloadError(
-                f"Downloaded reference library has library_name "
-                f"{fetched_id!r} but this eosquality expects "
-                f"{expected_library_id!r}. Wrong base URL or stale bucket."
-            )
-        _console.print(
-            f"[green]✓[/green] integrity check passed "
-            f"[dim](library_name={fetched_id!r})[/dim]"
-        )
-
-        # Atomic swap: remove any existing (stale/partial) folder, then move
-        # the verified tmp folder into place. shutil.move handles cross-fs
-        # case even though tmp is inside cache_dir here.
+        total_bytes = _fetch_verified(base_url, dirname, tmp_dir, expected_library_id)
+        # Atomic swap: replace any stale/partial folder with the verified one.
         if library_dir.exists():
             shutil.rmtree(library_dir)
         shutil.move(str(tmp_dir), str(library_dir))
-
     _console.print(
         f"[green]✓[/green] reference library ready "
         f"[dim]({_fmt_bytes(total_bytes)} across {len(_LIBRARY_FILES)} files)[/dim] "
@@ -151,6 +129,28 @@ def ensure_library_downloaded(
     )
     _console.rule()
     return library_dir
+
+
+def _fetch_verified(
+    base_url: str, dirname: str, tmp_dir: pathlib.Path, expected_library_id: str
+) -> int:
+    """Download every library file into ``tmp_dir`` and check the library identity."""
+    total_bytes = 0
+    with _build_progress() as progress:
+        for filename in _LIBRARY_FILES:
+            src = f"{base_url}{dirname}/{filename}"
+            total_bytes += _download_one(src, tmp_dir / filename, progress)
+    fetched_id = _read_library_name(tmp_dir / "metadata.json")
+    if fetched_id != expected_library_id:
+        raise LibraryDownloadError(
+            f"Downloaded reference library has library_name {fetched_id!r} but "
+            f"this eosquality expects {expected_library_id!r}. Wrong base URL or "
+            "stale bucket."
+        )
+    _console.print(
+        f"[green]✓[/green] integrity check passed [dim](library_name={fetched_id!r})[/dim]"
+    )
+    return total_bytes
 
 
 def _build_progress() -> Progress:

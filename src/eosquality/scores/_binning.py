@@ -115,7 +115,9 @@ def encode_edges(edges: np.ndarray) -> list[float]:
         (
             _NEG_INF_SENTINEL
             if v == -np.inf
-            else _POS_INF_SENTINEL if v == np.inf else float(v)
+            else _POS_INF_SENTINEL
+            if v == np.inf
+            else float(v)
         )
         for v in edges
     ]
@@ -128,7 +130,9 @@ def decode_edges(encoded: list[float]) -> np.ndarray:
             (
                 -np.inf
                 if v <= _NEG_INF_SENTINEL
-                else np.inf if v >= _POS_INF_SENTINEL else v
+                else np.inf
+                if v >= _POS_INF_SENTINEL
+                else v
             )
             for v in encoded
         ],

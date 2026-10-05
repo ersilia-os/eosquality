@@ -28,36 +28,56 @@ def map_rows(
 ) -> np.ndarray:
     """Fill ``out[i] = fn(items[i])`` for every item and return ``out``.
 
-    ``fn`` must be a module-level (picklable) function. Inputs of at least
-    :data:`PARALLEL_MIN_ITEMS` use ``multiprocessing.Pool.imap`` with
-    ``n_jobs`` workers (default: every CPU). ``show_progress=None`` shows a
-    progress bar only for parallel (library-build-sized) inputs.
+    Parameters
+    ----------
+    fn : callable
+        Module-level (picklable) function mapping one item to one row.
+    items : sequence of str
+        Inputs, one per output row.
+    out : numpy.ndarray
+        Preallocated output with ``len(items)`` rows.
+    label : str
+        Progress-bar title.
+    n_jobs : int, optional
+        Worker processes for parallel runs (default: every CPU).
+    chunksize : int, optional
+        Items per task sent to a worker.
+    show_progress : bool, optional
+        Show a progress bar; ``None`` shows it only for parallel runs.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``out``, filled. Inputs of at least :data:`PARALLEL_MIN_ITEMS` use a
+        process pool; smaller ones run in-process.
     """
     n = len(items)
     if n == 0:
         return out
     n_jobs = max(1, min(n_jobs or os.cpu_count() or 1, n))
     parallel = n_jobs > 1 and n >= PARALLEL_MIN_ITEMS
-    if show_progress is None:
-        show_progress = parallel
-    progress = make_progress(label) if show_progress else None
+    progress = (
+        make_progress(label)
+        if (show_progress is None and parallel) or show_progress
+        else None
+    )
     task_id = progress.add_task(label, total=n) if progress is not None else None
     if progress is not None:
         progress.start()
     try:
         if parallel:
             with mp.Pool(processes=n_jobs) as pool:
-                rows = pool.imap(fn, items, chunksize=chunksize)
-                for i, row in enumerate(rows):
-                    out[i] = row
-                    if progress is not None:
-                        progress.advance(task_id)
+                _fill(out, pool.imap(fn, items, chunksize=chunksize), progress, task_id)
         else:
-            for i, item in enumerate(items):
-                out[i] = fn(item)
-                if progress is not None:
-                    progress.advance(task_id)
+            _fill(out, map(fn, items), progress, task_id)
     finally:
         if progress is not None:
             progress.stop()
     return out
+
+
+def _fill(out: np.ndarray, rows, progress, task_id) -> None:
+    for i, row in enumerate(rows):
+        out[i] = row
+        if progress is not None:
+            progress.advance(task_id)

@@ -105,11 +105,19 @@ class TrainingDomain(ScoreComponent):
     def run(self, query: pd.DataFrame) -> TrainingDomainRunResult:
         """Score query molecules against every training column.
 
-        ``query`` needs an ``'input'`` SMILES column; ``key`` (if present)
-        labels the rows of the details table.
+        Parameters
+        ----------
+        query : pandas.DataFrame
+            Needs an ``input`` SMILES column; ``key`` (if present) labels the
+            rows of the details table.
+
+        Returns
+        -------
+        TrainingDomainRunResult
+            Summary across columns, per-column details and run metadata.
         """
         self._check_fitted()
-        assert self._training is not None and self._loo is not None
+        assert self._training is not None
         if "input" not in query.columns:
             raise ValueError("TrainingDomain.run requires an 'input' SMILES column.")
         idx = list(query.index)
@@ -119,64 +127,35 @@ class TrainingDomain(ScoreComponent):
             else [str(i) for i in idx]
         )
         std = [_standardize(s) for s in query["input"]]
-        valid = np.array([s is not None for s in std])
-        query_smiles = [s if s is not None else "" for s in std]
+        rows_valid = np.flatnonzero([s is not None for s in std])
+        valid_smiles = [std[i] for i in rows_valid]
 
         names = self._training.column_names
         calibrated = np.full((len(query), len(names)), np.nan)
         raw = np.full((len(query), len(names)), np.nan)
         in_train = np.zeros((len(query), len(names)), dtype=bool)
-        rows: list[dict[str, Any]] = []
+        details = []
         for j, name in enumerate(names):
-            column = self._training.columns[name]
-            vi = self._training.indices[name]
-            k = min(N_NEIGHBORS, column.n - 1)
-            sims, nn_idx, self_hit = _nearest_training(
-                vi, [query_smiles[i] for i in np.flatnonzero(valid)], k
-            )
-            rows_valid = np.flatnonzero(valid)
+            sims, nn_idx, self_hit = self._score_column(name, valid_smiles)
             raw[rows_valid, j] = sims[:, 0]
             in_train[rows_valid, j] = self_hit
             calibrated[rows_valid, j] = _cdf_score(
                 sims[:, 0], self._loo[name], higher_is_higher=True
             )
-            for r, i in enumerate(rows_valid):
-                rows.append(
-                    {
-                        "key": keys[i],
-                        "column": name,
-                        "domain": calibrated[i, j],
-                        "domain_raw": raw[i, j],
-                        "n_train": column.n,
-                        "in_training": bool(self_hit[r]),
-                        "nn_keys": "|".join(column.ids[t] for t in nn_idx[r]),
-                        "nn_similarities": "|".join(f"{v:.3f}" for v in sims[r]),
-                        "nn_y": (
-                            "|".join(_fmt(column.y[t]) for t in nn_idx[r])
-                            if column.y is not None
-                            else ""
-                        ),
-                    }
+            details.append(
+                _details_rows(
+                    [keys[i] for i in rows_valid],
+                    self._training.columns[name],
+                    calibrated[rows_valid, j],
+                    sims,
+                    nn_idx,
+                    self_hit,
                 )
-
+            )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN rows
             summary = np.nanquantile(calibrated, SUMMARY_QUANTILE, axis=1)
             summary_raw = np.nanquantile(raw, SUMMARY_QUANTILE, axis=1)
-        details = pd.DataFrame(
-            rows,
-            columns=[
-                "key",
-                "column",
-                "domain",
-                "domain_raw",
-                "n_train",
-                "in_training",
-                "nn_keys",
-                "nn_similarities",
-                "nn_y",
-            ],
-        )
         return TrainingDomainRunResult(
             score=pd.Series(summary, index=idx, name="training_domain"),
             score_raw=pd.Series(summary_raw, index=idx, name="training_domain_raw"),
@@ -188,13 +167,20 @@ class TrainingDomain(ScoreComponent):
             in_training_any=pd.Series(
                 in_train.any(axis=1), index=idx, name="in_training_any"
             ),
-            details=details,
+            details=pd.concat(details, ignore_index=True)
+            if details
+            else pd.DataFrame(columns=DETAIL_COLUMNS),
             metadata={
                 "n_columns": len(names),
                 "columns": names,
                 "summary_quantile": SUMMARY_QUANTILE,
             },
         )
+
+    def _score_column(self, name: str, query_smiles: list[str]):
+        column = self._training.columns[name]
+        k = min(N_NEIGHBORS, column.n - 1)
+        return _nearest_training(self._training.indices[name], query_smiles, k)
 
     # ------------------------------------------------------------------
     # Save / load
@@ -246,6 +232,41 @@ class TrainingDomain(ScoreComponent):
         self._check_fitted()
         assert self._reference_domain is not None
         return dict(self._reference_domain)
+
+
+DETAIL_COLUMNS = [
+    "key",
+    "column",
+    "domain",
+    "domain_raw",
+    "n_train",
+    "in_training",
+    "nn_keys",
+    "nn_similarities",
+    "nn_y",
+]
+
+
+def _details_rows(keys, column, domain, sims, nn_idx, self_hit) -> pd.DataFrame:
+    """One details row per query for one training column."""
+    ids = column.ids
+    return pd.DataFrame(
+        {
+            "key": keys,
+            "column": column.name,
+            "domain": domain,
+            "domain_raw": sims[:, 0] if len(sims) else [],
+            "n_train": column.n,
+            "in_training": self_hit,
+            "nn_keys": ["|".join(ids[t] for t in row) for row in nn_idx],
+            "nn_similarities": ["|".join(f"{v:.3f}" for v in row) for row in sims],
+            "nn_y": [
+                "|".join(_fmt(column.y[t]) for t in row) if column.y is not None else ""
+                for row in nn_idx
+            ],
+        },
+        columns=DETAIL_COLUMNS,
+    )
 
 
 def _nearest_training(vi, query_smiles: list[str], k: int):

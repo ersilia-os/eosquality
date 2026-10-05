@@ -1,4 +1,4 @@
-"""CLI handler for ``eosquality build`` — build a vector index from a SMILES CSV.
+"""``eosquality build`` — build a vector index from a SMILES CSV.
 
 Release / maintenance tool. End users do not normally call this; the
 canonical reference library ships with each release. Used to prepare a
@@ -7,137 +7,112 @@ index for internal testing (pass the result to ``fit --vector-index``).
 Writes the Morgan FP index plus the physchem and MACCS descriptor matrices.
 """
 
-import argparse
 import pathlib
-import sys
 
+import click
 import pandas as pd
 
-from eosquality import set_verbosity
 from eosquality.basic_descriptors import BasicDescriptors
+from eosquality.cli._common import CliError, run_command, say, verbose_option
 from eosquality.vectorindex import VectorIndex
 
 
-def cmd_build(args: argparse.Namespace) -> int:
-    """Argparse handler for ``eosquality build``."""
-    if args.verbose:
-        set_verbosity(True)
+@click.command(
+    "build",
+    help=(
+        "Build a Morgan-fingerprint kNN index (plus physchem and MACCS matrices) "
+        "for a SMILES library. A release / maintenance tool: use it to prepare "
+        "the next canonical reference library, or a non-canonical index for "
+        "testing (pass the result to 'fit --vector-index')."
+    ),
+    short_help="(release tool) Build a vector index from a reference library CSV.",
+)
+@click.option(
+    "--input",
+    "-i",
+    "input_path",
+    required=True,
+    metavar="PATH",
+    help="Reference library CSV file (must have a 'smiles' column).",
+)
+@click.option(
+    "--output", "-o", required=True, metavar="PATH", help="Output folder for the index."
+)
+@click.option(
+    "--max-k",
+    default=50,
+    show_default=True,
+    metavar="K",
+    help="Maximum k to pre-compute for self-kNN.",
+)
+@click.option(
+    "--radius", default=2, show_default=True, metavar="R", help="Morgan radius."
+)
+@click.option(
+    "--n-bits", default=2048, show_default=True, metavar="N", help="Morgan bits."
+)
+@click.option(
+    "--max-samples",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Truncate input to the first N molecules (for testing).",
+)
+@verbose_option
+def build(
+    input_path: str,
+    output: str,
+    max_k: int,
+    radius: int,
+    n_bits: int,
+    max_samples: int | None,
+    verbose: bool,
+) -> None:
+    """Build the vector index and descriptor matrices for a SMILES library.
 
-    try:
-        df = pd.read_csv(args.input)
-    except Exception as exc:
-        print(
-            f"error: could not read library file '{args.input}': {exc}", file=sys.stderr
+    Parameters
+    ----------
+    input_path : str
+        Library CSV with a ``smiles`` column.
+    output : str
+        Output folder.
+    max_k, radius, n_bits : int
+        Self-kNN depth and Morgan fingerprint parameters.
+    max_samples : int or None
+        Optional truncation for testing.
+    verbose : bool
+        Print debug messages.
+    """
+
+    def work():
+        try:
+            df = pd.read_csv(input_path)
+        except Exception as exc:
+            raise CliError(
+                f"could not read library file '{input_path}': {exc}"
+            ) from exc
+        if "smiles" not in df.columns:
+            raise CliError(
+                f"library CSV must contain a 'smiles' column (found: {list(df.columns)})"
+            )
+        smiles = list(df["smiles"])[:max_samples] if max_samples else list(df["smiles"])
+        say(
+            f"Building vector index for {len(smiles):,} molecules → {output}", err=False
         )
-        return 1
+        try:
+            VectorIndex.build(
+                smiles=smiles,
+                output_dir=output,
+                max_k=max_k,
+                radius=radius,
+                n_bits=n_bits,
+                verbose=verbose,
+                library_name=pathlib.Path(input_path).stem,
+            )
+            BasicDescriptors.build_physchem(smiles, output)
+            BasicDescriptors.build_maccs(smiles, output)
+        except Exception as exc:
+            raise CliError(f"index build failed: {exc}") from exc
+        say(f"Vector index saved → {output}", err=False)
 
-    if "smiles" not in df.columns:
-        print(
-            f"error: library CSV must contain a 'smiles' column "
-            f"(found: {list(df.columns)})",
-            file=sys.stderr,
-        )
-        return 1
-
-    smiles = list(df["smiles"])
-    print(f"Building vector index for {len(smiles):,} molecules → {args.output}")
-
-    if args.max_samples is not None:
-        smiles_for_basics = smiles[: args.max_samples]
-    else:
-        smiles_for_basics = smiles
-
-    try:
-        VectorIndex.build(
-            smiles=smiles,
-            output_dir=args.output,
-            max_k=args.max_k,
-            radius=args.radius,
-            n_bits=args.n_bits,
-            verbose=args.verbose,
-            library_name=pathlib.Path(args.input).stem,
-            max_samples=args.max_samples,
-        )
-        BasicDescriptors.build_physchem(
-            smiles=smiles_for_basics,
-            output_dir=args.output,
-        )
-        BasicDescriptors.build_maccs(
-            smiles=smiles_for_basics,
-            output_dir=args.output,
-        )
-    except Exception as exc:
-        print(f"error: index build failed: {exc}", file=sys.stderr)
-        return 1
-
-    if not args.verbose:
-        print(f"Vector index saved → {args.output}")
-    return 0
-
-
-def register_subparsers(subparsers) -> None:
-    """Attach the ``build`` subcommand to *subparsers*."""
-    build_p = subparsers.add_parser(
-        "build",
-        help="(release tool) Build a vector index from a reference library CSV.",
-        description=(
-            "Build a Morgan-fingerprint kNN index for a SMILES library. "
-            "This is a release / maintenance tool used to produce the canonical "
-            "reference library that ships with each major version of eosquality — "
-            "end users do not normally need to run it. Use it to prepare a "
-            "replacement library for the next release, or to build a non-canonical "
-            "index for internal testing (pass the result to 'fit --vector-index')."
-        ),
-    )
-    build_p.add_argument(
-        "--input",
-        "-i",
-        required=True,
-        metavar="PATH",
-        help="Path to the reference library CSV file (must have a 'smiles' column).",
-    )
-    build_p.add_argument(
-        "--output",
-        "-o",
-        required=True,
-        metavar="PATH",
-        help="Output folder for the vector index (e.g. data/indices/ersilia_reference_library/).",
-    )
-    build_p.add_argument(
-        "--max-k",
-        type=int,
-        default=50,
-        dest="max_k",
-        metavar="K",
-        help="Maximum k to pre-compute for self-kNN (default: 50).",
-    )
-    build_p.add_argument(
-        "--radius",
-        type=int,
-        default=2,
-        metavar="R",
-        help="Morgan radius (default: 2).",
-    )
-    build_p.add_argument(
-        "--n-bits",
-        type=int,
-        default=2048,
-        dest="n_bits",
-        metavar="N",
-        help="Number of bits in the Morgan vector (default: 2048).",
-    )
-    build_p.add_argument(
-        "--max-samples",
-        type=int,
-        default=None,
-        dest="max_samples",
-        metavar="N",
-        help="Truncate input to the first N molecules (for testing).",
-    )
-    build_p.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Print progress information.",
-    )
-    build_p.set_defaults(func=cmd_build)
+    run_command(work, verbose=verbose)

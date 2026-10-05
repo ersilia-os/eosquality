@@ -19,6 +19,6 @@ jobs:
       - name: Lint
         run: |
           ruff check src tests scripts
-          black --check src tests scripts
+          ruff format --check src tests scripts
       - name: Test
         run: pytest -q

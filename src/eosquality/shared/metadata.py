@@ -99,76 +99,54 @@ def compute_metadata(
 
     Parameters
     ----------
-    df:
-        The reference DataFrame passed to fit().
-    eos_id:
-        Validated EOS model identifier (e.g. "eos4e40").
-    version:
-        Validated dataset version string (e.g. "v1").
+    df : pandas.DataFrame
+        The reference passed to ``fit``; only numeric output columns are
+        described (``key`` / ``input`` are skipped).
+    eos_id : str
+        Validated EOS model identifier, e.g. ``"eos4e40"``.
+    version : str
+        Validated dataset version, e.g. ``"v1"``.
 
     Returns
     -------
     FitMetadata
+        Provenance plus per-column stats, missing counts and characteristics.
     """
-    # Only report stats for numeric feature columns (skip key/input metadata cols)
     columns = [
         c
         for c in df.columns
         if c not in ERSILIA_METADATA_COLUMNS and pd.api.types.is_numeric_dtype(df[c])
     ]
-
-    # Per-column descriptive stats from raw data
-    desc = df.describe()
-    column_stats: dict[str, dict[str, float]] = {}
-    for col in columns:
-        if col in desc.columns:
-            col_desc = desc[col]
-            column_stats[col] = {
-                "mean": float(col_desc.get("mean", float("nan"))),
-                "std": float(col_desc.get("std", float("nan"))),
-                "min": float(col_desc.get("min", float("nan"))),
-                "max": float(col_desc.get("max", float("nan"))),
-                "median": float(df[col].median()),
-            }
-        else:
-            column_stats[col] = {
-                "mean": float("nan"),
-                "std": float("nan"),
-                "min": float("nan"),
-                "max": float("nan"),
-                "median": float("nan"),
-            }
-
-    missing_counts = {col: int(df[col].isna().sum()) for col in columns}
-
-    column_characteristics = {
-        col: compute_column_characteristics(df[col]) for col in columns
-    }
-
-    logger.debug(f"Column characteristics | {len(columns)} columns")
-    for col, chars in column_characteristics.items():
+    characteristics = {col: compute_column_characteristics(df[col]) for col in columns}
+    for col, chars in characteristics.items():
         logger.debug(
-            f"  {col}: kind={chars.kind}"
-            f" | sparsity={chars.sparsity:.3f}"
-            f" | missing={chars.missing_fraction:.3f}"
+            f"  {col}: kind={chars.kind} | sparsity={chars.sparsity:.3f} | "
+            f"missing={chars.missing_fraction:.3f}"
         )
-
     try:
         eq_version = importlib.metadata.version("eosquality")
     except importlib.metadata.PackageNotFoundError:
         eq_version = "unknown"
-
-    fit_timestamp = datetime.now(tz=timezone.utc).isoformat()
-
     return FitMetadata(
         eos_id=eos_id,
         version=version,
         n_samples=len(df),
         n_features=len(columns),
         columns=columns,
-        column_stats=column_stats,
-        missing_counts=missing_counts,
-        fit_timestamp=fit_timestamp,
+        column_stats={col: _column_stats(df[col]) for col in columns},
+        missing_counts={col: int(df[col].isna().sum()) for col in columns},
+        fit_timestamp=datetime.now(tz=timezone.utc).isoformat(),
         eosquality_version=eq_version,
-        column_characteristics=column_characteristics,
+        column_characteristics=characteristics,
     )
+
+
+def _column_stats(series: pd.Series) -> dict[str, float]:
+    """Mean, std, min, max and median of a numeric column (NaN skipped)."""
+    return {
+        "mean": float(series.mean()),
+        "std": float(series.std()),
+        "min": float(series.min()),
+        "max": float(series.max()),
+        "median": float(series.median()),
+    }

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-import numpy as np
 import pandas as pd
 
 from eosquality.preprocess import PreprocessPipeline
@@ -29,81 +28,60 @@ def fit_shared(
 ) -> SharedFitState:
     """Compute the shared fit state from a raw reference DataFrame.
 
-    The scaled reference matrix is available as ``state.ref_repr``
-    (``(n_ref, n_selected)``); when ``max_features`` triggers a reduction
-    it is already projected onto ``state.selected_columns``.
-
     Parameters
     ----------
-    max_features:
-        Cap on the number of features kept after correlation-cluster
-        medoid selection. ``None`` disables the step. When the reference
-        has at most ``max_features`` columns, all columns are kept.
+    reference : pandas.DataFrame
+        Predictions on the reference library.
+    eos_id, version : str
+        Model identifier and dataset version.
+    library_id : str, optional
+        Identifier of the vector index the reference is aligned with.
+    vector_index_path : str, optional
+        Absolute path of a non-canonical index (``""`` for the canonical one).
+    max_features : int, optional
+        Cap on columns kept by correlation-cluster medoid selection; ``None``
+        disables it.
 
-    Records the wall-clock duration of this call on
-    ``state.metadata.fit_duration_seconds`` for diagnostics.
+    Returns
+    -------
+    SharedFitState
+        Schema, scaler, metadata, splits, selected columns and ``ref_repr``
+        (the scaled reference projected onto the selected columns).
     """
     t0 = time.perf_counter()
-    logger.info(
-        f"fit_shared | inferring schema | {len(reference):,} rows × "
-        f"{reference.shape[1]} columns"
-    )
     schema = infer_schema(reference)
     metadata = compute_metadata(reference, eos_id=eos_id, version=version)
     metadata.library_id = library_id
     metadata.vector_index_path = vector_index_path
-
     logger.reference_table(
         n_samples=len(reference),
         n_features=len(schema.columns),
         column_names=schema.column_names,
     )
-
-    t_pipe = time.perf_counter()
-    logger.info(
-        f"fit_shared | eosframes fit_transform | {len(reference):,} rows × "
-        f"{len(schema.columns)} numeric columns"
-    )
     pipeline = PreprocessPipeline(schema=schema)
     ref_repr_full = pipeline.fit_transform(reference)
     pipeline_state = pipeline.get_state()
-    logger.info(f"fit_shared | eosframes done | {time.perf_counter() - t_pipe:.1f}s")
-
-    t_fs = time.perf_counter()
     selected_columns = select_features_by_correlation(
         ref_repr_full, schema.column_names, max_features
     )
-    if len(selected_columns) < len(schema.column_names):
-        name_to_idx = {n: i for i, n in enumerate(schema.column_names)}
-        selected_idx = np.asarray(
-            [name_to_idx[c] for c in selected_columns], dtype=np.int64
-        )
-        ref_repr = ref_repr_full[:, selected_idx]
-        logger.info(
-            f"fit_shared | feature selection | {len(schema.column_names)} → "
-            f"{len(selected_columns)} (max_features={max_features}) | "
-            f"{time.perf_counter() - t_fs:.1f}s"
-        )
-    else:
-        ref_repr = ref_repr_full
-        logger.info(
-            f"fit_shared | feature selection skipped "
-            f"(n_features={len(schema.column_names)} ≤ max_features={max_features})"
-        )
-
-    splits = Splitter().split(len(reference))
-
+    name_to_idx = {n: i for i, n in enumerate(schema.column_names)}
+    ref_repr = (
+        ref_repr_full[:, [name_to_idx[c] for c in selected_columns]]
+        if len(selected_columns) < len(schema.column_names)
+        else ref_repr_full
+    )
     metadata.fit_duration_seconds = float(time.perf_counter() - t0)
-    logger.info(f"fit_shared | done | total {metadata.fit_duration_seconds:.1f}s")
-
-    state = SharedFitState(
+    logger.info(
+        f"fit_shared | {len(reference):,} rows × {len(schema.columns)} columns → "
+        f"{len(selected_columns)} selected | {metadata.fit_duration_seconds:.1f}s"
+    )
+    return SharedFitState(
         schema=schema,
         scaler_params=pipeline_state["scaler_params"],
         binary_class_freq=pipeline_state["binary_class_freq"],
         metadata=metadata,
         reference_ids=list(reference.index),
-        splits=splits,
+        splits=Splitter().split(len(reference)),
         ref_repr=ref_repr,
         selected_columns=selected_columns,
     )
-    return state

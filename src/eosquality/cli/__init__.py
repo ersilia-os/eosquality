@@ -2,14 +2,12 @@
 
 Each subcommand lives in its own module under this package:
 
-- :mod:`eosquality.cli.build` registers ``build``.
-- :mod:`eosquality.cli.download` registers ``download``.
-- :mod:`eosquality.cli.fit` registers ``fit``.
-- :mod:`eosquality.cli.run` registers ``run``.
+- :mod:`eosquality.cli.build` defines ``build``.
+- :mod:`eosquality.cli.download` defines ``download``.
+- :mod:`eosquality.cli.fit` defines ``fit``.
+- :mod:`eosquality.cli.run` defines ``run``.
 
-This module is just the dispatcher: it builds the argparse tree by
-calling each submodule's ``register_subparsers``, parses ``sys.argv``,
-and invokes the selected command.
+This module is the Click group that dispatches to them.
 
 End-user workflow
 -----------------
@@ -36,54 +34,47 @@ build a non-canonical index for internal testing and fit against it::
     eosquality fit --reference eos4e40_v1.csv --output artifacts/ --vector-index /tmp/idx/
 """
 
-import argparse
 import importlib.metadata
-import sys
+
+import click
 
 from eosquality import set_log_level
-from eosquality.cli.build import register_subparsers as _register_build
-from eosquality.cli.download import register_subparsers as _register_download
-from eosquality.cli.fit import register_subparsers as _register_fit
-from eosquality.cli.run import register_subparsers as _register_run
+from eosquality.cli.build import build
+from eosquality.cli.download import download
+from eosquality.cli.fit import fit
+from eosquality.cli.run import run
+
+try:
+    _VERSION = importlib.metadata.version("eosquality")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "unknown"
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Construct the top-level ``eosquality`` argparse tree."""
-    parser = argparse.ArgumentParser(
-        prog="eosquality",
-        description="Assess the quality of query data against a fitted reference population.",
-    )
-    try:
-        _pkg_version = importlib.metadata.version("eosquality")
-    except importlib.metadata.PackageNotFoundError:
-        _pkg_version = "unknown"
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {_pkg_version}",
-    )
+@click.group(
+    help="Assess the quality of Ersilia model predictions.",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(_VERSION, prog_name="eosquality")
+def cli() -> None:
+    """Show INFO-level progress for every subcommand (``-v`` adds DEBUG)."""
+    set_log_level("INFO")
 
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
-    subparsers.required = True
 
-    _register_build(subparsers)
-    _register_download(subparsers)
-    _register_fit(subparsers)
-    _register_run(subparsers)
-
-    return parser
+cli.add_command(build)
+cli.add_command(download)
+cli.add_command(fit)
+cli.add_command(run)
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse ``argv`` (default ``sys.argv``) and dispatch to the subcommand.
+    """Run the CLI on ``argv`` (default ``sys.argv[1:]``) and exit with its status.
 
-    The CLI shows INFO-level progress by default; ``-v`` adds DEBUG output
-    and the diagnostic tables.
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments, without the program name.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    set_log_level("INFO")
-    sys.exit(args.func(args))
+    cli.main(args=argv, prog_name="eosquality")
 
 
 if __name__ == "__main__":
