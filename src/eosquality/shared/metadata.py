@@ -65,7 +65,8 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
 #   3 — support calibrated per fingerprint-size bin (reverted in 4).
 #   4 — support = nearest-analogue similarity, one reference CDF;
 #       support_log output column.
-ARTIFACT_FORMAT_VERSION = 4
+#   5 — artifacts split into reference_mode/ and training_mode/.
+ARTIFACT_FORMAT_VERSION = 5
 
 
 @dataclass

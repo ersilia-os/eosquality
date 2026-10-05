@@ -13,10 +13,9 @@ from eosquality._registry import (
     KNN_USERS,
     SCORE_CLASSES,
     SCORE_ORDER,
-    TRAINING_ORDER,
 )
 from eosquality.config import ErsiliaQualityConfig, NeighborConfig
-from eosquality.exceptions import IncompatibleArtifactsError
+from eosquality.exceptions import ArtifactVersionError, IncompatibleArtifactsError
 from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
 from eosquality.library.identity import LIBRARY_ID
@@ -32,25 +31,42 @@ if TYPE_CHECKING:
     from eosquality.quality import ErsiliaQuality
 
 
-def save(eq, path: str | pathlib.Path) -> pathlib.Path:
-    """Write fitted artifacts to a folder.
+# Artifacts layout: one subfolder per modality, either or both present.
+REFERENCE_DIR = "reference_mode"
+TRAINING_DIR = "training_mode"
 
-    Reference modality: ``shared/`` once, ``knn/`` once (iff support or
-    consistency was fit), then each component's subfolder. Training
-    modality: ``training/`` (sets + per-column indices) and each
-    training component's subfolder. Plus a top-level ``manifest.json``
-    summary (informational only — the loader does not consult it).
+
+def save(eq, path: str | pathlib.Path) -> pathlib.Path:
+    """Write fitted artifacts to a folder, one subfolder per modality.
+
+    ``reference_mode/`` holds ``shared/``, ``knn/`` (iff support or
+    consistency was fit) and each reference score's subfolder;
+    ``training_mode/`` holds ``training_sets/`` and each training score's
+    subfolder. ``manifest.json`` at the top is informational only.
+
+    Parameters
+    ----------
+    eq : ErsiliaQuality
+        A fitted orchestrator.
+    path : str or pathlib.Path
+        Artifacts folder (created if needed).
+
+    Returns
+    -------
+    pathlib.Path
+        The artifacts folder.
     """
     eq._check_fitted()
     folder = pathlib.Path(path)
     folder.mkdir(parents=True, exist_ok=True)
     if eq._shared is not None:
-        save_shared(eq._shared, folder)
+        root = folder / REFERENCE_DIR
+        save_shared(eq._shared, root)
         knn_owner = eq.support or eq.consistency
         if knn_owner is not None:
-            save_knn(knn_owner.knn_, folder)
+            save_knn(knn_owner.knn_, root)
         for component in eq._components().values():
-            component.save_component(folder)
+            component.save_component(root)
     save_training(eq, folder)
     write_manifest(eq, folder)
     logger.info(f"Artifacts saved → {folder}")
@@ -58,11 +74,21 @@ def save(eq, path: str | pathlib.Path) -> pathlib.Path:
 
 
 def save_training(eq, folder: pathlib.Path) -> None:
+    """Write ``<folder>/training_mode/`` if the training modality is fitted.
+
+    Parameters
+    ----------
+    eq : ErsiliaQuality
+        The orchestrator.
+    folder : pathlib.Path
+        Artifacts folder.
+    """
     if eq._training is None:
         return
-    save_training_state(eq._training, folder)
+    root = folder / TRAINING_DIR
+    save_training_state(eq._training, root)
     for component in eq._training_components().values():
-        component.save_component(folder)
+        component.save_component(root)
 
 
 def add_training(
@@ -73,16 +99,33 @@ def add_training(
     *,
     eos_id: str | None = None,
     version: str | None = None,
-) -> ErsiliaQuality:
-    """Add the training modality to an existing artifacts folder in place.
+) -> "ErsiliaQuality":
+    """Add ``training_mode/`` to an existing artifacts folder in place.
 
-    The reference-modality files are left untouched; ``training/``,
-    ``training_domain/`` and ``manifest.json`` are written. Refuses if
-    the artifacts already hold a training modality or belong to another
-    model.
+    ``reference_mode/`` is left untouched; ``training_mode/`` and
+    ``manifest.json`` are written. Refuses if the artifacts already hold a
+    training modality or belong to another model.
+
+    Parameters
+    ----------
+    eq_cls : type
+        :class:`ErsiliaQuality` (or a subclass).
+    path : str or pathlib.Path
+        Existing artifacts folder.
+    training : str or pathlib.Path
+        Folder of per-output-column training sets.
+    training_predictions : str, pathlib.Path or pandas.DataFrame, optional
+        The model's predictions on the training molecules.
+    eos_id, version : str, optional
+        Model id of the training sets.
+
+    Returns
+    -------
+    ErsiliaQuality
+        The loaded instance with the training modality added.
     """
     folder = pathlib.Path(path)
-    if (folder / "training").exists():
+    if (folder / TRAINING_DIR).exists():
         raise FileExistsError(
             f"{folder} already has a training modality; fit into a new folder "
             "to replace it."
@@ -153,14 +196,22 @@ def write_manifest(eq, folder: pathlib.Path) -> None:
         json.dump(manifest, f, indent=2)
 
 
-def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
-    """Reconstruct an orchestrator from a saved folder.
+def load(eq_cls, path: str | pathlib.Path) -> "ErsiliaQuality":
+    """Reconstruct an orchestrator from a saved artifacts folder.
 
-    Loads the reference modality if ``shared/`` exists (reading it and
-    ``knn/`` once) and the training modality if ``training/`` exists,
-    then every component whose subfolder is present. Library / package
-    compatibility is enforced when an index-aware reference score is
-    found.
+    Loads ``reference_mode/`` and/or ``training_mode/``, whichever exist.
+
+    Parameters
+    ----------
+    eq_cls : type
+        :class:`ErsiliaQuality` (or a subclass).
+    path : str or pathlib.Path
+        Artifacts folder.
+
+    Returns
+    -------
+    ErsiliaQuality
+        A fitted instance with every component found.
     """
     folder = pathlib.Path(path)
     if not folder.exists():
@@ -170,42 +221,49 @@ def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
             f"Expected a directory, got a file: {folder}. "
             "Artifacts are stored as a folder — pass the folder path."
         )
-    present = [n for n in SCORE_ORDER if (folder / n).is_dir()]
-    present_training = [n for n in TRAINING_ORDER if (folder / n).is_dir()]
-    if not present and not present_training:
+    if (folder / "shared").is_dir() or (folder / "training").is_dir():
+        raise ArtifactVersionError(
+            f"Artifacts at {folder} use the old flat layout; this eosquality "
+            f"install expects {REFERENCE_DIR}/ and {TRAINING_DIR}/ subfolders. Refit."
+        )
+    has_reference = (folder / REFERENCE_DIR).is_dir()
+    has_training = (folder / TRAINING_DIR).is_dir()
+    if not has_reference and not has_training:
         raise FileNotFoundError(
-            f"No score subfolders found under {folder} — nothing to load."
+            f"No {REFERENCE_DIR}/ or {TRAINING_DIR}/ under {folder} — nothing to load."
         )
-    logger.info(
-        f"loading artifacts from {folder} | scores="
-        f"[{', '.join(present + present_training)}]"
-    )
     instance = eq_cls()
-    knn = None
-    if present:
-        shared = load_shared(folder)
-        knn = load_knn(folder) if set(present) & KNN_USERS else None
-        check_artifacts_compatibility(
-            shared, has_index_scores=bool(set(present) & INDEX_AWARE)
-        )
-        instance._shared = shared
-        for name in present:
-            setattr(
-                instance,
-                name,
-                SCORE_CLASSES[name].load(folder, shared=shared, knn=knn),
+    if has_reference:
+        _load_reference(instance, folder / REFERENCE_DIR)
+    if has_training:
+        root = folder / TRAINING_DIR
+        instance._training = load_training_state(root)
+        if (root / TrainingDomain.NAME).is_dir():
+            instance.training_domain = TrainingDomain.load(
+                root, shared=instance._shared, training=instance._training
             )
-    if present_training:
-        training = load_training_state(folder)
-        instance._training = training
-        instance.training_domain = TrainingDomain.load(
-            folder, shared=instance._shared, training=training
-        )
+    instance.is_fitted_ = True
+    logger.success(
+        f"Artifacts loaded from {folder} | modalities={instance.modalities_}"
+    )
+    return instance
+
+
+def _load_reference(instance, root: pathlib.Path) -> None:
+    """Fill ``instance`` with the reference modality stored under ``root``."""
+    present = [n for n in SCORE_ORDER if (root / n).is_dir()]
+    if not present:
+        raise FileNotFoundError(f"No reference score subfolders under {root}.")
+    shared = load_shared(root)
+    knn = load_knn(root) if set(present) & KNN_USERS else None
+    check_artifacts_compatibility(
+        shared, has_index_scores=bool(set(present) & INDEX_AWARE)
+    )
+    instance._shared = shared
+    for name in present:
+        setattr(instance, name, SCORE_CLASSES[name].load(root, shared=shared, knn=knn))
     if knn is not None:
         instance.config = ErsiliaQualityConfig(neighbors=NeighborConfig(k=knn.k))
-    instance.is_fitted_ = True
-    logger.success(f"Artifacts loaded from {folder}")
-    return instance
 
 
 def check_artifacts_compatibility(

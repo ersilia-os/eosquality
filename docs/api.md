@@ -68,7 +68,7 @@ eq.save("artifacts/")
 eq = ErsiliaQuality.load("artifacts/")
 ```
 
-`load` reconstructs every component whose subfolder is present. It raises the following errors:
+`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). `load` reconstructs whichever modalities are present. It raises the following errors:
 - `ArtifactVersionError`: the artifacts were written in an older on-disk format. Refit them.
 - `IncompatibleArtifactsError`: the artifacts were fit against a different reference library or package major version.
 
@@ -130,7 +130,7 @@ Every reference component can also be used on its own (`TrainingDomain` needs a 
 from eosquality import Typicality, Extremity, Support, Consistency, Signal
 
 t = Typicality().fit(reference, eos_id="eos4e40", version="v1")
-t.save("art/")             # writes art/shared/ + art/typicality/
+t.save("art/")             # writes art/shared/ + art/typicality/ (one reference_mode/ worth)
 Typicality.load("art/").run(query).score
 ```
 

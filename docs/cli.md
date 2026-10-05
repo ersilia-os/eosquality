@@ -64,8 +64,8 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 | `--reference CSV` | — | reference modality: predictions on the reference library |
 | `--training DIR` | — | training modality: per-column training sets |
 | `--training-predictions CSV` | — | the model's predictions on the training molecules (Ersilia output CSV), stored for planned training scores |
-| `--output`, `-o PATH` | — | new artifacts folder (must not exist); required unless `--artifacts` |
-| `--artifacts`, `-a PATH` | — | existing artifacts folder to add `--training` to in place; reference files are not touched; refuses if it already has a training modality |
+| `--output`, `-o PATH` | — | new artifacts folder (must not exist); required unless `--artifacts`. It gets `reference_mode/` and/or `training_mode/` |
+| `--artifacts`, `-a PATH` | — | existing artifacts folder to add `--training` to in place: writes `training_mode/` and leaves `reference_mode/` untouched; refuses if `training_mode/` already exists |
 | `--vector-index PATH` | canonical library | fit the reference modality against a custom index built with `build`; its absolute path is stored in the artifacts |
 | `--k K` | 5 | fingerprint neighbours (≤ the index's `max_k`) |
 | `--version VERSION` | `v1` | used only if the file/folder name has no version |

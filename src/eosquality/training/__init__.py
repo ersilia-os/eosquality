@@ -4,7 +4,7 @@ Each output column of a model may come with its own training set (SMILES,
 optionally labels ``y``). :func:`load_training` reads and standardises them;
 :func:`fit_training` builds one small Morgan :class:`VectorIndex` per column;
 training-aware scores (``scores/training_domain.py``) sit on top. Persisted
-under ``<root>/training/`` and versioned separately from the reference
+under ``training_mode/training_sets/`` and versioned separately from the reference
 artifacts (``TRAINING_FORMAT_VERSION``).
 """
 

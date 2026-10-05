@@ -123,7 +123,8 @@ def test_training_only(training_dir, query, tmp_path):
         "in_training_any",
     ]
     eq.save(tmp_path / "art")
-    assert not (tmp_path / "art/shared").exists()
+    assert not (tmp_path / "art/reference_mode").exists()
+    assert (tmp_path / "art/training_mode/training_sets").is_dir()
     pd.testing.assert_frame_equal(
         ErsiliaQuality.load(tmp_path / "art").run(smiles_only).scores, res.scores
     )
@@ -142,9 +143,9 @@ def test_add_training_in_place(reference, library, training_dir, query, tmp_path
     ErsiliaQuality().fit(
         reference, eos_id="eos0aaa", vector_index=library, ignore_size=True
     ).save(art)
-    shared_before = _digest(art / "shared")
+    shared_before = _digest(art / "reference_mode")
     ErsiliaQuality.add_training(art, training_dir, eos_id="eos0aaa")
-    assert _digest(art / "shared") == shared_before
+    assert _digest(art / "reference_mode") == shared_before
     loaded = ErsiliaQuality.load(art)
     assert loaded.modalities_ == ["reference", "training"]
     assert json.loads((art / "manifest.json").read_text())["modalities"] == [

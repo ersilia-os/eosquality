@@ -48,28 +48,32 @@ flowchart LR
 
 ## Save layout
 
-```
-<root>/
-  manifest.json                         # informational summary (format_version, scores, k, library)
-  shared/                               # always
-    schema.json  scaler.json  binary_class_freq.json
-    metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
-    reference_ids.json  splits.json  selected_columns.json
-    reference_repr.npy                  # (n_ref, n_selected) scaled reference
-  knn/state.json                        # {"k": …}; iff support or consistency
-  typicality/   state.json  reference_self_aggregates.npy  metadata.json
-  extremity/    state.json  reference_self_aggregates.npy  metadata.json
-  support/      state.json  reference_nearest_similarities.npy  metadata.json
-  consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
-  signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
-                physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
-  training/                             # iff --training (training modality)
-    metadata.json                       # training_format_version, eos_id, version, columns
-    columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
-    indices/c000/ …                     # one VectorIndex per output column
-  training_domain/  state.json  loo_nearest_similarities.npz  metadata.json
-```
+One subfolder per modality; either or both may be present.
 
-A training-only artifact has no `shared/`, `knn/` or reference-score folders.
+```
+<artifacts>/
+  manifest.json                           # informational: eos_id, version, modalities, scores
+  reference_mode/                         # iff fitted with --reference
+    shared/
+      schema.json  scaler.json  binary_class_freq.json
+      metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
+      reference_ids.json  splits.json  selected_columns.json
+      reference_repr.npy                  # (n_ref, n_selected) scaled reference
+    knn/state.json                        # {"k": …}; iff support or consistency
+    typicality/   state.json  reference_self_aggregates.npy  metadata.json
+    extremity/    state.json  reference_self_aggregates.npy  metadata.json
+    support/      state.json  reference_nearest_similarities.npy  metadata.json
+    consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
+    signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
+                  physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
+  training_mode/                          # iff fitted with --training
+    training_sets/
+      metadata.json                       # training_format_version, eos_id, version, columns
+      columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
+      indices/c000/ …                     # one VectorIndex per output column
+    training_domain/  state.json  loo_nearest_similarities.npz  metadata.json
+```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.
+
+A standalone score class (e.g. `Support().fit(...).save(folder)`) writes its own subfolder plus the `shared/` (and `knn/`) folders it needs directly into `folder`. That is the same structure as one `reference_mode/`.

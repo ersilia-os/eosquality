@@ -34,8 +34,8 @@ The package is organized as **per-score components** (one class per score) on to
 
 ### Two modalities
 
-- **reference**: the model's predictions on the reference library. It covers the five scores below and the `shared/` + `knn/` tiers.
-- **training**: the model's per-output-column training sets. It covers the `training/` tier and the `training_*` scores.
+- **reference**: the model's predictions on the reference library. It covers the five scores below and the `shared/` + `knn/` tiers, saved under `<artifacts>/reference_mode/`.
+- **training**: the model's per-output-column training sets. It covers the `training/` package (`training_sets/` on disk) and the `training_*` scores, saved under `<artifacts>/training_mode/`.
 
 Each modality is fitted only when its data is given (`fit --reference`, `fit --training`, or both). Training can also be added to existing artifacts (`fit --training DIR --artifacts PATH` / `ErsiliaQuality.add_training`). `run` computes every fitted score.
 
@@ -75,11 +75,11 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 - **`training/`** — the training-modality tier.
   - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None, predictions=None)`. One `<column>.csv` per output column (`smiles`, optional `y`, optional `key`). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicates are merged: binary by majority, otherwise by median. Columns with fewer than 20 molecules are skipped.
   - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex`, `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
-  - Persisted under `<root>/training/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
+  - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
   - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, and `ref_repr` (the scaled, feature-selected reference matrix, read by Consistency at run time).
-  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 4). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 5). `load_shared` rejects other format versions with `ArtifactVersionError`.
   - **`splitter.py`.** Fixed 80/10/10 split with seed 0.
   - **`feature_selection.py`.** Correlation-cluster medoids, capped at `max_features`.
 - **`knn/`** — `KnnFitState` holds `k`, plus the fit-time-only `mean_fp_distances` and `reference_knn_indices`. `fit_knn` slices the precomputed self-kNN from the index. Only `{"k": …}` is persisted.
@@ -89,8 +89,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 - **`quality.py`** — `ErsiliaQuality`.
   - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `_SCORE_ORDER`.
   - **`run`.** Validates and scales the query once, runs the FP kNN once, and returns `RunResult(scores, metadata)`. Score columns come in `name, name_raw` pairs, plus `support_log`; metadata keys are prefixed `<component>_`.
-  - **`save`.** Writes `shared/` and `knn/` once, then `save_component` for each score, plus `manifest.json`.
-  - **`load`.** Reads `shared/` and `knn/` once and passes them into each component's `load`.
+  - **`save` / `load` / `add_training`** live in `_artifacts.py`. `save` writes `reference_mode/` (`shared/` and `knn/` once, then `save_component` for each score) and `training_mode/` (`training_sets/` plus training components), each only if fitted, plus `manifest.json`. `load` reads whichever subfolders exist and rejects the old flat layout. The fit and run of the reference modality live in `_reference_modality.py`; score names and classes are in `_registry.py`.
 - **`vectorindex.py`** — `VectorIndex`, the Morgan/FPSim2 kNN index.
   - **API.** `build`, `load` (memory-mapped kNN arrays), `query`, `self_knn_indices` / `self_knn_distances`, and the properties `library_name`, `index_dir`, `smiles`, `n_reference`.
   - **Resume.** `build` resumes only when the SMILES digest and parameters match.
@@ -114,7 +113,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 
 ### Save layout
 
-See `docs/diagram.md`. Each component's `metadata.json` carries only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`. Dataset information lives once, in `shared/metadata.json`. `manifest.json` is informational, and the loader does not read it.
+See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training_mode/`. Each component's `metadata.json` carries only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`. Dataset information lives once, in `reference_mode/shared/metadata.json`. `manifest.json` is informational, and the loader does not read it.
 
 ### When adding new functionality
 

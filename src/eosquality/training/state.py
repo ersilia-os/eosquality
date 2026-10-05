@@ -1,6 +1,7 @@
 """TrainingFitState: per-column training sets + one Morgan index per column.
 
-Layout under ``<root>/training/``::
+Layout under ``<root>/training_sets/`` (``<root>`` is ``training_mode/`` in
+an :class:`~eosquality.quality.ErsiliaQuality` artifacts folder)::
 
     metadata.json        # training_format_version, column order
     columns.json         # per column: folder, n, y_kind, has_y, has_pred
@@ -29,8 +30,8 @@ from eosquality.training.data import TrainingColumn
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
-SUBFOLDER = "training"
-# Bump when the meaning or layout of <root>/training/ changes. Independent of
+SUBFOLDER = "training_sets"
+# Bump when the meaning or layout of training_sets/ changes. Independent of
 # ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected.
 TRAINING_FORMAT_VERSION = 1
 # Neighbours precomputed per training molecule (capped by column size).
@@ -83,7 +84,20 @@ def fit_training(
 def save_training_state(
     state: TrainingFitState, root: str | pathlib.Path
 ) -> pathlib.Path:
-    """Write ``<root>/training/`` (metadata, labels, per-column indices)."""
+    """Write ``<root>/training_sets/`` (metadata, labels, per-column indices).
+
+    Parameters
+    ----------
+    state : TrainingFitState
+        Fitted training state.
+    root : str or pathlib.Path
+        Folder to write into.
+
+    Returns
+    -------
+    pathlib.Path
+        The ``training_sets`` folder.
+    """
     folder = pathlib.Path(root) / SUBFOLDER
     folder.mkdir(parents=True, exist_ok=True)
     meta_cols, arrays = {}, {}
@@ -125,7 +139,18 @@ def save_training_state(
 
 
 def load_training_state(root: str | pathlib.Path) -> TrainingFitState:
-    """Read ``<root>/training/``; rejects other training format versions."""
+    """Read ``<root>/training_sets/``; rejects other training format versions.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        Folder that contains ``training_sets/``.
+
+    Returns
+    -------
+    TrainingFitState
+        The loaded state, with one memory-mapped index per column.
+    """
     folder = pathlib.Path(root) / SUBFOLDER
     with open(folder / "metadata.json") as f:
         meta = json.load(f)

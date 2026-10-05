@@ -206,7 +206,7 @@ class TrainingDomain(ScoreComponent):
         assert self._training is not None
         if names != self._training.column_names:
             raise ValueError(
-                "training_domain/state.json columns do not match training/metadata.json."
+                "training_domain/state.json columns do not match training_sets/metadata.json."
             )
         with np.load(require_file(folder / SIMILARITIES_FILE, self.NAME)) as npz:
             self._loo = {n: np.asarray(npz[f"c{i:03d}"]) for i, n in enumerate(names)}

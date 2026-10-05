@@ -118,7 +118,8 @@ def test_training_only_and_add_later(tmp_path, reference, query, library, traini
         == 0
     )
     assert _run(["fit", "--training", str(training_dir), "--artifacts", str(art2)]) == 0
-    assert (art2 / "training").is_dir()
+    assert (art2 / "training_mode").is_dir()
+    assert (art2 / "reference_mode").is_dir()
 
 
 def test_fit_argument_errors(tmp_path, training_dir):
