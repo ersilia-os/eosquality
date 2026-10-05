@@ -27,6 +27,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+import psutil
 from rich import box
 from rich.console import Console
 from rich.padding import Padding
@@ -46,6 +47,10 @@ from rich.table import Table
 #: ``highlight=False``: all colour comes from explicit markup, not Rich's
 #: number highlighter, which would speckle digits against the step palette.
 console = Console(stderr=True, highlight=False)
+
+# The first non-blocking CPU reading is always 0.0; take it now so the first
+# section rule shows a real value.
+psutil.cpu_percent(interval=None)
 
 #: One accent colour per command, so the terminal shifts hue as work moves on.
 STEP_COLORS = {
@@ -79,16 +84,6 @@ def enable(flag: bool = True) -> None:
     _enabled = bool(flag)
 
 
-def enabled() -> bool:
-    """Whether the curated output is on.
-
-    Returns
-    -------
-    bool
-    """
-    return _enabled
-
-
 def set_active_color(color: str) -> None:
     """Set the accent colour used by rules, steps and panels.
 
@@ -99,16 +94,6 @@ def set_active_color(color: str) -> None:
     """
     global _active_color
     _active_color = color or "cyan"
-
-
-def active_color() -> str:
-    """The current accent colour.
-
-    Returns
-    -------
-    str
-    """
-    return _active_color
 
 
 # ---------------------------------------------------------------------------
@@ -509,20 +494,13 @@ def folder_size(folder) -> str:
     )
 
 
-def resources() -> str | None:
-    """``CPU 62% · RAM 18.4/32.0 GB`` when psutil is installed, else ``None``.
+def resources() -> str:
+    """``CPU 62% · RAM 18.4/32.0 GB``: system-wide use, shown on section rules.
 
     Returns
     -------
-    str or None
+    str
     """
-    try:
-        import psutil
-    except ImportError:
-        return None
-    try:
-        cpu = psutil.cpu_percent(interval=None)
-        vm = psutil.virtual_memory()
-    except Exception:
-        return None
+    cpu = psutil.cpu_percent(interval=None)
+    vm = psutil.virtual_memory()
     return f"CPU {cpu:.0f}% · RAM {vm.used / 1e9:.1f}/{vm.total / 1e9:.1f} GB"

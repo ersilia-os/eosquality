@@ -47,7 +47,7 @@ eosquality run --input query_eos4e40_v1.csv --artifacts artifacts_eos4e40_v1/ --
 
 ## Scores
 
-Reference-modality scores compare a query against the model's own predictions on the reference library, which is **not** ground truth. Each is calibrated so that reference molecules score roughly Uniform(0, 1).
+Reference-modality scores compare a query against the model's own predictions on the reference library, which is **not** ground truth. Each is calibrated so that reference molecules score roughly Uniform(0, 1). Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
 
 | Score | Question |
 |---|---|

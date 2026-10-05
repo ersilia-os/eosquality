@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 4. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
+**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
 
 ## Example results
 

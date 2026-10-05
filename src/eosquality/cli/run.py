@@ -110,64 +110,67 @@ def run(
         Print debug messages and diagnostic tables.
     """
 
-    def _work():
-        if not pathlib.Path(artifacts).is_dir():
-            raise CliError(f"artifacts folder '{artifacts}' does not exist.")
-        require_new_path(output)
-        started = time.perf_counter()
-        details_path = training_details or default_details_path(output)
-        log_path = pathlib.Path(output).with_suffix(".log")
-        with logger.log_file(log_path):
-            logger.info(f"run | {input_path} against {artifacts} → {output}")
-            try:
-                query = pd.read_csv(input_path)
-            except Exception as exc:
-                raise CliError(
-                    f"could not read query CSV '{input_path}': {exc}"
-                ) from exc
-            eq = _load_artifacts(artifacts)
-            eos_id, version = eq._model_id()
-            console.summary_panel(
-                "eosquality · run",
-                [
-                    ("model", f"{eos_id} {version}"),
-                    ("modalities", " + ".join(eq.modalities_)),
-                    (
-                        "query",
-                        f"{console.path(input_path)}  [dim]{len(query):,} rows[/]",
-                    ),
-                    ("artifacts", console.path(artifacts)),
-                    ("output", console.path(output)),
-                ],
-                icon="◆",
-            )
-            result = eq.run(query)
-            if result.training_details is not None:
-                require_new_path(details_path, "training details path")
-            with console.section("Write outputs") as section:
-                prepend = [c for c in ("key", "input") if c in query.columns]
-                pd.concat(
-                    [
-                        query[prepend].reset_index(drop=True),
-                        result.scores.reset_index(drop=True),
-                    ],
-                    axis=1,
-                ).to_csv(output, index=False)
-                console.success(f"scores → {console.path(output)}")
-                if result.training_details is not None:
-                    result.training_details.to_csv(details_path, index=False)
-                    console.success(f"training details → {console.path(details_path)}")
-                section.summary = f"{len(result.scores.columns)} column(s)"
-        rows = [
-            ("queries", f"{len(query):,}"),
-            ("scores", console.path(output)),
-        ]
-        if result.training_details is not None:
-            rows.append(("training details", console.path(details_path)))
-        rows += [
-            ("log", console.path(log_path)),
-            ("time", console.elapsed(time.perf_counter() - started)),
-        ]
-        console.summary_panel("Run complete", rows, color="green", icon="✓")
+    run_command(
+        lambda: _run(input_path, artifacts, output, training_details),
+        verbose=verbose,
+        command="run",
+    )
 
-    run_command(_work, verbose=verbose, command="run")
+
+def _run(input_path, artifacts, output, training_details) -> None:
+    """Body of ``eosquality run`` (see :func:`run`)."""
+    if not pathlib.Path(artifacts).is_dir():
+        raise CliError(f"artifacts folder '{artifacts}' does not exist.")
+    require_new_path(output)
+    started = time.perf_counter()
+    details_path = training_details or default_details_path(output)
+    log_path = pathlib.Path(output).with_suffix(".log")
+    with logger.log_file(log_path):
+        logger.info(f"run | {input_path} against {artifacts} → {output}")
+        try:
+            query = pd.read_csv(input_path)
+        except Exception as exc:
+            raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
+        eq = _load_artifacts(artifacts)
+        eos_id, version = eq._model_id()
+        console.summary_panel(
+            "eosquality · run",
+            [
+                ("model", f"{eos_id} {version}"),
+                ("modalities", " + ".join(eq.modalities_)),
+                ("query", f"{console.path(input_path)}  [dim]{len(query):,} rows[/]"),
+                ("artifacts", console.path(artifacts)),
+                ("output", console.path(output)),
+            ],
+            icon="◆",
+        )
+        result = eq.run(query)
+        if result.training_details is not None:
+            require_new_path(details_path, "training details path")
+        _write_outputs(query, result, output, details_path)
+    rows = [("queries", f"{len(query):,}"), ("scores", console.path(output))]
+    if result.training_details is not None:
+        rows.append(("training details", console.path(details_path)))
+    rows += [
+        ("log", console.path(log_path)),
+        ("time", console.elapsed(time.perf_counter() - started)),
+    ]
+    console.summary_panel("Run complete", rows, color="green", icon="✓")
+
+
+def _write_outputs(query, result, output, details_path) -> None:
+    """Write the scores CSV (with ``key``/``input``) and the training details."""
+    with console.section("Write outputs") as section:
+        prepend = [c for c in ("key", "input") if c in query.columns]
+        pd.concat(
+            [
+                query[prepend].reset_index(drop=True),
+                result.scores.reset_index(drop=True),
+            ],
+            axis=1,
+        ).to_csv(output, index=False)
+        console.success(f"scores → {console.path(output)}")
+        if result.training_details is not None:
+            result.training_details.to_csv(details_path, index=False)
+            console.success(f"training details → {console.path(details_path)}")
+        section.summary = f"{len(result.scores.columns)} column(s)"

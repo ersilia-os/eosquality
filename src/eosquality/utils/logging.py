@@ -80,12 +80,10 @@ class _ToLoguru(_stdlib_logging.Handler):
 
 def _route_dependency_loggers() -> None:
     """Replace the handlers of ``ROUTED_LOGGERS`` with a forward to loguru."""
-    try:  # eosframes configures its logger lazily; configure it now, then take over
-        import eosframes
+    # eosframes configures its logger lazily: configure it now, then take over.
+    import eosframes
 
-        eosframes.get_logger()
-    except Exception:
-        pass
+    eosframes.get_logger()
     for name in ROUTED_LOGGERS:
         dependency = _stdlib_logging.getLogger(name)
         dependency.handlers = [_ToLoguru()]

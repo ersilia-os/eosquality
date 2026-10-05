@@ -90,44 +90,65 @@ def fit_reference(
         logger.info(
             f"fit | eos_id={eos_id} version={version} scores=[{', '.join(requested)}]"
         )
-        vi = None
-        if uses_index:
-            with steps("Load the vector index") as st:
-                vi = _load_index(reference, vector_index)
-                st.summary = (
-                    f"{vi.library_name or 'custom index'} · "
-                    f"{vi.n_reference:,} molecules match the reference"
-                )
-        with steps("Shared state: schema, scaling, feature selection, splits") as st:
-            shared = fit_shared(
-                reference,
-                eos_id=eos_id,
-                version=version,
-                library_id=vi.library_name if vi is not None else "",
-                vector_index_path=_custom_index_path(vi) if vi is not None else "",
-                max_features=max_features,
-            )
-            st.summary = (
-                f"{len(shared.schema.columns)} output(s) → "
-                f"{len(shared.selected_columns)} selected · 80/10/10 split"
-            )
-        eq._shared = shared
+        vi, shared, knn = _fit_upstream(
+            eq,
+            reference,
+            steps,
+            eos_id=eos_id,
+            version=version,
+            vector_index=vector_index if uses_index else False,
+            max_features=max_features,
+            uses_knn=uses_knn,
+        )
         k = eq.config.neighbors.k
-        knn = None
-        if uses_knn:
-            with steps(f"Nearest neighbours (k={k})") as st:
-                knn = fit_knn(shared=shared, vector_index=vi, k=k)
-                st.summary = "self-kNN taken from the index"
         fitters = _fitters(
             reference, shared, vi, knn, k, signal_descriptor, max_signal_train_samples
         )
         for name in requested:
-            with steps(f"Score: {name}") as st:
+            with steps(f"Score: {name}"):
                 setattr(eq, name, fitters[name]())
                 anchor = getattr(getattr(eq, name), f"reference_{name}_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
         section.summary = f"{len(requested)} score(s) fitted"
     eq._vector_index_cache = vi
+
+
+def _fit_upstream(
+    eq, reference, steps, *, eos_id, version, vector_index, max_features, uses_knn
+):
+    """Index, shared state and kNN steps; return ``(vi, shared, knn)``.
+
+    ``vector_index=False`` means no score needs the index.
+    """
+    vi = None
+    if vector_index is not False:
+        with steps("Load the vector index") as st:
+            vi = _load_index(reference, vector_index)
+            st.summary = (
+                f"{vi.library_name or 'custom index'} · "
+                f"{vi.n_reference:,} molecules match the reference"
+            )
+    with steps("Shared state: schema, scaling, feature selection, splits") as st:
+        shared = fit_shared(
+            reference,
+            eos_id=eos_id,
+            version=version,
+            library_id=vi.library_name if vi is not None else "",
+            vector_index_path=_custom_index_path(vi) if vi is not None else "",
+            max_features=max_features,
+        )
+        st.summary = (
+            f"{len(shared.schema.columns)} output(s) → "
+            f"{len(shared.selected_columns)} selected · 80/10/10 split"
+        )
+    eq._shared = shared
+    knn = None
+    if uses_knn:
+        k = eq.config.neighbors.k
+        with steps(f"Nearest neighbours (k={k})") as st:
+            knn = fit_knn(shared=shared, vector_index=vi, k=k)
+            st.summary = "self-kNN taken from the index"
+    return vi, shared, knn
 
 
 def _fitters(reference, shared, vi, knn, k, signal_descriptor, max_signal_samples):
