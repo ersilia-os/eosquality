@@ -108,7 +108,7 @@ def run(
         Print debug messages and diagnostic tables.
     """
 
-    def work():
+    def _work():
         if not pathlib.Path(artifacts).is_dir():
             raise CliError(f"artifacts folder '{artifacts}' does not exist.")
         require_new_path(output)
@@ -136,4 +136,4 @@ def run(
         if not verbose:
             say(f"Scores saved → {output}", err=False)
 
-    run_command(work, verbose=verbose)
+    run_command(_work, verbose=verbose)

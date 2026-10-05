@@ -22,7 +22,7 @@ This will take a while. The downloaded library will be stored under `~/.eosquali
 
 ## Quick start
 
-The typical workflow is two commands: `fit` once per Ersilia model, then `run` on any query dataset against the saved artifacts. `fit` takes the model's predictions on the reference library (`--reference`), its per-output-column training sets (`--training`), or both, and fits the matching scores. See the [CLI docs](docs/cli.md).
+The typical workflow is two commands: `fit` once per Ersilia model, then `run` on any query dataset against the saved artifacts. `fit` takes the model's predictions on the reference library (`--reference`), its per-output-column training sets (`--training-sets`), or both, and fits the matching scores. See the [CLI docs](docs/cli.md).
 
 ### Fitting a reference library
 
@@ -32,7 +32,7 @@ There is one and only one reference library per major version of `eosquality`, s
 
 ```bash
 eosquality fit --reference reference_eos4e40_v1.csv --output artifacts_eos4e40_v1/
-# optionally with training sets: --training training_eos4e40_v1/
+# optionally with training sets: --training-sets training_eos4e40_v1/
 ```
 
 Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
@@ -56,7 +56,7 @@ Reference-modality scores compare a query against the model's own predictions on
 | **Support** | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
-| **Training domain** *(with `--training`)* | Is the molecule inside the chemical space each output column was trained on? |
+| **Training distance** *(with `--training-sets`)* | How far is the molecule from each output column's training molecules? (uncalibrated) |
 
 ## Documentation
 

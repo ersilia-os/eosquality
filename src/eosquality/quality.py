@@ -36,7 +36,7 @@ from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.signal import Signal
 from eosquality.scores.support import Support
-from eosquality.scores.training_domain import TrainingDomain
+from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.fit import DEFAULT_MAX_FEATURES
 from eosquality.shared.state import SharedFitState
@@ -71,12 +71,12 @@ class RunResult:
     that were not fit are absent.
 
     Training-modality columns (when training sets were fit) follow:
-    ``training_domain``, ``training_domain_raw``, ``training_n_columns``,
+    ``training_distance`` (uncalibrated), ``training_n_columns``,
     ``in_training_any``.
 
     ``metadata`` has ``n_reference`` (reference modality) plus each
     component's run metadata with keys prefixed by the component name (e.g.
-    ``support_k``, ``consistency_n_fp_bins``, ``training_domain_n_columns``).
+    ``support_k``, ``consistency_n_fp_bins``, ``training_distance_n_columns``).
 
     ``training_details`` (training modality only) has one row per
     (query, output column): per-column domain and the nearest training
@@ -96,7 +96,7 @@ class ErsiliaQuality:
     - **reference** — the model's predictions on the reference library
       (typicality, extremity, support, consistency, signal);
     - **training** — the model's per-output-column training sets
-      (training_domain).
+      (training_distance).
     """
 
     def __init__(
@@ -132,7 +132,7 @@ class ErsiliaQuality:
         self.consistency: Consistency | None = None
         self.extremity: Extremity | None = None
         self.signal: Signal | None = None
-        self.training_domain: TrainingDomain | None = None
+        self.training_distance: TrainingDistance | None = None
         self._shared: SharedFitState | None = None
         self._training: TrainingFitState | None = None
         self._vector_index_cache: VectorIndex | None = None
@@ -153,7 +153,7 @@ class ErsiliaQuality:
         max_features: int | None = DEFAULT_MAX_FEATURES,
         max_signal_train_samples: int | None = 1000,
         signal_descriptor: str = "physchem",
-        training: str | pathlib.Path | None = None,
+        training_sets: str | pathlib.Path | None = None,
         training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
     ) -> ErsiliaQuality:
         """Fit the reference modality, the training modality, or both.
@@ -179,8 +179,8 @@ class ErsiliaQuality:
             Signal training rows; ``None`` or ``0`` uses the full train slice.
         signal_descriptor : {"physchem", "maccs"}, optional
             Feature backend of the signal score.
-        training : str or pathlib.Path, optional
-            Folder of per-output-column training sets; fits the training modality.
+        training_sets : str or pathlib.Path, optional
+            Folder with one ``<output_column>.csv`` per column; fits the training mode.
         training_predictions : str, pathlib.Path or pandas.DataFrame, optional
             The model's predictions on the training molecules.
 
@@ -193,7 +193,7 @@ class ErsiliaQuality:
             raise ValueError("fit needs eos_id= (e.g. 'eos4e40').")
         validate_eos_id(eos_id)
         validate_version(version)
-        if reference is None and training is None:
+        if reference is None and training_sets is None:
             raise ValueError("fit needs reference predictions, training sets, or both.")
         self._reset()
         t_start = time.perf_counter()
@@ -211,9 +211,9 @@ class ErsiliaQuality:
                 max_signal_train_samples=max_signal_train_samples,
                 signal_descriptor=signal_descriptor,
             )
-        if training is not None:
+        if training_sets is not None:
             self.fit_training(
-                training, training_predictions, eos_id=eos_id, version=version
+                training_sets, training_predictions, eos_id=eos_id, version=version
             )
         self.is_fitted_ = True
         fitted = list(self._components()) + list(self._training_components())
@@ -226,7 +226,7 @@ class ErsiliaQuality:
 
     def fit_training(
         self,
-        training: str | pathlib.Path,
+        training_sets: str | pathlib.Path,
         training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
         *,
         eos_id: str | None = None,
@@ -234,10 +234,24 @@ class ErsiliaQuality:
     ) -> ErsiliaQuality:
         """Fit (or replace) the training modality on this instance.
 
-        Works on a fresh instance (training-only), after a reference fit, or
-        on an instance loaded from artifacts (adding training later). When a
-        reference modality is present, training files must name its output
-        columns and the model id must match.
+        Works on a fresh instance (training-only), after a reference fit, or on
+        an instance loaded from artifacts (adding training later). With a
+        reference modality, training files must name its output columns and
+        the model id must match.
+
+        Parameters
+        ----------
+        training_sets : str or pathlib.Path
+            Folder with one ``<output_column>.csv`` per column.
+        training_predictions : str, pathlib.Path or pandas.DataFrame, optional
+            The model's predictions on the training molecules.
+        eos_id, version : str, optional
+            Model id; default to the reference modality's.
+
+        Returns
+        -------
+        ErsiliaQuality
+            ``self``, with the training modality fitted.
         """
         known_id, known_version = self._model_id()
         if known_id and eos_id and eos_id != known_id:
@@ -254,10 +268,10 @@ class ErsiliaQuality:
         output_columns = (
             self._shared.schema.column_names if self._shared is not None else None
         )
-        columns = load_training(training, output_columns, training_predictions)
+        columns = load_training(training_sets, output_columns, training_predictions)
         logger.info(f"training | {len(columns)} column(s) loaded | building indices…")
         self._training = fit_training(columns, eos_id=eos_id, version=version)
-        self.training_domain = TrainingDomain().fit(
+        self.training_distance = TrainingDistance().fit(
             training=self._training, shared=self._shared
         )
         self.is_fitted_ = True
@@ -309,19 +323,18 @@ class ErsiliaQuality:
             )
 
         training_details = None
-        if self.training_domain is not None:
+        if self.training_distance is not None:
             t = time.perf_counter()
-            result = self.training_domain.run(query)
-            columns["training_domain"] = result.score
-            columns["training_domain_raw"] = result.score_raw
+            result = self.training_distance.run(query)
+            columns["training_distance"] = result.score
             columns["training_n_columns"] = result.n_columns
             columns["in_training_any"] = result.in_training_any
             metadata.update(
-                {f"training_domain_{k}": v for k, v in result.metadata.items()}
+                {f"training_distance_{k}": v for k, v in result.metadata.items()}
             )
             training_details = result.details
             logger.info(
-                f"score 'training_domain' | mean={float(result.score.mean()):.4f} | "
+                f"score 'training_distance' | median={float(result.score.median()):.4f} | "
                 f"{time.perf_counter() - t:.2f}s"
             )
 
@@ -384,7 +397,7 @@ class ErsiliaQuality:
     def add_training(
         cls,
         path: str | pathlib.Path,
-        training: str | pathlib.Path,
+        training_sets: str | pathlib.Path,
         training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
         *,
         eos_id: str | None = None,
@@ -396,8 +409,8 @@ class ErsiliaQuality:
         ----------
         path : str or pathlib.Path
             Existing artifacts folder (must not already hold a training modality).
-        training : str or pathlib.Path
-            Folder of per-output-column training sets.
+        training_sets : str or pathlib.Path
+            Folder with one ``<output_column>.csv`` per column.
         training_predictions : str, pathlib.Path or pandas.DataFrame, optional
             The model's predictions on the training molecules.
         eos_id, version : str, optional
@@ -409,7 +422,12 @@ class ErsiliaQuality:
             The loaded instance with the training modality added.
         """
         return _artifacts.add_training(
-            cls, path, training, training_predictions, eos_id=eos_id, version=version
+            cls,
+            path,
+            training_sets,
+            training_predictions,
+            eos_id=eos_id,
+            version=version,
         )
 
     # ------------------------------------------------------------------
@@ -418,14 +436,26 @@ class ErsiliaQuality:
 
     @property
     def schema_(self):
-        """Inferred reference schema."""
+        """Schema inferred from the reference predictions.
+
+        Returns
+        -------
+        Schema
+            Reference modality only.
+        """
         self._check_fitted()
         assert self._shared is not None
         return self._shared.schema
 
     @property
     def reference_support_(self) -> float:
-        """Mean reference-as-query support; requires the support score to be fit."""
+        """Mean calibrated support of the reference molecules (about 0.5).
+
+        Returns
+        -------
+        float
+            Requires the support score to be fitted.
+        """
         self._check_fitted()
         if self.support is None:
             raise RuntimeError(
@@ -435,7 +465,13 @@ class ErsiliaQuality:
 
     @property
     def reference_typicality_(self) -> float:
-        """Mean reference-as-query typicality; requires typicality to be fit."""
+        """Mean calibrated typicality of the reference molecules (about 0.5).
+
+        Returns
+        -------
+        float
+            Requires the typicality score to be fitted.
+        """
         self._check_fitted()
         if self.typicality is None:
             raise RuntimeError(
@@ -445,7 +481,13 @@ class ErsiliaQuality:
 
     @property
     def reference_extremity_(self) -> float:
-        """Mean reference-as-query extremity; requires extremity to be fit."""
+        """Mean calibrated extremity of the reference molecules (about 0.5).
+
+        Returns
+        -------
+        float
+            Requires the extremity score to be fitted.
+        """
         self._check_fitted()
         if self.extremity is None:
             raise RuntimeError(
@@ -455,7 +497,13 @@ class ErsiliaQuality:
 
     @property
     def reference_consistency_(self) -> float:
-        """Mean reference-as-query consistency; requires consistency to be fit."""
+        """Mean calibrated consistency of the reference molecules (about 0.5).
+
+        Returns
+        -------
+        float
+            Requires the consistency score to be fitted.
+        """
         self._check_fitted()
         if self.consistency is None:
             raise RuntimeError(
@@ -465,7 +513,13 @@ class ErsiliaQuality:
 
     @property
     def reference_signal_(self) -> float:
-        """Mean reference-as-query signal; requires signal to be fit."""
+        """Mean calibrated signal of the reference molecules (about 0.5).
+
+        Returns
+        -------
+        float
+            Requires the signal score to be fitted.
+        """
         self._check_fitted()
         if self.signal is None:
             raise RuntimeError(
@@ -475,7 +529,13 @@ class ErsiliaQuality:
 
     @property
     def modalities_(self) -> list[str]:
-        """Fitted modalities: ``"reference"`` and/or ``"training"``."""
+        """Fitted modalities.
+
+        Returns
+        -------
+        list of str
+            ``["reference"]``, ``["training"]`` or both.
+        """
         self._check_fitted()
         return [
             m
@@ -488,14 +548,26 @@ class ErsiliaQuality:
 
     @property
     def metadata_(self):
-        """Shared :class:`FitMetadata` (eos_id, version, sizes, timestamps, ...)."""
+        """Provenance and dataset statistics of the reference fit.
+
+        Returns
+        -------
+        FitMetadata
+            Reference modality only.
+        """
         self._check_fitted()
         assert self._shared is not None
         return self._shared.metadata
 
     @property
     def shared_(self) -> SharedFitState:
-        """The shared fit state (schema, scaler, binary_class_freq, metadata)."""
+        """Shared fit state of the reference modality.
+
+        Returns
+        -------
+        SharedFitState
+            Schema, scaler, splits, selected columns and the scaled reference.
+        """
         self._check_fitted()
         assert self._shared is not None
         return self._shared

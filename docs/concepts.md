@@ -4,7 +4,7 @@
 
 **Reference modality.** It compares how an Ersilia model behaves on a query molecule with how the same model behaves on a fixed **reference library**: about 1.35M molecules shipped with each major version. The reference population is the model's own predictions on that library. It is **not** ground truth, so these scores describe how similar a query is to the model's behaviour on the reference. They don't estimate whether a prediction is correct.
 
-**Training modality.** It compares a query with the model's **training sets**: one per output column, optionally with labels. Training labels are observations, so this modality can say whether the model has seen chemistry like the query. Planned label-aware scores will also estimate how reliable a prediction is likely to be. See [Training modality](#training-modality).
+**Training modality.** It compares a query with the model's **training sets**: one per output column, optionally with labels. Training labels are observations, so this modality can say whether the model has seen chemistry like the query. Its scores are reported as raw distances, not calibrated. Planned label-aware scores will also estimate how reliable a prediction is likely to be. See [Training modality](#training-modality).
 
 ## Shared preprocessing
 
@@ -108,16 +108,17 @@ For each query, the per-feature `|SHAP|` attributions are reduced to a Gini coef
 
 Each output column of a model may have its own training set: SMILES, plus optional labels `y` (binary or continuous). Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each column gets its own Morgan fingerprint index (radius 2, 2048 bits).
 
-### Training domain
+### Training distance
 
-Training domain asks whether the query sits inside the chemical space this column was trained on.
-- **Raw value (per column).** The Tanimoto similarity of the query's **nearest training molecule**.
-- **Calibration.** Against the column's own **leave-one-out** nearest similarities: each training molecule against its closest *other* training molecule. A query as close to the training set as training molecules are to each other scores about 0.5, and the training molecules themselves score Uniform(0, 1).
-- **Training molecules as queries.** A query that is itself a training molecule (same standardised SMILES) skips its own entry, so it gets its leave-one-out value, and is flagged `in_training`.
+Training distance asks how far the query is from the molecules each output column was trained on. It is a plain distance and is **not calibrated**.
+- **Per column:** `1 − Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **nearest training molecule**.
+  - 0 means the query is itself a training molecule (same standardised SMILES); it is then flagged `in_training`.
+  - Values near 1 mean the training set holds nothing similar.
+  - As a rough guide, a distance of 0.6 or more (similarity ≤ 0.4) means no related training chemistry.
+- **Summary across columns:** `training_distance` in the scores is the **66th percentile** of the per-column distances: at least two-thirds of the columns have a training molecule this close or closer. A single distant column doesn't dominate, but several do.
+- **Column count:** `training_n_columns` counts the columns that contributed.
 
-**Summary across columns.** `training_domain` is the **34th percentile** of the per-column calibrated values: "at least two-thirds of the columns are at least this in-domain". It mirrors the Q66 typicality uses over features. A single out-of-domain column doesn't dominate, but several do. The summary is not re-calibrated. `training_n_columns` counts the columns that contributed.
-
-**Details file.** Per-column values and the 5 nearest training molecules (keys, similarities, labels) are reported in `training_details` for inspection.
+Per-column distances and the 5 nearest training molecules (keys, similarities, labels) are reported in `training_details` for inspection.
 
 ### Planned
 

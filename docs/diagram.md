@@ -28,7 +28,7 @@ flowchart LR
 flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
-    IDX --> TD["<b>Training domain</b><br/>nearest training molecule<br/>CDF per column"]
+    IDX --> TD["<b>Training distance</b><br/>1 − Tanimoto to the nearest<br/>training molecule (uncalibrated)"]
 ```
 
 ## Run
@@ -41,7 +41,7 @@ flowchart LR
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
-    Q -- SMILES --> TDR["Training domain<br/>per column → 34th percentile"]
+    Q -- SMILES --> TDR["Training distance<br/>per column → 66th percentile"]
     TDR --> DET["training_details.csv<br/>query × column · 5 nearest training molecules"]
     TYP & EXT & SUP & CON & SIG & TDR --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
 ```
@@ -71,7 +71,7 @@ One subfolder per modality; either or both may be present.
       metadata.json                       # training_format_version, eos_id, version, columns
       columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
       indices/c000/ …                     # one VectorIndex per output column
-    training_domain/  state.json  loo_nearest_similarities.npz  metadata.json
+    training_distance/  state.json  metadata.json
 ```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.

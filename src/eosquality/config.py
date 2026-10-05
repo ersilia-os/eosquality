@@ -15,7 +15,3 @@ class ErsiliaQualityConfig:
     """Top-level configuration for ErsiliaQuality."""
 
     neighbors: NeighborConfig = field(default_factory=NeighborConfig)
-
-    @classmethod
-    def default(cls) -> "ErsiliaQualityConfig":
-        return cls()

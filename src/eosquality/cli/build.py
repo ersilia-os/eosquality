@@ -25,7 +25,7 @@ from eosquality.vectorindex import VectorIndex
         "the next canonical reference library, or a non-canonical index for "
         "testing (pass the result to 'fit --vector-index')."
     ),
-    short_help="(release tool) Build a vector index from a reference library CSV.",
+    short_help="Build a reference-library vector index from a SMILES CSV.",
 )
 @click.option(
     "--input",
@@ -84,7 +84,7 @@ def build(
         Print debug messages.
     """
 
-    def work():
+    def _work():
         try:
             df = pd.read_csv(input_path)
         except Exception as exc:
@@ -115,4 +115,4 @@ def build(
             raise CliError(f"index build failed: {exc}") from exc
         say(f"Vector index saved → {output}", err=False)
 
-    run_command(work, verbose=verbose)
+    run_command(_work, verbose=verbose)

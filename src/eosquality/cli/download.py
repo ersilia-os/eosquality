@@ -49,7 +49,7 @@ def download(force: bool, verbose: bool) -> None:
         Print debug messages.
     """
 
-    def work():
+    def _work():
         try:
             csv_path = ensure_single_file_downloaded(
                 url=library_csv_url(),
@@ -68,4 +68,4 @@ def download(force: bool, verbose: bool) -> None:
         say(f"Library CSV    → {csv_path}", err=False)
         say(f"Library index  → {index_path}", err=False)
 
-    run_command(work, verbose=verbose)
+    run_command(_work, verbose=verbose)

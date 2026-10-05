@@ -4,7 +4,6 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.stats import kstest
 
 from eosquality import ErsiliaQuality
 from eosquality.exceptions import SchemaError
@@ -66,31 +65,47 @@ def both(reference, library, training_dir):
         eos_id="eos0aaa",
         vector_index=library,
         ignore_size=True,
-        training=training_dir,
+        training_sets=training_dir,
     )
 
 
-def test_training_molecules_score_uniform(both):
-    domain = both.training_domain
-    for name, column in domain.training_.columns.items():
+def test_training_molecules_have_zero_distance(both):
+    distance = both.training_distance
+    for name, column in distance.training_.columns.items():
         q = pd.DataFrame({"key": column.ids, "input": column.smiles})
-        details = domain.run(q).details
-        d = details[details.column == name]
+        det = distance.run(q).details
+        d = det[det.column == name]
         assert d.in_training.all()
-        assert d.domain.mean() == pytest.approx(0.5, abs=0.02)
-        assert kstest(d.domain, "uniform").statistic < 1.36 / np.sqrt(len(d))
-        loo = 1 - domain.training_.indices[name].self_knn_distances(1)[:, 0]
-        np.testing.assert_allclose(np.sort(d.domain_raw), np.sort(loo), atol=1e-6)
+        np.testing.assert_allclose(d.distance, 0.0, atol=1e-6)
+
+
+def test_distance_matches_brute_force_tanimoto(both, query):
+    from rdkit import Chem, DataStructs
+    from rdkit.Chem import rdFingerprintGenerator
+
+    gen = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    column = both.training_distance.training_.columns["mw"]
+    train_fps = [gen.GetFingerprint(Chem.MolFromSmiles(s)) for s in column.smiles]
+    det = both.run(query).training_details
+    det = det[det.column == "mw"].set_index("key")
+    for key, smi in zip(query.key[:10], query.input[:10], strict=True):
+        fp = gen.GetFingerprint(Chem.MolFromSmiles(smi))
+        best = max(DataStructs.BulkTanimotoSimilarity(fp, train_fps))
+        assert det.loc[key, "distance"] == pytest.approx(1 - best, abs=1e-6)
+
+
+def test_summary_is_uncalibrated_q66_of_columns(both, query):
+    res = both.run(query)
+    per_col = res.training_details.pivot(
+        index="key", columns="column", values="distance"
+    )
+    expected = per_col.quantile(0.66, axis=1).reindex(query.key).to_numpy()
+    np.testing.assert_allclose(res.scores["training_distance"].to_numpy(), expected)
 
 
 def test_run_columns_and_details(both, query):
     result = both.run(query)
-    for c in (
-        "training_domain",
-        "training_domain_raw",
-        "training_n_columns",
-        "in_training_any",
-    ):
+    for c in ("training_distance", "training_n_columns", "in_training_any"):
         assert c in result.scores.columns
     assert "support" in result.scores.columns  # reference modality still there
     det = result.training_details
@@ -112,13 +127,12 @@ def test_roundtrip_with_training(both, query, tmp_path):
 
 
 def test_training_only(training_dir, query, tmp_path):
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training=training_dir)
+    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
     assert eq.modalities_ == ["training"]
     smiles_only = query[["key", "input"]]
     res = eq.run(smiles_only)
     assert list(res.scores.columns) == [
-        "training_domain",
-        "training_domain_raw",
+        "training_distance",
         "training_n_columns",
         "in_training_any",
     ]
@@ -152,7 +166,7 @@ def test_add_training_in_place(reference, library, training_dir, query, tmp_path
         "reference",
         "training",
     ]
-    assert "training_domain" in loaded.run(query).scores.columns
+    assert "training_distance" in loaded.run(query).scores.columns
     with pytest.raises(FileExistsError):
         ErsiliaQuality.add_training(art, training_dir)
 
@@ -168,3 +182,39 @@ def test_add_training_rejects_other_model(reference, library, training_dir, tmp_
     ).save(art)
     with pytest.raises(ValueError, match="eos9zzz"):
         ErsiliaQuality.add_training(art, training_dir, eos_id="eos9zzz")
+
+
+def test_training_files_named_after_ersilia_columns(tmp_path, smiles):
+    """Training files are matched to model outputs by Ersilia column name."""
+    from conftest import model_outputs
+
+    columns = ["cytotoxicity_hepg2", "cytotoxicity_hskmc", "cytotoxicity_imr90"]
+    ref = model_outputs(smiles[:600], seed=0)[["key", "input", "mw", "logp", "tpsa"]]
+    ref.columns = ["key", "input", *columns]
+    folder = tmp_path / "training_eos42ez_v1"
+    folder.mkdir()
+    for i, col in enumerate(columns):
+        part = smiles[100 * i : 100 * i + 200]
+        pd.DataFrame({"smiles": part, "y": np.arange(len(part)) % 2}).to_csv(
+            folder / f"{col}.csv", index=False
+        )
+    eq = ErsiliaQuality().fit(
+        ref,
+        eos_id="eos42ez",
+        ignore_size=True,
+        scores=["typicality"],
+        training_sets=folder,
+    )
+    assert eq.training_distance.training_.column_names == columns
+    details = eq.run(ref.head(5)).training_details
+    assert sorted(details.column.unique()) == columns
+    # A file that is not named after an output column is rejected.
+    (folder / "cytotoxicity_hela.csv").write_text("smiles\nCCO\n")
+    with pytest.raises(SchemaError, match="cytotoxicity_hela"):
+        ErsiliaQuality().fit(
+            ref,
+            eos_id="eos42ez",
+            ignore_size=True,
+            scores=["typicality"],
+            training_sets=folder,
+        )

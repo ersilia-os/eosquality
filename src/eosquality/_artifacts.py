@@ -20,7 +20,7 @@ from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
 from eosquality.library.identity import LIBRARY_ID
 from eosquality.scores.signal import SIGNAL_FORMULA_VERSION
-from eosquality.scores.training_domain import TrainingDomain
+from eosquality.scores.training_distance import TrainingDistance
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
@@ -94,12 +94,12 @@ def save_training(eq, folder: pathlib.Path) -> None:
 def add_training(
     eq_cls,
     path: str | pathlib.Path,
-    training: str | pathlib.Path,
+    training_sets: str | pathlib.Path,
     training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
     *,
     eos_id: str | None = None,
     version: str | None = None,
-) -> "ErsiliaQuality":
+) -> ErsiliaQuality:
     """Add ``training_mode/`` to an existing artifacts folder in place.
 
     ``reference_mode/`` is left untouched; ``training_mode/`` and
@@ -112,8 +112,8 @@ def add_training(
         :class:`ErsiliaQuality` (or a subclass).
     path : str or pathlib.Path
         Existing artifacts folder.
-    training : str or pathlib.Path
-        Folder of per-output-column training sets.
+    training_sets : str or pathlib.Path
+        Folder with one ``<output_column>.csv`` per column.
     training_predictions : str, pathlib.Path or pandas.DataFrame, optional
         The model's predictions on the training molecules.
     eos_id, version : str, optional
@@ -132,7 +132,7 @@ def add_training(
         )
     instance = load(eq_cls, folder)
     instance.fit_training(
-        training, training_predictions, eos_id=eos_id, version=version
+        training_sets, training_predictions, eos_id=eos_id, version=version
     )
     save_training(instance, folder)
     write_manifest(instance, folder)
@@ -196,7 +196,7 @@ def write_manifest(eq, folder: pathlib.Path) -> None:
         json.dump(manifest, f, indent=2)
 
 
-def load(eq_cls, path: str | pathlib.Path) -> "ErsiliaQuality":
+def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
     """Reconstruct an orchestrator from a saved artifacts folder.
 
     Loads ``reference_mode/`` and/or ``training_mode/``, whichever exist.
@@ -238,8 +238,8 @@ def load(eq_cls, path: str | pathlib.Path) -> "ErsiliaQuality":
     if has_training:
         root = folder / TRAINING_DIR
         instance._training = load_training_state(root)
-        if (root / TrainingDomain.NAME).is_dir():
-            instance.training_domain = TrainingDomain.load(
+        if (root / TrainingDistance.NAME).is_dir():
+            instance.training_distance = TrainingDistance.load(
                 root, shared=instance._shared, training=instance._training
             )
     instance.is_fitted_ = True

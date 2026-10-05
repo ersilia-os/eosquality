@@ -28,20 +28,20 @@ eq.fit(
     max_features=10,                # None disables feature selection
     max_signal_train_samples=1000,  # None/0 = full train slice
     signal_descriptor="physchem",   # or "maccs"
-    training=None,                  # folder of <output_column>.csv training sets
+    training_sets=None,             # folder of <output_column>.csv training sets
     training_predictions=None,      # model predictions on training molecules (CSV/DataFrame)
 ) -> ErsiliaQuality
 ```
 
-`fit` fits the **reference modality** when `reference` is given and the **training modality** when `training` is given. At least one of the two is required. The arguments from `vector_index` to `signal_descriptor` apply to the reference modality only.
+`fit` fits the **reference modality** when `reference` is given and the **training modality** when `training_sets` is given. At least one of the two is required. The arguments from `vector_index` to `signal_descriptor` apply to the reference modality only.
 - **SMILES alignment.** When support, consistency or signal is requested, `reference["input"]` must match the vector index's SMILES row for row.
 - **Scores without an index.** Typicality and extremity need no index or `input` column.
 - **Re-fitting.** Calling `fit` again replaces every component, including ones not requested this time.
 - **Training sets.** The folder holds one CSV per output column (`smiles`, optional `y`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 
 ```python
-eq.fit_training(training, training_predictions=None, eos_id=None, version=None)
-ErsiliaQuality.add_training("artifacts/", training, training_predictions=None)
+eq.fit_training(training_sets, training_predictions=None, eos_id=None, version=None)
+ErsiliaQuality.add_training("artifacts/", training_sets, training_predictions=None)
 ```
 
 `fit_training` fits (or replaces) only the training modality on an instance. `add_training` adds it to an existing artifacts folder in place:
@@ -76,7 +76,6 @@ eq = ErsiliaQuality.load("artifacts/")
 - `modalities_`: `["reference"]`, `["training"]` or both.
 - `reference_typicality_`, `reference_extremity_`, `reference_support_`, `reference_consistency_`, `reference_signal_`.
 - `schema_`, `metadata_`, `shared_` (reference modality only).
-- `training_domain.reference_domain_`: per column, the mean domain of its own training molecules (≈ 0.5).
 
 ## `RunResult`
 
@@ -93,7 +92,7 @@ eq = ErsiliaQuality.load("artifacts/")
 | `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `consistency`, `consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to k neighbours |
 | `signal`, `signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
-| `training_domain`, `training_domain_raw` | (0, 1], [0, 1] | 34th percentile across output columns of the per-column calibrated domain, and of the nearest-training-molecule similarity |
+| `training_distance` | [0, 1] | 66th percentile across output columns of the distance (1 − Tanimoto) to the nearest training molecule; not calibrated |
 | `training_n_columns` | integer | output columns with a training set that contributed |
 | `in_training_any` | bool | the query is itself a training molecule of some column |
 
@@ -107,7 +106,7 @@ Scores that were not fit are left out. A row with no usable output feature has N
 - `consistency_n_fp_bins`
 - `signal_descriptor`
 - `signal_formula_version`
-- `training_domain_n_columns`, `training_domain_columns`
+- `training_distance_n_columns`, `training_distance_columns`
 
 ### `training_details`
 
@@ -117,14 +116,14 @@ Scores that were not fit are left out. A row with no usable output feature has N
 |---|---|
 | `key` | query key (or index) |
 | `column` | model output column |
-| `domain`, `domain_raw` | calibrated domain for this column; Tanimoto similarity of the nearest training molecule |
+| `distance` | 1 − Tanimoto similarity of the nearest training molecule for this column |
 | `n_train` | training molecules for this column |
-| `in_training` | the query is one of them (its own entry is skipped) |
+| `in_training` | the query is one of this column's training molecules (distance 0) |
 | `nn_keys`, `nn_similarities`, `nn_y` | the 5 nearest training molecules, `\|`-separated, closest first; `nn_y` is empty without labels |
 
 ## Per-score components
 
-Every reference component can also be used on its own (`TrainingDomain` needs a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
+Every reference component can also be used on its own (`TrainingDistance` needs a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
 
 ```python
 from eosquality import Typicality, Extremity, Support, Consistency, Signal

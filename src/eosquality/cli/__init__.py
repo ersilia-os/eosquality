@@ -16,7 +16,7 @@ from ``$EOSQUALITY_REFERENCE_LIBRARY_PATH`` → ``./data/indices/<library>/``
 → ``~/.eosquality/indices/<library>/``. Fetch it once with
 ``eosquality download``; after that the usual path is fit then run::
 
-    eosquality fit --reference eos4e40_v1.csv --output artifacts/ [--training training_eos4e40_v1/]
+    eosquality fit --reference eos4e40_v1.csv --output artifacts/ [--training-sets training_eos4e40_v1/]
     eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
 
 Prefetch the library explicitly (useful for CI or airgapped setups)::
@@ -50,7 +50,57 @@ except importlib.metadata.PackageNotFoundError:
     _VERSION = "unknown"
 
 
+# Commands for maintainers, listed in their own help block.
+DEVELOPER_COMMANDS = ("build",)
+
+
+class _SectionedGroup(click.Group):
+    """Click group whose help lists user and developer commands separately."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        """Commands in the order they were added.
+
+        Parameters
+        ----------
+        ctx : click.Context
+            Current context.
+
+        Returns
+        -------
+        list of str
+            Command names.
+        """
+        return list(self.commands)
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        """Write the "Commands" and "Developer commands" help blocks.
+
+        Parameters
+        ----------
+        ctx : click.Context
+            Current context.
+        formatter : click.HelpFormatter
+            Help formatter to write into.
+        """
+        rows = {
+            name: (name, cmd.get_short_help_str(limit=formatter.width))
+            for name, cmd in self.commands.items()
+            if not cmd.hidden
+        }
+        user = [r for n, r in rows.items() if n not in DEVELOPER_COMMANDS]
+        dev = [r for n, r in rows.items() if n in DEVELOPER_COMMANDS]
+        if user:
+            with formatter.section("Commands"):
+                formatter.write_dl(user)
+        if dev:
+            with formatter.section("Developer commands (maintainers only)"):
+                formatter.write_dl(dev)
+
+
 @click.group(
+    cls=_SectionedGroup,
     help="Assess the quality of Ersilia model predictions.",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -60,10 +110,10 @@ def cli() -> None:
     set_log_level("INFO")
 
 
-cli.add_command(build)
-cli.add_command(download)
 cli.add_command(fit)
 cli.add_command(run)
+cli.add_command(download)
+cli.add_command(build)
 
 
 def main(argv: list[str] | None = None) -> None:

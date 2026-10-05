@@ -37,7 +37,7 @@ The package is organized as **per-score components** (one class per score) on to
 - **reference**: the model's predictions on the reference library. It covers the five scores below and the `shared/` + `knn/` tiers, saved under `<artifacts>/reference_mode/`.
 - **training**: the model's per-output-column training sets. It covers the `training/` package (`training_sets/` on disk) and the `training_*` scores, saved under `<artifacts>/training_mode/`.
 
-Each modality is fitted only when its data is given (`fit --reference`, `fit --training`, or both). Training can also be added to existing artifacts (`fit --training DIR --artifacts PATH` / `ErsiliaQuality.add_training`). `run` computes every fitted score.
+Each modality is fitted only when its data is given (`fit --reference`, `fit --training-sets`, or both). Training can also be added to existing artifacts (`fit --training-sets DIR --artifacts PATH` / `ErsiliaQuality.add_training`; the Python argument is `training_sets=`). `run` computes every fitted score.
 
 ### Per-score components — `scores/`
 
@@ -48,7 +48,7 @@ Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bo
 
 Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Class flags select the upstream tiers: `USES_SHARED` (default True), `USES_KNN`, `USES_TRAINING`.
 
-- **`scores/training_domain.py`** — `TrainingDomain` (training modality, `USES_SHARED=False`). Per output column, the raw value is the Tanimoto similarity of the nearest training molecule (the query's own entry is skipped if it is a training molecule). It is calibrated against that column's leave-one-out nearest similarities. The summary is `nanquantile(per-column, 0.34)`. `run` also returns a details table: (query, column) × domain plus 5 nearest neighbours.
+- **`scores/training_distance.py`** — `TrainingDistance` (training modality, `USES_SHARED=False`, **uncalibrated**). Per output column, the distance is 1 − Tanimoto (Morgan) to the nearest training molecule; it is 0 for a query that is a training molecule (flagged `in_training`). The summary is `nanquantile(per-column, 0.66)`. `run` also returns a details table: (query, column) × distance plus the 5 nearest neighbours.
 
 - **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
 - **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
@@ -102,7 +102,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
   - `download.py` is used only by `eosquality download`.
   - `physchem.py` / `maccs.py` contain the descriptor functions shared by build and query.
 - **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`, which sets the INFO log level. Subcommands: `build`, `download`, `fit` and `run`.
-  - `fit` takes `--reference CSV`, `--training DIR`, `--training-predictions CSV`, `-o NEW` or `--artifacts EXISTING`, and `--vector-index`.
+  - `fit` takes `--reference CSV`, `--training-sets DIR`, `--training-predictions CSV`, `-o NEW` or `--artifacts EXISTING`, and `--vector-index`.
   - `run --training-details PATH` (default `<output>.training_details.csv`).
 - **`utils/`**
   - `logging.py`: a loguru logger bound with `extra["eosquality"]` and a filtered sink. Quiet (WARNING) as a library, INFO in the CLI, DEBUG with `set_verbosity(True)`.

@@ -109,13 +109,13 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 
 ## Training modality (in progress)
 
-Each output column can have its own training set. It is fitted with `--training`, alone or with `--reference`, or added to existing artifacts with `--artifacts`.
+Each output column can have its own training set. It is fitted with `--training-sets`, alone or with `--reference`, or added to existing artifacts with `--artifacts`.
 
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
-| 2 | `training_domain` + per-column nearest-neighbour details | SMILES | done |
-| 3 | `training_reliability`: how smooth the labels are around the query, calibrated within domain bins | y | planned |
+| 2 | `training_distance` (uncalibrated Morgan distance to the nearest training molecule) + per-column nearest-neighbour details | SMILES | done |
+| 3 | `training_reliability`: how much the labels of the nearest training molecules agree | y | planned |
 | 4 | `training_fidelity`: local model-vs-label error among training neighbours | y + training predictions | planned |
 | 5 | Conformal expected-error intervals | stages 3–4 validated | planned |
 

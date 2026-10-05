@@ -8,9 +8,9 @@ Without an external labelled set this validates the *method*, not the
 Ersilia model itself.
 
 Reported (with 95% bootstrap intervals):
-- Spearman(training_domain, −|error|): > 0 means lower domain ↔ larger error.
-- AUROC of (1 − training_domain) for flagging the top-quartile errors.
-- Mean |error| per domain quartile.
+- Spearman(training_distance, |error|): > 0 means farther ↔ larger error.
+- AUROC of training_distance for flagging the top-quartile errors.
+- Mean |error| per distance quartile.
 
     python scripts/evaluate_training.py --csv train.csv [--y-col y] [--max-n 20000]
 """
@@ -83,11 +83,11 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
         folder = Path(tmp) / "training_eos0aaa_v1"
         folder.mkdir()
         train_df[["smiles", "y"]].to_csv(folder / f"{name}.csv", index=False)
-        eq = ErsiliaQuality().fit(eos_id="eos0aaa", training=folder)
+        eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
         q = pd.DataFrame(
             {"key": [str(i) for i in test_df.index], "input": test_df.smiles}
         )
-        domain = eq.run(q).scores["training_domain"].to_numpy()
+        distance = eq.run(q).scores["training_distance"].to_numpy()
 
     X_tr, X_te = morgan(train_df.smiles.tolist()), morgan(test_df.smiles.tolist())
     if binary:
@@ -99,15 +99,15 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
         model.fit(X_tr, train_df.y)
         err = np.abs(model.predict(X_te) - test_df.y.to_numpy())
 
-    ok = np.isfinite(domain)
-    domain, err = domain[ok], err[ok]
-    rho = spearmanr(domain, -err)[0]
-    rho_ci = bootstrap(lambda d, e: spearmanr(d, -e)[0], domain, err)
+    ok = np.isfinite(distance)
+    distance, err = distance[ok], err[ok]
+    rho = spearmanr(distance, err)[0]
+    rho_ci = bootstrap(lambda d, e: spearmanr(d, e)[0], distance, err)
     big = err >= np.quantile(err, 0.75)
-    auc = roc_auc_score(big, 1 - domain)
-    auc_ci = bootstrap(lambda b, d: roc_auc_score(b, 1 - d), big, domain)
+    auc = roc_auc_score(big, distance)
+    auc_ci = bootstrap(lambda b, d: roc_auc_score(b, d), big, distance)
     quart = pd.qcut(
-        domain, 4, labels=["Q1 (low)", "Q2", "Q3", "Q4 (high)"], duplicates="drop"
+        distance, 4, labels=["Q1 (near)", "Q2", "Q3", "Q4 (far)"], duplicates="drop"
     )
     by_q = pd.Series(err).groupby(quart, observed=True).mean()
     return {
@@ -118,7 +118,7 @@ def evaluate(df: pd.DataFrame, name: str = "column") -> dict:
         "spearman_ci": rho_ci,
         "auroc": auc,
         "auroc_ci": auc_ci,
-        "error_by_domain_quartile": by_q.round(4).to_dict(),
+        "error_by_distance_quartile": by_q.round(4).to_dict(),
     }
 
 
@@ -128,12 +128,12 @@ def report(name: str, r: dict) -> None:
         f"{'binary' if r['binary'] else 'continuous'} y"
     )
     print(
-        f"Spearman(domain, -|error|) = {r['spearman']:.3f}  95% CI [{r['spearman_ci'][0]:.3f}, {r['spearman_ci'][1]:.3f}]"
+        f"Spearman(distance, |error|) = {r['spearman']:.3f}  95% CI [{r['spearman_ci'][0]:.3f}, {r['spearman_ci'][1]:.3f}]"
     )
     print(
         f"AUROC top-quartile error  = {r['auroc']:.3f}  95% CI [{r['auroc_ci'][0]:.3f}, {r['auroc_ci'][1]:.3f}]"
     )
-    print("mean |error| by domain quartile:", r["error_by_domain_quartile"])
+    print("mean |error| by distance quartile:", r["error_by_distance_quartile"])
 
 
 def main() -> None:

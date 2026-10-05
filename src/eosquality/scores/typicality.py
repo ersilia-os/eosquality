@@ -98,15 +98,21 @@ class Typicality(ScoreComponent):
         version: str | None = None,
         shared: SharedFitState | None = None,
     ) -> Typicality:
-        """Fit on a reference DataFrame.
+        """Build the int8 density LUTs and the Q66 calibration table.
 
-        Builds the per-column int8 count LUTs (:func:`fit_typicality_luts`)
-        on the scaled reference and the sorted reference Q66 aggregates
-        used as the calibration CDF.
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Predictions on the reference library.
+        eos_id, version : str, optional
+            Model id and version, needed only to fit ``shared`` here.
+        shared : SharedFitState, optional
+            Pre-fit shared state (as passed by :class:`ErsiliaQuality`).
 
-        Either pass a pre-fit ``shared=`` (when composed by ErsiliaQuality),
-        or pass ``eos_id`` + ``version`` so Typicality can fit the shared
-        state itself.
+        Returns
+        -------
+        Typicality
+            ``self``, fitted.
         """
         t0 = time.perf_counter()
         shared = _resolve_shared(
@@ -148,13 +154,16 @@ class Typicality(ScoreComponent):
 
         Parameters
         ----------
-        query:
-            DataFrame with the same numeric columns as the reference.
-        query_repr:
-            Optional pre-scaled, feature-selected query array
-            ``(n_query, n_selected)``. If provided, schema validation and the
-            eosframes transform are skipped — used by ErsiliaQuality to share
-            that work across scores.
+        query : pandas.DataFrame
+            The reference's numeric output columns.
+        query_repr : numpy.ndarray, optional
+            Pre-scaled, feature-selected query array; skips validation and scaling
+            (the orchestrator shares this work across scores).
+
+        Returns
+        -------
+        TypicalityRunResult
+            Calibrated score, Q66 aggregate, per-feature values and metadata.
         """
         self._check_fitted()
         assert self._shared is not None
@@ -233,6 +242,12 @@ class Typicality(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._count_luts is not None
@@ -242,18 +257,37 @@ class Typicality(ScoreComponent):
 
     @property
     def count_luts_(self) -> np.ndarray:
+        """Per-column int8 count LUTs.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(256, n_features)``.
+        """
         self._check_fitted()
         assert self._count_luts is not None
         return self._count_luts
 
     @property
     def sorted_self_aggregates_(self) -> np.ndarray:
+        """Sorted reference Q66 aggregates (the calibration CDF).
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._sorted_self_aggregates is not None
         return self._sorted_self_aggregates
 
     @property
     def reference_typicality_(self) -> float:
+        """Mean calibrated typicality of the reference (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_typicality is not None
         return self._reference_typicality
@@ -281,13 +315,17 @@ def _quantize_to_int8(scaled: np.ndarray) -> np.ndarray:
 def fit_typicality_luts(scaled_reference: np.ndarray) -> np.ndarray:
     """Build per-column int8 count LUTs from reference scaled values.
 
+    Parameters
+    ----------
+    scaled_reference : numpy.ndarray
+        ``(n_ref, n_features)`` eosframes-scaled reference values.
+
     Returns
     -------
-    count_luts: np.ndarray
-        Shape ``(256, n_features)``; ``count_luts[int8 + 128, j]`` is the
-        number of reference rows whose feature ``j`` quantized to ``int8``.
-        The NaN-sentinel slot (index 0) is always 0 — NaN reference rows are
-        excluded from the count.
+    numpy.ndarray
+        ``(256, n_features)`` counts; ``luts[int8 + 128, j]`` is the number of
+        reference rows whose feature ``j`` quantises to ``int8``. Slot 0 (the
+        NaN sentinel) stays 0: NaN reference values are not counted.
     """
     n_features = scaled_reference.shape[1] if scaled_reference.ndim > 1 else 0
     luts = np.zeros((_LUT_SIZE, n_features), dtype=np.int64)

@@ -47,8 +47,8 @@ def model_id_from_name(path: str, fallback_version: str) -> tuple[str, str] | No
         return (eos_id, fallback_version) if eos_id else None
 
 
-def _resolve_model_id(reference: str | None, training: str | None, version: str):
-    source = reference if reference is not None else training
+def _resolve_model_id(reference: str | None, training_sets: str | None, version: str):
+    source = reference if reference is not None else training_sets
     model_id = model_id_from_name(source, version)
     if model_id is None:
         raise CliError(
@@ -56,31 +56,31 @@ def _resolve_model_id(reference: str | None, training: str | None, version: str)
             "Rename it to include the model ID and version (e.g. 'eos4e40_v1.csv' "
             "or 'training_eos4e40_v1/')."
         )
-    if reference is not None and training is not None:
-        training_id = model_id_from_name(training, model_id[1])
+    if reference is not None and training_sets is not None:
+        training_id = model_id_from_name(training_sets, model_id[1])
         if training_id is not None and training_id[0] != model_id[0]:
             raise CliError(
-                f"--training is for {training_id[0]} but --reference is for "
+                f"--training-sets is for {training_id[0]} but --reference is for "
                 f"{model_id[0]}."
             )
     return model_id
 
 
-def _check_inputs(reference, training, output, artifacts) -> None:
-    if reference is None and training is None:
-        raise CliError("give --reference, --training, or both.")
+def _check_inputs(reference, training_sets, output, artifacts) -> None:
+    if reference is None and training_sets is None:
+        raise CliError("give --reference, --training-sets, or both.")
     if artifacts is not None:
         if reference is not None or output is not None:
             raise CliError(
                 "--artifacts adds training sets to an existing artifacts folder; "
                 "it cannot be combined with --reference or --output."
             )
-        if training is None:
-            raise CliError("--artifacts needs --training.")
+        if training_sets is None:
+            raise CliError("--artifacts needs --training-sets.")
         if not pathlib.Path(artifacts).is_dir():
             raise CliError(f"artifacts folder '{artifacts}' does not exist.")
     elif output is None:
-        raise CliError("--output is required (or --artifacts to add training).")
+        raise CliError("--output is required (or --artifacts to add training sets).")
 
 
 def _read_reference(path: str | None) -> pd.DataFrame | None:
@@ -102,10 +102,10 @@ def _positive_or_none(value: int) -> int | None:
     help=(
         "Fit quality scores for one model and save the artifacts. Two modalities, "
         "each fitted when its data is given: --reference (the model's predictions "
-        "on the reference library) and --training (a folder of per-output-column "
-        "training sets). Give either or both; --training with --artifacts adds "
+        "on the reference library) and --training-sets (a folder of per-output-column "
+        "training sets). Give either or both; --training-sets with --artifacts adds "
         "training sets to an existing artifacts folder. The model id is read from "
-        "the --reference file name, else from the --training folder name (e.g. "
+        "the --reference file name, else from the --training-sets folder name (e.g. "
         "eos4e40_v1.csv, training_eos4e40_v1/). The canonical reference library "
         "is resolved locally; fit never downloads."
     ),
@@ -117,7 +117,7 @@ def _positive_or_none(value: int) -> int | None:
     help="Reference modality: predictions on the reference library.",
 )
 @click.option(
-    "--training",
+    "--training-sets",
     metavar="DIR",
     help=(
         "Training modality: folder with one <output_column>.csv per column "
@@ -136,7 +136,7 @@ def _positive_or_none(value: int) -> int | None:
     "--artifacts",
     "-a",
     metavar="PATH",
-    help="Existing artifacts folder to add --training to, in place.",
+    help="Existing artifacts folder to add --training-sets to, in place.",
 )
 @click.option(
     "--vector-index",
@@ -190,7 +190,7 @@ def _positive_or_none(value: int) -> int | None:
 @verbose_option
 def fit(
     reference: str | None,
-    training: str | None,
+    training_sets: str | None,
     training_predictions: str | None,
     output: str | None,
     artifacts: str | None,
@@ -210,14 +210,14 @@ def fit(
     ----------
     reference : str or None
         Reference predictions CSV.
-    training : str or None
+    training_sets : str or None
         Training-set folder.
     training_predictions : str or None
         Model predictions on the training molecules.
     output : str or None
         New artifacts folder.
     artifacts : str or None
-        Existing artifacts folder to add training to.
+        Existing artifacts folder to add the training sets to.
     vector_index : str or None
         Custom vector index for the reference modality.
     k : int
@@ -245,7 +245,7 @@ def fit(
 def _fit(
     *,
     reference,
-    training,
+    training_sets,
     training_predictions,
     output,
     artifacts,
@@ -259,19 +259,19 @@ def _fit(
     signal_descriptor,
     verbose,
 ) -> None:
-    _check_inputs(reference, training, output, artifacts)
+    _check_inputs(reference, training_sets, output, artifacts)
     if artifacts is not None:
-        model_id = model_id_from_name(training, version)
+        model_id = model_id_from_name(training_sets, version)
         ErsiliaQuality.add_training(
             artifacts,
-            training,
+            training_sets,
             training_predictions,
             eos_id=model_id[0] if model_id else None,
             version=model_id[1] if model_id else None,
         )
         return
     require_new_path(output)
-    eos_id, model_version = _resolve_model_id(reference, training, version)
+    eos_id, model_version = _resolve_model_id(reference, training_sets, version)
     score_list = (
         [t.strip() for t in scores.split(",") if t.strip()]
         if scores
@@ -288,7 +288,7 @@ def _fit(
         max_features=_positive_or_none(max_features),
         max_signal_train_samples=_positive_or_none(max_signal_samples),
         signal_descriptor=signal_descriptor,
-        training=training,
+        training_sets=training_sets,
         training_predictions=training_predictions,
     )
     eq.save(output)
