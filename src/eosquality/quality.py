@@ -17,6 +17,7 @@ import pandas as pd
 from eosquality import _artifacts, _reference_modality, _training_modality
 from eosquality._registry import (
     ALL_SCORES,
+    DEFAULT_MAX_FEATURES,
     DEFAULT_SCORES,
     INDEX_AWARE,
     MIN_REFERENCE_SAMPLES,
@@ -39,7 +40,6 @@ from eosquality.scores.support import Support
 from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.typicality import Typicality
-from eosquality.shared.fit import DEFAULT_MAX_FEATURES
 from eosquality.shared.state import SharedFitState
 from eosquality.training import TrainingFitState
 from eosquality.utils import console

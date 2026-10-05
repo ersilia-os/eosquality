@@ -11,12 +11,9 @@ import pathlib
 import time
 
 import click
-import pandas as pd
 
-from eosquality.basic_descriptors import BasicDescriptors
 from eosquality.cli._common import CliError, run_command, verbose_option
 from eosquality.utils import console
-from eosquality.vectorindex import VectorIndex
 
 
 @click.command(
@@ -95,6 +92,8 @@ def build(
 
 def _read_library(input_path: str, max_samples: int | None) -> list[str]:
     """SMILES of the library CSV, optionally truncated."""
+    import pandas as pd
+
     try:
         df = pd.read_csv(input_path)
     except Exception as exc:
@@ -109,6 +108,9 @@ def _read_library(input_path: str, max_samples: int | None) -> list[str]:
 
 def _build(input_path, output, max_k, radius, n_bits, max_samples, verbose) -> None:
     """Body of ``eosquality build`` (see :func:`build`)."""
+    from eosquality.basic_descriptors import BasicDescriptors
+    from eosquality.vectorindex import VectorIndex
+
     smiles = _read_library(input_path, max_samples)
     started = time.perf_counter()
     console.summary_panel(

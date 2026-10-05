@@ -1,11 +1,13 @@
 """``eosquality run`` — score query molecules against saved artifacts."""
 
+from __future__ import annotations
+
 import json
 import pathlib
 import time
+from typing import TYPE_CHECKING
 
 import click
-import pandas as pd
 
 from eosquality.cli._common import (
     CliError,
@@ -14,9 +16,11 @@ from eosquality.cli._common import (
     verbose_option,
 )
 from eosquality.exceptions import IncompatibleArtifactsError
-from eosquality.quality import ErsiliaQuality
 from eosquality.utils import console
 from eosquality.utils.logging import logger
+
+if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-up
+    from eosquality.quality import ErsiliaQuality
 
 
 def default_details_path(output: str) -> str:
@@ -37,6 +41,8 @@ def default_details_path(output: str) -> str:
 
 
 def _load_artifacts(path: str) -> ErsiliaQuality:
+    from eosquality.quality import ErsiliaQuality
+
     try:
         return ErsiliaQuality.load(path)
     except FileNotFoundError as exc:
@@ -119,6 +125,8 @@ def run(
 
 def _run(input_path, artifacts, output, training_details) -> None:
     """Body of ``eosquality run`` (see :func:`run`)."""
+    import pandas as pd
+
     if not pathlib.Path(artifacts).is_dir():
         raise CliError(f"artifacts folder '{artifacts}' does not exist.")
     require_new_path(output)
@@ -160,6 +168,8 @@ def _run(input_path, artifacts, output, training_details) -> None:
 
 def _write_outputs(query, result, output, details_path) -> None:
     """Write the scores CSV (with ``key``/``input``) and the training details."""
+    import pandas as pd
+
     with console.section("Write outputs") as section:
         prepend = [c for c in ("key", "input") if c in query.columns]
         pd.concat(

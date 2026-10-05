@@ -1,12 +1,13 @@
-"""Score names, canonical order and component classes shared by the orchestrator."""
+"""Score names, canonical order and defaults shared by the orchestrator and the CLI.
 
-from eosquality.scores.consistency import Consistency
-from eosquality.scores.extremity import Extremity
-from eosquality.scores.signal import Signal
-from eosquality.scores.support import Support
-from eosquality.scores.typicality import Typicality
+Constants only, with no heavy imports: the CLI reads them to build its help
+text, so importing this module must stay cheap (see ``tests/test_startup.py``).
+The component classes are mapped in :mod:`eosquality._artifacts`.
+"""
 
 MIN_REFERENCE_SAMPLES = 10_000
+# Feature-selection cap of the shared state (``fit_shared``).
+DEFAULT_MAX_FEATURES = 10
 
 DEFAULT_SCORES: tuple[str, ...] = (
     "typicality",
@@ -26,13 +27,6 @@ SCORE_ORDER: tuple[str, ...] = (
     "consistency",
     "signal",
 )
-SCORE_CLASSES = {
-    "typicality": Typicality,
-    "extremity": Extremity,
-    "support": Support,
-    "consistency": Consistency,
-    "signal": Signal,
-}
 # Scores that need the vector index at fit time (Signal reads the library's
 # descriptor matrices from the index folder; it never queries the index).
 INDEX_AWARE = frozenset({"support", "consistency", "signal"})

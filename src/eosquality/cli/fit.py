@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import pathlib
 import time
+from typing import TYPE_CHECKING
 
 import click
-import pandas as pd
 
+from eosquality._registry import (
+    ALL_SCORES,
+    DEFAULT_MAX_FEATURES,
+    DEFAULT_SCORES,
+    MIN_REFERENCE_SAMPLES,
+)
 from eosquality.cli._common import (
     CliError,
     require_new_path,
@@ -15,16 +21,12 @@ from eosquality.cli._common import (
     staged_log,
     verbose_option,
 )
-from eosquality.quality import (
-    ALL_SCORES,
-    DEFAULT_SCORES,
-    MIN_REFERENCE_SAMPLES,
-    ErsiliaQuality,
-)
-from eosquality.shared.fit import DEFAULT_MAX_FEATURES
 from eosquality.utils import console
 from eosquality.utils.identifiers import extract_from_path, find_eos_id
 from eosquality.utils.logging import logger
+
+if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-up
+    import pandas as pd
 
 LOG_FILE = "eosquality.log"
 
@@ -92,6 +94,8 @@ def _read_reference(path: str | None) -> pd.DataFrame | None:
     if path is None:
         return None
     logger.info(f"fit | reading reference CSV {path}")
+    import pandas as pd
+
     try:
         return pd.read_csv(path)
     except Exception as exc:
@@ -290,6 +294,8 @@ def _fit(
     )
     with staged_log(output_path / LOG_FILE) as log_path:
         logger.info(f"fit | eosquality {eos_id} {model_version} → {output_path}")
+        from eosquality.quality import ErsiliaQuality
+
         eq = ErsiliaQuality(k=k, verbose=verbose)
         eq.fit(
             _read_reference(reference),
@@ -324,6 +330,8 @@ def _add_training(artifacts, training_sets, training_predictions, version, start
     )
     with logger.log_file(folder / LOG_FILE) as log_path:
         logger.info(f"fit | adding training sets {training_sets} → {folder}")
+        from eosquality.quality import ErsiliaQuality
+
         eq = ErsiliaQuality.add_training(
             artifacts,
             training_sets,

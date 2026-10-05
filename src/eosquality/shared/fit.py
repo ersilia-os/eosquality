@@ -6,6 +6,7 @@ import time
 
 import pandas as pd
 
+from eosquality._registry import DEFAULT_MAX_FEATURES
 from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import infer_schema
 from eosquality.shared.feature_selection import select_features_by_correlation
@@ -13,8 +14,6 @@ from eosquality.shared.metadata import compute_metadata
 from eosquality.shared.splitter import Splitter
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
-
-DEFAULT_MAX_FEATURES = 10
 
 
 def fit_shared(

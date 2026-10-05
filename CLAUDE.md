@@ -95,9 +95,9 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 ### Orchestrator + flat infrastructure modules
 
 - **`quality.py`** — `ErsiliaQuality`.
-  - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `_SCORE_ORDER`.
+  - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `SCORE_ORDER`.
   - **`run`.** Validates and scales the query once, runs the FP kNN once, and returns `RunResult(scores, metadata)`. Score columns come in `name, name_raw` pairs, plus `support_log`; metadata keys are prefixed `<component>_`.
-  - **`save` / `load` / `add_training`** live in `_artifacts.py`. `save` writes `reference_mode/` (`shared/` and `knn/` once, then `save_component` for each score) and `training_mode/` (`training_sets/` plus training components), each only if fitted, plus `manifest.json`. `load` reads whichever subfolders exist and rejects the old flat layout. The fit and run of the reference modality live in `_reference_modality.py`, and those of the training modality in `_training_modality.py`; score names and classes are in `_registry.py`.
+  - **`save` / `load` / `add_training`** live in `_artifacts.py`. `save` writes `reference_mode/` (`shared/` and `knn/` once, then `save_component` for each score) and `training_mode/` (`training_sets/` plus training components), each only if fitted, plus `manifest.json`. `load` reads whichever subfolders exist and rejects the old flat layout. The fit and run of the reference modality live in `_reference_modality.py`, and those of the training modality in `_training_modality.py`; score names, orders and defaults are in `_registry.py` (constants only, so the CLI can read them cheaply), and the name → class map `SCORE_CLASSES` is in `_artifacts.py`.
 - **`vectorindex.py`** — `VectorIndex`, the Morgan/FPSim2 kNN index.
   - **API.** `build`, `load` (memory-mapped kNN arrays), `query`, `self_knn_indices` / `self_knn_distances`, and the properties `library_name`, `index_dir`, `smiles`, `n_reference`.
   - **Resume.** `build` resumes only when the SMILES digest and parameters match.
@@ -128,7 +128,7 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 ### When adding new functionality
 
 1. Decide whether it's a **score component**, **shared upstream state**, or **infrastructure**.
-2. For a new score, subclass `ScoreComponent` under `scores/<name>.py`, modelled on `Typicality` (no index) or `Support` (index-aware). Then add it to `_SCORE_ORDER` / `_SCORE_CLASSES` in `quality.py`, to the dispatch in `ErsiliaQuality.run`, and to `DEFAULT_SCORES` / `ALL_SCORES`.
+2. For a new score, subclass `ScoreComponent` under `scores/<name>.py`, modelled on `Typicality` (no index) or `Support` (index-aware). Then add it to `SCORE_ORDER` (and `DEFAULT_SCORES` / `ALL_SCORES`) in `_registry.py`, to `SCORE_CLASSES` in `_artifacts.py`, to the fitters in `_reference_modality._fitters` and to the run dispatch in `_reference_modality._run_component`.
 3. For new shared upstream state, extend `SharedFitState` (always on, cheap) or `KnnFitState` (kNN tier).
 4. Any change to what saved files mean (formula, layout, calibration) must bump `ARTIFACT_FORMAT_VERSION` in `shared/metadata.py`.
 5. Add tests under `tests/`; the `library`, `reference` and `query` fixtures in `conftest.py` build a tiny custom library.
@@ -140,6 +140,7 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 - **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `✖ error:` lines and exit status 1. The library fetch command is `setup`, matching the other Ersilia tools.
 - **Output:** user-facing status goes through `utils/console.py` (steps, panels), never through `logger.info`. `logger` is for diagnostics, which go to the log file and appear on screen only with `-v`. Library code narrates fit/run with `console.section` + `console.Steps`, which are no-ops while the console is off.
 - **Size limits:** modules stay under 600 lines and functions under 80; split them before they grow past that.
+- **Start-up imports:** `import eosquality` and the CLI must not import pandas, scikit-learn, SciPy, RDKit, XGBoost, FPSim2 or eosframes, which take about 2 s. The package `__init__` resolves its classes lazily (PEP 562 `__getattr__`), `_registry.py` holds constants only, and CLI modules import heavy modules inside command bodies, using `TYPE_CHECKING` for annotations. `tests/test_startup.py` enforces this.
 - **Docstrings:** every public module, class, function and method in `src/` and `scripts/` has a NumPy-style docstring, with `Parameters` and `Returns` sections where they apply. Test functions in `tests/` are exempt from the docstring rules; pytest test names and fixtures are self-describing.
 
 ## Documentation Maintenance

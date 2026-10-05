@@ -8,20 +8,19 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from eosquality._registry import (
-    INDEX_AWARE,
-    KNN_USERS,
-    SCORE_CLASSES,
-    SCORE_ORDER,
-)
+from eosquality._registry import INDEX_AWARE, KNN_USERS, SCORE_ORDER
 from eosquality.config import ErsiliaQualityConfig, NeighborConfig
 from eosquality.exceptions import ArtifactVersionError, IncompatibleArtifactsError
 from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
 from eosquality.library.identity import LIBRARY_ID
-from eosquality.scores.signal import SIGNAL_FORMULA_VERSION
+from eosquality.scores.consistency import Consistency
+from eosquality.scores.extremity import Extremity
+from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
+from eosquality.scores.support import Support
 from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
+from eosquality.scores.typicality import Typicality
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
@@ -32,6 +31,13 @@ if TYPE_CHECKING:
     from eosquality.quality import ErsiliaQuality
 
 
+SCORE_CLASSES = {
+    "typicality": Typicality,
+    "extremity": Extremity,
+    "support": Support,
+    "consistency": Consistency,
+    "signal": Signal,
+}
 # Artifacts layout: one subfolder per modality, either or both present.
 REFERENCE_DIR = "reference_mode"
 TRAINING_DIR = "training_mode"
