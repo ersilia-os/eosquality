@@ -82,7 +82,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 ### Shared upstream layers
 
 - **`training/`** — the training-modality tier.
-  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None, predictions=None)`. One `<column>.csv` per output column (`smiles`, optional `y`, optional `key`). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicates are merged: binary by majority, otherwise by median. Columns with fewer than 20 molecules are skipped.
+  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None, predictions=None)`. One `<column>.csv` per output column (`smiles` or `input`, optional `y` or `value`, optional `key`). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicates are merged: binary by majority, otherwise by median. Columns with fewer than 20 molecules are skipped.
   - `folds.py`: `scaffold_folds` (balanced Murcko-grouped CV folds, acyclic molecules as singletons) and `morgan_bits`.
   - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex`, `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
   - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).

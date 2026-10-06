@@ -70,7 +70,7 @@ Fits the quality scores of one model and saves the artifacts.
 
 **Training folder** (`-t`). It holds one `<output_column>.csv` per output column:
 - a `smiles` column (or `input`);
-- optional `y`, numeric, binary or continuous;
+- optional `y` (or `value`), numeric, binary or continuous;
 - optional `key`, used to name training molecules in the details file.
 
 When `-r` is also given, every file must name one of its output columns. Columns without a file simply have no training scores.

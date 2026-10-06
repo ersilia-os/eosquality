@@ -34,7 +34,7 @@ eq.fit(
 - **The reference library.** `reference["input"]` must match the library's SMILES row for row, which also fixes its size. The canonical library is resolved locally (see [cli.md](cli.md#the-reference-library)). `vector_index` points at a custom index instead; its absolute path is stored in the artifacts.
 - **Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and 1,000 training rows.
 - **Re-fitting.** Calling `fit` again replaces every component, including ones excluded this time.
-- **Training sets.** The folder holds one CSV per output column (`smiles`, optional `y`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
+- **Training sets.** The folder holds one CSV per output column (`smiles`, optional `y` or `value`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 
 ```python
 eq.fit_training(training_sets, *, eos_id=None, version=None, exclude=())

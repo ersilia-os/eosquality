@@ -48,6 +48,18 @@ def test_loader_needs_smiles_column(tmp_path):
         load_training(tmp_path, COLUMNS)
 
 
+def test_loader_reads_value_as_label(tmp_path, training_dir):
+    expected = load_training(training_dir, COLUMNS)["mw"]
+    df = pd.read_csv(training_dir / "mw.csv")
+    df.rename(columns={"y": "value"}).to_csv(tmp_path / "mw.csv", index=False)
+    column = load_training(tmp_path, COLUMNS)["mw"]
+    assert column.y_kind == expected.y_kind
+    np.testing.assert_array_equal(column.y, expected.y)
+    # With both, 'y' wins.
+    df.assign(value=-1.0).to_csv(tmp_path / "mw.csv", index=False)
+    np.testing.assert_array_equal(load_training(tmp_path, COLUMNS)["mw"].y, expected.y)
+
+
 def test_loader_skips_small_columns(tmp_path, training_dir):
     for f in training_dir.glob("*.csv"):
         (tmp_path / f.name).write_text(f.read_text())

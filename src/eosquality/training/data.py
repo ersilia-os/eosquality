@@ -2,7 +2,8 @@
 
 Input contract: a folder with one CSV per model output column,
 ``<folder>/<column>.csv``, holding a ``smiles`` column (``input`` is accepted
-as an alias), optionally a numeric ``y`` column and a ``key`` column. When
+as an alias), optionally a numeric ``y`` column (``value`` is accepted as an
+alias) and a ``key`` column. When
 the model's output columns are known (from the reference predictions), every
 file must name one of them.
 
@@ -30,6 +31,7 @@ from eosquality.utils.logging import logger
 MIN_TRAINING_MOLECULES = 20
 
 _SMILES_COLUMNS = ("smiles", "input")
+_LABEL_COLUMNS = ("y", "value")
 
 
 @dataclass
@@ -152,9 +154,12 @@ def _load_column(name: str, df: pd.DataFrame) -> TrainingColumn:
             f"Training file for column {name!r} needs a 'smiles' column "
             f"(found {list(df.columns)})."
         )
-    has_y = "y" in df.columns
-    if has_y and not pd.api.types.is_numeric_dtype(df["y"]):
-        raise SchemaError(f"Training file for column {name!r}: 'y' must be numeric.")
+    y_col = next((c for c in _LABEL_COLUMNS if c in df.columns), None)
+    has_y = y_col is not None
+    if has_y and not pd.api.types.is_numeric_dtype(df[y_col]):
+        raise SchemaError(
+            f"Training file for column {name!r}: {y_col!r} must be numeric."
+        )
 
     std = df[smiles_col].map(_standardize)
     n_bad = int(std.isna().sum())
@@ -167,7 +172,7 @@ def _load_column(name: str, df: pd.DataFrame) -> TrainingColumn:
     )
     table = pd.DataFrame({"smiles": std, "id": ids})
     if has_y:
-        table["y"] = df["y"].astype(float)
+        table["y"] = df[y_col].astype(float)
     table = table[table["smiles"].notna()]
 
     y_kind = _detect_kind(table["y"]) if has_y else None
