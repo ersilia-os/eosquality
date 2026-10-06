@@ -11,6 +11,11 @@ from eosquality.utils import console
 from eosquality.utils.logging import logger
 
 
+def _unwrapped(text: str) -> str:
+    """Console output with Rich's terminal-width line wrapping undone."""
+    return "".join(text.split())
+
+
 def _run(argv):
     with pytest.raises(SystemExit) as exc:
         main(argv)
@@ -53,7 +58,7 @@ def test_markup_in_user_strings_is_shown_not_parsed(tmp_path, capsys):
     art = tmp_path / "nope[/]"
     code = _run(["run", "-i", "q.csv", "-a", str(art), "-o", str(tmp_path / "o.csv")])
     assert code == 1
-    assert "nope[/]" in capsys.readouterr().err
+    assert "nope[/]" in _unwrapped(capsys.readouterr().err)
 
 
 def test_cli_restores_global_state(tmp_path):
@@ -86,7 +91,7 @@ def test_empty_query_is_a_clear_error(tmp_path, reference, library, capsys):
     empty.write_text("key,input,mw\n")
     out = tmp_path / "s.csv"
     assert _run(["run", "-i", str(empty), "-a", str(art), "-o", str(out)]) == 1
-    assert "has no rows" in capsys.readouterr().err
+    assert "hasnorows" in _unwrapped(capsys.readouterr().err)
 
 
 def test_dir_lists_lazy_names():
