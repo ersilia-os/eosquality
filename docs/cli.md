@@ -8,7 +8,7 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ # once per m
 eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e40_v1.csv
 ```
 
-**Names carry the model.** There is no `--eos-id` or `--version` flag. The model id and version are read from the names of the files and folders, which must follow the eosframes rule `[prefix_]<eos_id>_<version>`, e.g. `reference_eos4e40_v1.csv`, `training_eos4e40_v1/`, `artifacts_eos4e40_v1/`. The prefix is free; `<eos_id>` is `eos` + a digit + three characters, `<version>` is `v` + a number. Within a command every name must give the same model, and `run` also checks it against the model the artifacts were fitted for. Anything else stops with an error, for example:
+**Names carry the model.** There is no `--eos-id` or `--version` flag. The model id and version are read from the names of the files and folders, which must follow the eosframes rule `[prefix_]<eos_id>_<version>`, e.g. `reference_eos4e40_v1.csv`, `training_eos4e40_v1/`, `artifacts_eos4e40_v1/`. The prefix is free; `<eos_id>` is `eos` + a digit + three characters, `<version>` is `v` + a number. Within a command every such name must give the same model, and `run` also checks it against the model the artifacts were fitted for. The query of `run` (`-i`) is exempt: it can have any name. Anything else stops with an error, for example:
 
 ```
 ✖ error: the names disagree on the model: --reference reference_eos4e40_v1.csv is eos4e40 v1, --artifacts artifacts_eos7m30_v1 is eos7m30 v1.
@@ -20,7 +20,7 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 |---|---|
 | `-r/--reference` (predictions on the reference library) | `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal` |
 | `-t/--training-sets` (per-output-column training sets) | `trn_distance`, and `trn_difficulty` for columns with labels |
-| both | both |
+| both | both, on the same columns (below) |
 
 ```bash
 eosquality fit -r reference_eos4e40_v1.csv -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/  # both
@@ -28,7 +28,7 @@ eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                 
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_signal     # skip a score
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `trn_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `trn_difficulty`, a learned error model; the fit log reports, per column, how well it ranks held-out errors.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `trn_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `trn_difficulty`, a learned error model, together with its four inputs as columns of their own (`trn_nn1_tanimoto`, `trn_nn5_tanimoto`, `trn_ensemble_variance`, `trn_surrogate_score`); the fit log reports, per column, how well it ranks held-out errors.
 
 **Common behaviour:**
 - **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
@@ -39,8 +39,8 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
   Warnings appear in between. With `-v`, DEBUG messages and full tracebacks are shown too. Progress bars appear only on an interactive terminal.
 - **Log files.** Every record, DEBUG included, goes to a log file with `module:function:line` context:
-  - `fit`: `<artifacts>/eosquality.log`. When adding training sets to existing artifacts, it is appended to the existing one. If a fit fails, its log is kept in a temporary file whose path is printed.
-  - `run`: `<output stem>.log` next to the scores CSV, e.g. `quality_eos4e40_v1.log`. If the output itself ends in `.log`, the log is `<output>.log`.
+  - `fit`: `<artifacts>/eosquality.log`. If a fit fails, its log is kept in a temporary file whose path is printed.
+  - `run`: `<output stem>.log` next to the scores CSV, e.g. `quality_eos4e40_v1.log`.
 
   When a command fails, the error and its traceback are recorded in its log.
 
@@ -70,14 +70,16 @@ Fits the quality scores of one model and saves the artifacts.
 
 **Training folder** (`-t`). It holds one `<output_column>.csv` per output column:
 - a `smiles` column (or `input`);
-- optional `y`, numeric, binary or continuous;
+- optional `y` (or `value`), numeric, binary or continuous;
 - optional `key`, used to name training molecules in the details file.
 
 When `-r` is also given, every file must name one of its output columns. Columns without a file simply have no training scores.
 
-Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped. Duplicate molecules are merged, with binary labels by majority vote and continuous labels by median. Columns with fewer than 20 molecules are skipped.
+Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped. Duplicate molecules are merged, with binary labels by majority vote and continuous labels by median. Columns with fewer than 20 molecules are skipped. The fit prints a table of the loaded columns (molecules, label kind, rows dropped as unparsable, molecules merged from conflicting labels) and warns once with the totals.
 
-**Artifacts folder** (`-a`). Normally a new folder; it gets `reference_mode/` and/or `training_mode/`. An existing folder is accepted in one case only: with `-t` alone, when it has `reference_mode/` and no `training_mode/`. The training sets are then added in place, leaving `reference_mode/` untouched. Anything else is refused.
+**Both inputs.** With both `-r` and `-t`, the reference modality uses only the output columns that have a usable training set (at least 20 valid molecules); the other columns are left out of every score. Feature selection then keeps at most 10 of the remaining columns, and both modalities use those same columns: the training scores, including the error models, are fitted on the selected columns only. So `trn_in_training` means "a training molecule of one of the selected columns". Training sets cannot be added to existing artifacts later: fit both together.
+
+**Artifacts folder** (`-a`). Always a new folder; it gets `reference_mode/` and/or `training_mode/`. An existing folder is refused.
 
 **Excluding scores** (`--exclude`). Takes score names, comma-separated or repeated: `--exclude ref_signal`, `--exclude ref_signal,trn_difficulty`. An unknown name is an error. Naming a score of a modality you did not give is ignored. Excluding every score of a given input is an error (nothing to fit).
 
@@ -85,13 +87,13 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 |---|---|---|
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
-| `--artifacts`, `-a DIR` | required | artifacts folder to create, or to add `-t` to |
+| `--artifacts`, `-a DIR` | required | new artifacts folder |
 | `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_distance`, `trn_difficulty` |
 | `--verbose`, `-v` | off | |
 
 At least one of `-r` and `-t` is required.
 
-**Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and trains on 1,000 rows. Feature selection keeps at most 10 output features. The Python API exposes `max_features` (see [api.md](api.md#fit)).
+**Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and trains on 1,000 rows. Feature selection keeps at most 10 output columns. With a reference, it clusters them on the correlation of their predictions; with `-t` alone, it clusters them on how many training molecules they share (columns from one screening panel group together) and keeps the largest set of each cluster. The Python API exposes `max_features` (see [api.md](api.md#fit)).
 
 ### The reference library
 
@@ -106,22 +108,22 @@ At least one of `-r` and `-t` is required.
 
 Scores a query CSV against saved artifacts. Every score that was fit is computed; choose which scores to compute at fit time.
 
-The query, the artifacts folder and the output must all be named for the same model, which must be the one the artifacts were fitted for.
+The artifacts folder and the output must be named for the same model, which must be the one the artifacts were fitted for. The query file can have any name.
 
 The output CSV contains:
-- the query's `key` and `input` columns, if present;
+- the query's `key` and `input` (or `smiles`) columns, if present;
 - for each fitted reference score, a calibrated column and a `*_raw` column (plus `ref_support_log`);
 - for the training modality, `trn_distance`, `trn_distance_raw`, `trn_difficulty` (when fitted) and `trn_in_training` (see [api.md](api.md#runresult)).
 
-If the artifacts hold `trn_distance`, a second CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query, with the whole-model distance and difficulty, the distance to the nearest training molecule, and the 5 nearest training molecules over all output columns (keys, similarities, and the columns each belongs to).
+If the artifacts hold `trn_distance`, a second CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
 
-For a training-only artifact, the query only needs `key` and `input`.
+For a training-only artifact, the query only needs SMILES, in an `input` or `smiles` column (`key` is optional).
 
 | flag | default | |
 |---|---|---|
 | `--input`, `-i PATH` | required | query CSV |
 | `--artifacts`, `-a PATH` | required | folder written by `fit` |
-| `--output`, `-o PATH` | required | scores CSV (must not exist; nor may its training-details CSV) |
+| `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its training-details CSV) |
 | `--verbose`, `-v` | off | |
 
 Artifacts written by an older eosquality format fail with a "refit" message.

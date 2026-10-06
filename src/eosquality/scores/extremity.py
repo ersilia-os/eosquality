@@ -167,14 +167,13 @@ class Extremity(ScoreComponent):
         score = _score_from_aggregates(raw_aggregate, self._sorted_self_aggregates)
         idx = list(query.index)
         return ExtremityRunResult(
-            score=pd.Series(score, index=idx, name="extremity"),
-            score_raw=pd.Series(raw_aggregate, index=idx, name="extremity_raw"),
+            score=pd.Series(score, index=idx, name="ref_extremity"),
+            score_raw=pd.Series(raw_aggregate, index=idx, name="ref_extremity_raw"),
             per_feature=pd.DataFrame(
                 per_feature, index=idx, columns=list(self._shared.selected_columns)
             ),
             metadata={
-                "reference_extremity": self._reference_extremity,
-                "n_reference": len(self._shared.reference_ids),
+                "anchor": self._reference_extremity,
             },
         )
 

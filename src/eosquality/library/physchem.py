@@ -110,7 +110,7 @@ def compute_physchem_raw(
     smiles : iterable of str
         Input SMILES.
     n_jobs : int, optional
-        Worker processes for large inputs (default: every CPU).
+        Worker processes (default: in-process; ``-1``: every CPU).
     show_progress : bool, optional
         Show a progress bar; ``None`` shows it only for parallel runs.
 

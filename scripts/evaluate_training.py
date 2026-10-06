@@ -50,7 +50,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from rdkit import Chem, RDLogger
-from rdkit.Chem.Scaffolds import MurckoScaffold
 from rdkit.DataStructs import BulkTanimotoSimilarity, CreateFromBitString
 from scipy.stats import spearmanr
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -60,7 +59,7 @@ from xgboost import XGBClassifier, XGBRegressor
 
 from eosquality import ErsiliaQuality
 from eosquality.library.physchem import compute_physchem_raw
-from eosquality.training.folds import morgan_bits
+from eosquality.training.folds import _scaffold, morgan_bits
 
 RDLogger.DisableLog("rdApp.*")
 SEED = 0
@@ -81,7 +80,7 @@ def scaffold_split(smiles: list[str], test_frac: float = 0.2) -> np.ndarray:
     numpy.ndarray
         Boolean mask, ``True`` for test molecules.
     """
-    scaffolds = [MurckoScaffold.MurckoScaffoldSmiles(smiles=s) for s in smiles]
+    scaffolds = [_scaffold(s) for s in smiles]
     groups = pd.Series(range(len(smiles))).groupby(scaffolds).apply(list).tolist()
     rng = np.random.default_rng(SEED)
     rng.shuffle(groups)

@@ -64,20 +64,18 @@ def test_fit_with_training_and_details(files, query, training_dir):
     assert len(details) == len(query)  # one row per query, not per column
 
 
-def test_training_only_then_add_to_reference_artifacts(files, training_dir):
+def test_training_only_and_no_adding_later(files, training_dir, capsys):
     only = str(files["tmp"] / "training_only_eos0aaa_v1")
     assert _run(["fit", "-t", str(training_dir), "-a", only]) == 0
     out = str(files["tmp"] / "s_eos0aaa_v1.csv")
     assert _run(["run", "-i", files["query"], "-a", only, "-o", out]) == 0
-    # Reference first, then training sets added to the same artifacts folder.
+    # Training sets cannot be added to existing artifacts: -a must be new.
     ref_only = ["ref_extremity", "ref_support", "ref_consistency", "ref_signal"]
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
     assert _run([*fit, "--exclude", ",".join(ref_only)]) == 0
-    assert _run(["fit", "-t", str(training_dir), "-a", files["artifacts"]]) == 0
-    art = files["tmp"] / "artifacts_eos0aaa_v1"
-    assert (art / "training_mode").is_dir() and (art / "reference_mode").is_dir()
-    # Training sets cannot be added twice.
+    capsys.readouterr()
     assert _run(["fit", "-t", str(training_dir), "-a", files["artifacts"]]) == 1
+    assert "alreadyexists" in _err(capsys)
 
 
 def test_fit_argument_errors(files, training_dir, capsys):
@@ -132,3 +130,23 @@ def test_commands():
     from eosquality.cli import cli
 
     assert list(cli.commands) == ["setup", "fit", "run", "build"]
+
+
+def test_query_name_needs_no_model(files, training_dir, query):
+    only = str(files["tmp"] / "training_only_eos0aaa_v1")
+    assert _run(["fit", "-t", str(training_dir), "-a", only]) == 0
+    plain = files["tmp"] / "drugs.csv"  # a plain SMILES file, any name
+    query[["input"]].rename(columns={"input": "smiles"}).to_csv(plain, index=False)
+    out = str(files["tmp"] / "quality_eos0aaa_v1.csv")
+    assert _run(["run", "-i", str(plain), "-a", only, "-o", out]) == 0
+    scores = pd.read_csv(out)
+    assert scores.columns[0] == "smiles" and "trn_distance" in scores.columns
+
+
+def test_run_output_must_be_csv(files, capsys):
+    fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
+    assert _run([*fit, "--exclude", "ref_signal"]) == 0
+    capsys.readouterr()
+    bad = str(files["tmp"] / "quality_eos0aaa_v1")
+    assert _run(["run", "-i", files["query"], "-a", files["artifacts"], "-o", bad]) == 1
+    assert "mustbea.csvfile" in _err(capsys)

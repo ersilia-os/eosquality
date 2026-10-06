@@ -178,18 +178,16 @@ class Typicality(ScoreComponent):
             scaled_values=query_repr,
             count_luts=self._count_luts,
         )
-        n_ref = len(self._shared.reference_ids)
         score = _score_from_aggregates(raw_aggregate, self._sorted_self_aggregates)
         idx = list(query.index)
         return TypicalityRunResult(
-            score=pd.Series(score, index=idx, name="typicality"),
-            score_raw=pd.Series(raw_aggregate, index=idx, name="typicality_raw"),
+            score=pd.Series(score, index=idx, name="ref_typicality"),
+            score_raw=pd.Series(raw_aggregate, index=idx, name="ref_typicality_raw"),
             per_feature=pd.DataFrame(
                 per_feature, index=idx, columns=list(self._shared.selected_columns)
             ),
             metadata={
-                "reference_typicality": self._reference_typicality,
-                "n_reference": n_ref,
+                "anchor": self._reference_typicality,
             },
         )
 

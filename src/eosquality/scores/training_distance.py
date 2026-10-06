@@ -37,11 +37,11 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._base import ScoreComponent, read_json, require_file
-from eosquality.scores._helpers import _cdf_score, _sorted_finite, _standardize
+from eosquality.scores._helpers import _cdf_score, _sorted_finite
 from eosquality.scores._training_helpers import (
     SUMMARY_QUANTILE,
+    TrainingQuery,
     _columns_summary,
-    _nearest_training,
 )
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
@@ -54,12 +54,18 @@ LOO_FILE = "loo_mean_distances.npz"
 # in the details table. Capped by the column's precomputed self-kNN.
 K_NEIGHBORS = 5
 
+# The training details table, one row per query. ``trn_difficulty`` is
+# inserted after ``trn_distance_raw`` when fitted. ``nn_*`` describe the
+# K_NEIGHBORS nearest training molecules over all columns, closest first,
+# "|"-separated (``nn_columns``: ";" between the columns of one molecule).
 DETAIL_COLUMNS = [
     "key",
-    "distance",
-    "distance_raw",
-    "nn1_distance",
-    "in_training",
+    "input",
+    "trn_distance",
+    "trn_distance_raw",
+    "trn_in_training",
+    "nn1_similarity",
+    "nn_smiles",
     "nn_keys",
     "nn_similarities",
     "nn_columns",
@@ -73,7 +79,7 @@ class TrainingDistanceRunResult:
     score: pd.Series  # (n_query,) calibrated summary across columns, in (0, 1]
     score_raw: pd.Series  # (n_query,) raw mean-k distance summary, in [0, 1]
     in_training: pd.Series  # (n_query,) query is a training molecule of a column
-    details: pd.DataFrame  # one row per query
+    details: pd.DataFrame  # one row per query (DETAIL_COLUMNS)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -120,7 +126,9 @@ class TrainingDistance(ScoreComponent):
         logger.debug(f"TrainingDistance fit | {len(self._columns)} columns")
         return self
 
-    def run(self, query: pd.DataFrame) -> TrainingDistanceRunResult:
+    def run(
+        self, query: pd.DataFrame, features: TrainingQuery | None = None
+    ) -> TrainingDistanceRunResult:
         """Distance of each query to every column's training set.
 
         Parameters
@@ -128,6 +136,9 @@ class TrainingDistance(ScoreComponent):
         query : pandas.DataFrame
             Needs an ``input`` SMILES column; ``key`` (if present) labels the
             rows of the details table.
+        features : TrainingQuery, optional
+            The query's features, shared with training difficulty (built from
+            ``query`` when omitted).
 
         Returns
         -------
@@ -137,37 +148,49 @@ class TrainingDistance(ScoreComponent):
         self._check_fitted()
         assert self._training is not None and self._k is not None
         assert self._loo is not None
-        if "input" not in query.columns:
-            raise ValueError("TrainingDistance.run requires an 'input' SMILES column.")
+        if features is None:
+            features = TrainingQuery.from_frame(query)
         idx = list(query.index)
         keys = (
             query["key"].astype(str).tolist()
             if "key" in query.columns
             else [str(i) for i in idx]
         )
-        std = [_standardize(s) for s in query["input"]]
-        rows = np.flatnonzero([s is not None for s in std])
+        rows = features.rows
         names = self._training.column_names
         raw = np.full((len(query), len(names)), np.nan)
         calibrated = np.full_like(raw, np.nan)
         in_train = np.zeros(raw.shape, dtype=bool)
         raw[rows], calibrated[rows], in_train[rows], neighbours = self._per_column(
-            [std[i] for i in rows]
+            features
         )
         score = _columns_summary(calibrated)
         score_raw = _columns_summary(raw)
-        details = _details(
-            [keys[i] for i in rows],
-            score[rows],
-            score_raw[rows],
-            in_train[rows].any(axis=1),
-            [self._training.columns[n] for n in names],
-            neighbours,
+        details = pd.DataFrame(
+            {
+                "key": keys,
+                "input": query["input"].tolist(),
+                "trn_distance": score,
+                "trn_distance_raw": score_raw,
+                "trn_in_training": in_train.any(axis=1),
+            },
+            index=idx,
         )
+        neighbour_columns = _neighbours(
+            [self._training.columns[n] for n in names], neighbours
+        )
+        for name, values in neighbour_columns.items():
+            details[name] = pd.Series(
+                values, index=[idx[i] for i in rows], dtype=object
+            )
+        details = details[DETAIL_COLUMNS].reset_index(drop=True)
+        details["nn1_similarity"] = details["nn1_similarity"].astype(float)
         return TrainingDistanceRunResult(
-            score=pd.Series(score, index=idx, name="training_distance"),
-            score_raw=pd.Series(score_raw, index=idx, name="training_distance_raw"),
-            in_training=pd.Series(in_train.any(axis=1), index=idx, name="in_training"),
+            score=pd.Series(score, index=idx, name="trn_distance"),
+            score_raw=pd.Series(score_raw, index=idx, name="trn_distance_raw"),
+            in_training=pd.Series(
+                in_train.any(axis=1), index=idx, name="trn_in_training"
+            ),
             details=details,
             metadata={
                 "n_columns": len(names),
@@ -177,7 +200,7 @@ class TrainingDistance(ScoreComponent):
             },
         )
 
-    def _per_column(self, smiles: list[str]):
+    def _per_column(self, features: TrainingQuery | list[str]):
         """Per-column raw and calibrated distances for standardised SMILES.
 
         Returns ``(raw (n, n_columns), calibrated (n, n_columns),
@@ -186,14 +209,16 @@ class TrainingDistance(ScoreComponent):
         """
         assert self._training is not None and self._k is not None
         assert self._loo is not None
+        if not isinstance(features, TrainingQuery):
+            features = TrainingQuery(features)
         names = self._training.column_names
-        raw = np.full((len(smiles), len(names)), np.nan)
+        raw = np.full((len(features.smiles), len(names)), np.nan)
         calibrated = np.full_like(raw, np.nan)
         in_train = np.zeros(raw.shape, dtype=bool)
         neighbours = []
         for j, name in enumerate(names):
-            dist, nn_idx, hit = _nearest_training(
-                self._training.indices[name], smiles, self._k[name]
+            dist, nn_idx, hit = features.nearest(
+                self._training.indices[name], self._k[name]
             )
             raw[:, j] = dist.mean(axis=1)
             calibrated[:, j] = _cdf_score(
@@ -250,16 +275,23 @@ class TrainingDistance(ScoreComponent):
         return self._training
 
 
-def _details(keys, score, score_raw, in_training, columns, neighbours):
-    """One details row per query: whole-model distances and merged neighbours.
+def _neighbours(columns, neighbours) -> dict[str, list]:
+    """The ``nn_*`` details columns for the valid queries, in row order.
 
     Each column's nearest training molecules are pooled, deduplicated by
     standardised SMILES (a molecule in several training sets keeps the key of
     its first column and lists every column it belongs to) and the
     ``K_NEIGHBORS`` closest are kept.
     """
-    nn_keys, nn_sims, nn_cols, nn1 = [], [], [], []
-    for r in range(len(keys)):
+    out: dict[str, list] = {
+        "nn1_similarity": [],
+        "nn_smiles": [],
+        "nn_keys": [],
+        "nn_similarities": [],
+        "nn_columns": [],
+    }
+    n_rows = len(neighbours[0][0]) if neighbours else 0
+    for r in range(n_rows):
         best: dict[str, tuple[float, str, list[str]]] = {}
         for column, (dist, nn_idx) in zip(columns, neighbours, strict=True):
             for d, t in zip(dist[r], nn_idx[r], strict=True):
@@ -268,21 +300,10 @@ def _details(keys, score, score_raw, in_training, columns, neighbours):
                     best[smi][2].append(column.name)
                 else:
                     best[smi] = (float(d), column.ids[t], [column.name])
-        top = sorted(best.values(), key=lambda v: v[0])[:K_NEIGHBORS]
-        nn1.append(top[0][0] if top else np.nan)
-        nn_keys.append("|".join(v[1] for v in top))
-        nn_sims.append("|".join(f"{1 - v[0]:.3f}" for v in top))
-        nn_cols.append("|".join(";".join(v[2]) for v in top))
-    return pd.DataFrame(
-        {
-            "key": keys,
-            "distance": score,
-            "distance_raw": score_raw,
-            "nn1_distance": nn1,
-            "in_training": in_training,
-            "nn_keys": nn_keys,
-            "nn_similarities": nn_sims,
-            "nn_columns": nn_cols,
-        },
-        columns=DETAIL_COLUMNS,
-    )
+        top = sorted(best.items(), key=lambda item: item[1][0])[:K_NEIGHBORS]
+        out["nn1_similarity"].append(1 - top[0][1][0] if top else np.nan)
+        out["nn_smiles"].append("|".join(smi for smi, _ in top))
+        out["nn_keys"].append("|".join(v[1] for _, v in top))
+        out["nn_similarities"].append("|".join(f"{1 - v[0]:.3f}" for _, v in top))
+        out["nn_columns"].append("|".join(";".join(v[2]) for _, v in top))
+    return out

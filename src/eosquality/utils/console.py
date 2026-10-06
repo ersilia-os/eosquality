@@ -296,6 +296,27 @@ class Steps:
 # ---------------------------------------------------------------------------
 
 
+def median_summary(values) -> str:
+    """``"median 0.421"``, or ``"no scored molecule"`` when all values are NaN.
+
+    Parameters
+    ----------
+    values : pandas.Series or numpy.ndarray
+        A score column, possibly all NaN (every query SMILES unparsable).
+
+    Returns
+    -------
+    str
+    """
+    import numpy as np
+
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return "no scored molecule"
+    return f"median {float(np.median(finite)):.3f}"
+
+
 def detail(rows, *, indent: int = 6) -> None:
     """Borderless block of dim right-aligned labels and values (shown verbatim).
 
@@ -316,7 +337,18 @@ def detail(rows, *, indent: int = 6) -> None:
     console.print(Padding(table, (0, 0, 0, indent)))
 
 
-def table(columns, rows, *, title: str | None = None, indent: int = 6) -> None:
+# Rows a table prints before it is cut short; the rest stay in the log file.
+MAX_TABLE_ROWS = 15
+
+
+def table(
+    columns,
+    rows,
+    *,
+    title: str | None = None,
+    indent: int = 6,
+    max_rows: int | None = MAX_TABLE_ROWS,
+) -> None:
     """Borderless table with a themed header row; cells are shown verbatim.
 
     Parameters
@@ -329,9 +361,17 @@ def table(columns, rows, *, title: str | None = None, indent: int = 6) -> None:
         Dim title above the table.
     indent : int, optional
         Left padding.
+    max_rows : int, optional
+        Print at most this many rows, then a ``… and N more`` line (the full
+        table is in the log). ``None`` prints every row.
     """
     if not _enabled:
         return
+    rows = list(rows)
+    hidden = 0
+    if max_rows is not None and len(rows) > max_rows:
+        hidden = len(rows) - max_rows
+        rows = rows[:max_rows]
     out = Table(
         box=box.SIMPLE_HEAD,
         show_edge=False,
@@ -344,6 +384,8 @@ def table(columns, rows, *, title: str | None = None, indent: int = 6) -> None:
         out.add_column(name, justify="left" if i == 0 else "right", no_wrap=i == 0)
     for row in rows:
         out.add_row(*(plain(v) for v in row))
+    if hidden:
+        out.add_row(f"… and {hidden:,} more", *[""] * (len(columns) - 1))
     console.print(Padding(out, (0, 0, 0, indent)))
 
 

@@ -28,6 +28,7 @@ from eosquality.exceptions import (
     SchemaError,
 )
 from eosquality.results import RunResult
+from eosquality.schema.infer import infer_schema
 from eosquality.scores._helpers import (
     _resolve_vector_index,
 )
@@ -113,7 +114,10 @@ class ErsiliaQuality:
             numeric column per output), in library order. ``None`` for a
             training-only fit.
         training_sets : str or pathlib.Path, optional
-            Folder with one ``<output_column>.csv`` per column.
+            Folder with one ``<output_column>.csv`` per column. With a
+            reference, the reference modality is fitted only on the output
+            columns that have a usable training set, ``max_features`` selects
+            among them, and the training modality uses the same selection.
         eos_id : str
             Model identifier, e.g. ``"eos4e40"``.
         version : str, optional
@@ -122,7 +126,7 @@ class ErsiliaQuality:
             Scores not to fit, by public name (``ALL_SCORES``), e.g.
             ``["ref_signal"]``.
         max_features : int, optional
-            Feature-selection cap of the reference modality; ``None``
+            Cap on the output columns used by both modalities; ``None``
             disables it.
         vector_index : str or pathlib.Path, optional
             Reference library index folder (default: the resolved canonical
@@ -138,26 +142,48 @@ class ErsiliaQuality:
         if reference is None and training_sets is None:
             raise ValueError("fit needs reference predictions, training sets, or both.")
         skip_reference, skip_training = split_exclude(exclude)
+        if reference is not None and set(SCORE_ORDER) <= skip_reference:
+            raise ValueError("Every reference score is excluded: nothing to fit.")
+        if training_sets is not None and set(TRAINING_ORDER) <= skip_training:
+            raise ValueError("Every training score is excluded: nothing to fit.")
         self._reset()
         t_start = time.perf_counter()
         console.set_active_color(console.STEP_COLORS["fit"])
         logger.info(f"fit | {eos_id} {version}")
+        training_columns = None
+        if training_sets is not None:
+            # Training sets first: with a reference, they decide its columns.
+            output_columns = (
+                infer_schema(reference).column_names if reference is not None else None
+            )
+            training_columns = _training_modality.load_training_sets(
+                training_sets, output_columns
+            )
+            if reference is not None:
+                reference = _restrict_outputs(
+                    reference, output_columns, list(training_columns)
+                )
         if reference is not None:
-            scores = [c for c in SCORE_ORDER if c not in skip_reference]
-            if not scores:
-                raise ValueError("Every reference score is excluded: nothing to fit.")
             _reference_modality.fit_reference(
                 self,
                 reference,
                 eos_id=eos_id,
                 version=version,
                 vector_index=vector_index,
-                scores=scores,
+                scores=[c for c in SCORE_ORDER if c not in skip_reference],
                 max_features=max_features,
             )
-        if training_sets is not None:
-            self.fit_training(
-                training_sets, eos_id=eos_id, version=version, exclude=exclude
+        if training_columns is not None:
+            selected = _training_modality.select_training_columns(
+                training_columns, self._shared, max_features
+            )
+            _training_modality.fit_training_modality(
+                self,
+                selected,
+                eos_id=eos_id,
+                version=version,
+                skip=skip_training,
+                n_loaded=len(training_columns),
             )
         self.is_fitted_ = True
         fitted = list(self._components()) + list(self._training_components())
@@ -165,57 +191,6 @@ class ErsiliaQuality:
             f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | "
             f"{time.perf_counter() - t_start:.2f}s"
         )
-        return self
-
-    def fit_training(
-        self,
-        training_sets: str | pathlib.Path,
-        *,
-        eos_id: str | None = None,
-        version: str | None = None,
-        exclude: Iterable[str] = (),
-    ) -> ErsiliaQuality:
-        """Fit (or replace) the training modality on this instance.
-
-        Works on a fresh instance (training-only), after a reference fit, or on
-        an instance loaded from artifacts (adding training later). With a
-        reference modality, training files must name its output columns and
-        the model id must match.
-
-        Parameters
-        ----------
-        training_sets : str or pathlib.Path
-            Folder with one ``<output_column>.csv`` per column.
-        eos_id, version : str, optional
-            Model id; default to the reference modality's.
-        exclude : iterable of str, optional
-            Scores not to fit, by public name (training ones apply here).
-
-        Returns
-        -------
-        ErsiliaQuality
-            ``self``, with the training modality fitted.
-        """
-        known_id, known_version = self._model_id()
-        if known_id and eos_id and eos_id != known_id:
-            raise ValueError(
-                f"Training sets are for {eos_id} but the artifacts are for {known_id}."
-            )
-        eos_id = eos_id or known_id
-        version = version or known_version or "v1"
-        if not eos_id:
-            raise ValueError("fit_training needs eos_id= for a training-only fit.")
-        validate_eos_id(eos_id)
-        validate_version(version)
-        _, skip = split_exclude(exclude)
-        if set(TRAINING_ORDER) <= skip:
-            raise ValueError("Every training score is excluded: nothing to fit.")
-        t = time.perf_counter()
-        _training_modality.fit_training_modality(
-            self, training_sets, eos_id=eos_id, version=version, skip=skip
-        )
-        self.is_fitted_ = True
-        logger.info(f"training | fitted | {time.perf_counter() - t:.1f}s")
         return self
 
     def run(self, query: pd.DataFrame) -> RunResult:
@@ -229,8 +204,8 @@ class ErsiliaQuality:
         ----------
         query:
             DataFrame with the same numeric columns as the reference,
-            plus an ``'input'`` SMILES column if Support, Consistency or
-            Signal was fit.
+            plus an ``'input'`` SMILES column (``'smiles'`` is accepted as an
+            alias) if Support, Consistency, Signal or a training score was fit.
 
         Returns
         -------
@@ -250,9 +225,12 @@ class ErsiliaQuality:
         needs_input_col = bool(set(components) & INDEX_AWARE) or bool(
             training_components
         )
+        if "input" not in query.columns and "smiles" in query.columns:
+            query = query.rename(columns={"smiles": "input"})
         if needs_input_col and "input" not in query.columns:
             raise SchemaError(
-                "Query DataFrame must contain an 'input' column with SMILES strings."
+                "Query DataFrame must contain an 'input' (or 'smiles') column with "
+                "SMILES strings."
             )
 
         columns: dict[str, pd.Series] = {}
@@ -319,43 +297,6 @@ class ErsiliaQuality:
             A fitted instance with every component found in the folder.
         """
         return _artifacts.load(cls, path)
-
-    @classmethod
-    def add_training(
-        cls,
-        path: str | pathlib.Path,
-        training_sets: str | pathlib.Path,
-        *,
-        eos_id: str | None = None,
-        version: str | None = None,
-        exclude: Iterable[str] = (),
-    ) -> ErsiliaQuality:
-        """Add the training modality to an existing artifacts folder in place.
-
-        Parameters
-        ----------
-        path : str or pathlib.Path
-            Existing artifacts folder (must not already hold a training modality).
-        training_sets : str or pathlib.Path
-            Folder with one ``<output_column>.csv`` per column.
-        eos_id, version : str, optional
-            Model id of the training sets; must match the artifacts' model.
-        exclude : iterable of str, optional
-            Training scores not to fit, by public name.
-
-        Returns
-        -------
-        ErsiliaQuality
-            The loaded instance with the training modality added.
-        """
-        return _artifacts.add_training(
-            cls,
-            path,
-            training_sets,
-            eos_id=eos_id,
-            version=version,
-            exclude=exclude,
-        )
 
     # ------------------------------------------------------------------
     # Post-fit attributes
@@ -565,3 +506,32 @@ def _score_table(scores: pd.DataFrame) -> None:
         ],
         title="Score summary",
     )
+
+
+def _restrict_outputs(
+    reference: pd.DataFrame, output_columns: list[str], keep: list[str]
+) -> pd.DataFrame:
+    """Drop the output columns of ``reference`` that are not in ``keep``.
+
+    Parameters
+    ----------
+    reference : pandas.DataFrame
+        Predictions on the reference library.
+    output_columns : list of str
+        Its output columns.
+    keep : list of str
+        The output columns with a usable training set.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``reference`` without the other output columns (``key`` and
+        ``input`` are kept).
+    """
+    dropped = [c for c in output_columns if c not in set(keep)]
+    if dropped:
+        logger.info(
+            f"fit | reference restricted to the {len(keep)} of "
+            f"{len(output_columns)} output columns with a training set"
+        )
+    return reference.drop(columns=dropped)

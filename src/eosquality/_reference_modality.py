@@ -210,7 +210,7 @@ def run_reference(
         for name, component in components.items():
             with steps(f"Score: {score_name(name)}") as st:
                 result = _run_component(name, component, query, query_repr, neighbours)
-                st.summary = f"median {float(result.score.median()):.3f}"
+                st.summary = console.median_summary(result.score)
             column = score_name(name)
             columns[column] = result.score
             columns[f"{column}_raw"] = result.score_raw

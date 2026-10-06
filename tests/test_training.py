@@ -1,13 +1,14 @@
-import hashlib
-import json
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from eosquality import ErsiliaQuality
 from eosquality.exceptions import SchemaError
+from eosquality.scores._error_model import feature_names
 from eosquality.training import load_training
+
+# The error model's four inputs, emitted alongside the scores.
+ERROR_MODEL_INPUTS = feature_names()
 
 # Exclude every reference score but typicality (fast reference fits).
 ONLY_TYPICALITY = [
@@ -46,6 +47,18 @@ def test_loader_needs_smiles_column(tmp_path):
     (tmp_path / "mw.csv").write_text("molecule,y\nCCO,1\n")
     with pytest.raises(SchemaError):
         load_training(tmp_path, COLUMNS)
+
+
+def test_loader_reads_value_as_label(tmp_path, training_dir):
+    expected = load_training(training_dir, COLUMNS)["mw"]
+    df = pd.read_csv(training_dir / "mw.csv")
+    df.rename(columns={"y": "value"}).to_csv(tmp_path / "mw.csv", index=False)
+    column = load_training(tmp_path, COLUMNS)["mw"]
+    assert column.y_kind == expected.y_kind
+    np.testing.assert_array_equal(column.y, expected.y)
+    # With both, 'y' wins.
+    df.assign(value=-1.0).to_csv(tmp_path / "mw.csv", index=False)
+    np.testing.assert_array_equal(load_training(tmp_path, COLUMNS)["mw"].y, expected.y)
 
 
 def test_loader_skips_small_columns(tmp_path, training_dir):
@@ -116,7 +129,15 @@ def test_distance_matches_brute_force_tanimoto(both, query):
             sims = np.sort(DataStructs.BulkTanimotoSimilarity(fp, train_fps[c.name]))
             assert raw[i, j] == pytest.approx(1 - sims[::-1][:5].mean(), abs=1e-6)
             nearest.append(sims[-1])
-        assert det.loc[key, "nn1_distance"] == pytest.approx(1 - max(nearest), abs=1e-6)
+        assert det.loc[key, "nn1_similarity"] == pytest.approx(max(nearest), abs=1e-6)
+
+
+def test_details_keep_unparsable_queries(both):
+    q = pd.DataFrame({"key": ["ok", "bad"], "input": ["CCO", "not a smiles"]})
+    det = both.training_distance.run(q).details
+    assert det.key.tolist() == ["ok", "bad"]
+    assert np.isfinite(det.trn_distance[0]) and np.isnan(det.trn_distance[1])
+    assert det.nn_smiles.isna().tolist() == [False, True]
 
 
 def test_unrelated_molecule_is_far(both):
@@ -146,11 +167,14 @@ def test_run_columns_and_details(both, query):
     assert "ref_support" in result.scores.columns  # reference modality still there
     det = result.training_details
     assert len(det) == len(query) and det.key.tolist() == query.key.tolist()
-    np.testing.assert_allclose(det.distance, result.scores["trn_distance"])
+    assert det.input.tolist() == query.input.tolist()
+    np.testing.assert_allclose(det.trn_distance, result.scores["trn_distance"])
     known = {"mw", "aromatic", "hbd"}
     for row in det.itertuples():
         sims = [float(v) for v in row.nn_similarities.split("|")]
         assert len(sims) == 5 and sims == sorted(sims, reverse=True)
+        assert row.nn1_similarity == pytest.approx(sims[0], abs=1e-3)
+        assert len(row.nn_smiles.split("|")) == 5
         assert len(set(row.nn_keys.split("|"))) == 5  # deduplicated
         for cols in row.nn_columns.split("|"):
             assert set(cols.split(";")) <= known
@@ -175,6 +199,7 @@ def test_training_only(training_dir, query, tmp_path):
         "trn_distance",
         "trn_distance_raw",
         "trn_difficulty",
+        *(f"trn_{f}" for f in ERROR_MODEL_INPUTS),
         "trn_in_training",
     ]
     eq.save(tmp_path / "art")
@@ -185,43 +210,65 @@ def test_training_only(training_dir, query, tmp_path):
     )
 
 
-def _digest(folder):
-    h = hashlib.sha256()
-    for f in sorted(folder.rglob("*")):
-        if f.is_file():
-            h.update(f.read_bytes())
-    return h.hexdigest()
+def test_reference_is_restricted_to_training_columns(both, reference, library):
+    trained = ["mw", "aromatic", "hbd"]  # the fixture's usable training files
+    assert both.shared_.schema.column_names == trained
+    assert set(both.shared_.selected_columns) <= set(trained)
+    # Without training sets, the reference keeps every output column.
+    alone = ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", vector_index=library, exclude=ONLY_TYPICALITY
+    )
+    assert alone.shared_.schema.column_names == COLUMNS
 
 
-def test_add_training_in_place(reference, library, training_dir, query, tmp_path):
-    art = tmp_path / "art"
-    ErsiliaQuality().fit(
-        reference, eos_id="eos0aaa", vector_index=library, exclude=["ref_signal"]
-    ).save(art)
-    shared_before = _digest(art / "reference_mode")
-    ErsiliaQuality.add_training(art, training_dir, eos_id="eos0aaa")
-    assert _digest(art / "reference_mode") == shared_before
-    loaded = ErsiliaQuality.load(art)
-    assert loaded.modalities_ == ["reference", "training"]
-    assert json.loads((art / "manifest.json").read_text())["modalities"] == [
-        "reference",
-        "training",
-    ]
-    assert "trn_distance" in loaded.run(query).scores.columns
-    with pytest.raises(FileExistsError):
-        ErsiliaQuality.add_training(art, training_dir)
-
-
-def test_add_training_rejects_other_model(reference, library, training_dir, tmp_path):
-    art = tmp_path / "art"
-    ErsiliaQuality().fit(
+def test_max_features_selects_within_training_columns(reference, library, training_dir):
+    eq = ErsiliaQuality().fit(
         reference,
+        training_dir,
         eos_id="eos0aaa",
         vector_index=library,
         exclude=ONLY_TYPICALITY,
-    ).save(art)
-    with pytest.raises(ValueError, match="eos9zzz"):
-        ErsiliaQuality.add_training(art, training_dir, eos_id="eos9zzz")
+        max_features=2,
+    )
+    assert eq.shared_.schema.column_names == ["mw", "aromatic", "hbd"]
+    assert len(eq.shared_.selected_columns) == 2
+    assert set(eq.shared_.selected_columns) <= {"mw", "aromatic", "hbd"}
+    # The training modality uses the same columns.
+    assert eq.training_distance.training_.column_names == eq.shared_.selected_columns
+
+
+def test_training_only_keeps_least_overlapping_columns(training_dir):
+    eq = ErsiliaQuality().fit(
+        training_sets=training_dir, eos_id="eos0aaa", max_features=2
+    )
+    kept = eq.training_distance.training_.column_names
+    assert len(kept) == 2 and set(kept) <= {"mw", "aromatic", "hbd"}
+
+
+def test_select_by_shared_molecules_drops_a_panel_twin():
+    from eosquality.shared.feature_selection import select_by_shared_molecules
+
+    panel = {f"m{i}" for i in range(100)}
+    sets = {
+        "a": panel,
+        "a_twin": panel | {"x"},  # the same screening panel
+        "b": {f"n{i}" for i in range(100)},
+    }
+    kept = select_by_shared_molecules(sets, 2)
+    assert "b" in kept and len(kept) == 2
+    assert select_by_shared_molecules(sets, None) == ["a", "a_twin", "b"]
+
+
+def test_select_by_shared_molecules_keeps_the_largest_of_a_panel():
+    from eosquality.shared.feature_selection import select_by_shared_molecules
+
+    panel = {f"m{i}" for i in range(100)}
+    sets = {
+        "small_twin": panel | {"x"},
+        "big_twin": panel | {f"e{i}" for i in range(400)},
+        "other": {f"n{i}" for i in range(50)},
+    }
+    assert select_by_shared_molecules(sets, 2) == ["big_twin", "other"]
 
 
 def test_training_files_named_after_ersilia_columns(
@@ -261,4 +308,45 @@ def test_training_files_named_after_ersilia_columns(
             eos_id="eos42ez",
             vector_index=library,
             exclude=ONLY_TYPICALITY,
+        )
+
+
+def test_scaffold_survives_rdkit_stereo_failure():
+    from eosquality.training.folds import _scaffold, scaffold_folds
+
+    # RDKit cannot canonicalise this scaffold with its stereo double bonds.
+    tricky = "N#C/C(=C\\C=C\\c1ccccc1)c1ccc(F)cc1"
+    assert _scaffold(tricky) == "C(C=Cc1ccccc1)=Cc1ccccc1"
+    assert len(scaffold_folds([tricky, "CCO", "c1ccccc1C"], n_folds=2)) == 3
+
+
+def test_excluding_one_training_score(training_dir, query):
+    """Either training score can be fitted alone."""
+    smiles_only = query[["key", "input"]]
+    no_distance = ErsiliaQuality().fit(
+        training_sets=training_dir, eos_id="eos0aaa", exclude=["trn_distance"]
+    )
+    res = no_distance.run(smiles_only)
+    assert list(res.scores.columns) == [
+        "trn_difficulty",
+        *(f"trn_{f}" for f in ERROR_MODEL_INPUTS),
+    ]
+    assert res.training_details is None  # the details come from the distance
+
+    no_difficulty = ErsiliaQuality().fit(
+        training_sets=training_dir, eos_id="eos0aaa", exclude=["trn_difficulty"]
+    )
+    res = no_difficulty.run(smiles_only)
+    assert list(res.scores.columns) == [
+        "trn_distance",
+        "trn_distance_raw",
+        "trn_in_training",
+    ]
+    assert "trn_difficulty" not in res.training_details.columns
+
+    with pytest.raises(ValueError, match="nothing to fit"):
+        ErsiliaQuality().fit(
+            training_sets=training_dir,
+            eos_id="eos0aaa",
+            exclude=["trn_distance", "trn_difficulty"],
         )

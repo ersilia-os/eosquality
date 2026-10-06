@@ -1,4 +1,4 @@
-"""Pick a non-redundant subset of features by correlation-cluster medoid.
+"""Pick a non-redundant subset of output columns by cluster medoid.
 
 Given an eosframes-scaled reference matrix, compute the absolute Pearson
 correlation between columns, treat ``1 - |corr|`` as a distance, run
@@ -10,6 +10,10 @@ This is a fit-time helper. Downstream code is expected to slice the
 scaled reference array to these columns via
 ``SharedFitState.filter_features``; the original :class:`Schema` is left
 untouched so the eosframes scaler still operates on the full input.
+
+Training-only fits have no reference predictions; there, columns are
+clustered on the overlap of their training molecules instead
+(:func:`select_by_shared_molecules`).
 """
 
 from __future__ import annotations
@@ -59,8 +63,69 @@ def select_features_by_correlation(
     if max_features <= 0:
         raise ValueError(f"max_features must be positive or None; got {max_features}.")
 
-    distances = _correlation_distance_matrix(ref_scaled)
-    # Hierarchical clustering on the condensed upper triangle.
+    selected = _cluster_medoids(
+        _correlation_distance_matrix(ref_scaled), column_names, max_features
+    )
+    logger.debug(
+        f"feature selection: {n_features} → {len(selected)} "
+        f"(max_features={max_features})"
+    )
+    return selected
+
+
+def select_by_shared_molecules(
+    molecule_sets: dict[str, set[str]], max_features: int | None
+) -> list[str]:
+    """Pick at most ``max_features`` columns whose training sets overlap least.
+
+    Columns are clustered on ``1 − Jaccard`` of their molecule sets, so
+    columns measured on the same compounds (one screening panel) group
+    together, and the **largest** training set of each cluster is kept:
+    members of one cluster cover nearly the same chemistry, so the one with
+    most molecules calibrates best.
+
+    Parameters
+    ----------
+    molecule_sets : dict of str to set of str
+        Standardised training SMILES per column.
+    max_features : int, optional
+        Cap on the returned subset. ``None`` disables selection.
+
+    Returns
+    -------
+    list of str
+        Selected column names, in input order.
+    """
+    names = list(molecule_sets)
+    if max_features is None or len(names) <= max_features:
+        return names
+    if max_features <= 0:
+        raise ValueError(f"max_features must be positive or None; got {max_features}.")
+    sets = [molecule_sets[n] for n in names]
+    distances = np.zeros((len(names), len(names)))
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            union = len(sets[i] | sets[j])
+            shared = len(sets[i] & sets[j])
+            distances[i, j] = distances[j, i] = 1.0 - shared / union if union else 1.0
+    selected = _cluster_medoids(
+        distances, names, max_features, prefer=[len(s) for s in sets]
+    )
+    logger.debug(f"training column selection: {len(names)} → {len(selected)}")
+    return selected
+
+
+def _cluster_medoids(
+    distances: np.ndarray,
+    column_names: list[str],
+    max_features: int,
+    prefer: list[float] | None = None,
+) -> list[str]:
+    """Average-linkage clusters (at most ``max_features``); one member each.
+
+    The member kept is the cluster's medoid, or, when ``prefer`` is given, the
+    member with the largest ``prefer`` value (ties broken by the medoid rule).
+    """
     condensed = squareform(distances, checks=False)
     Z = linkage(condensed, method="average")
     cluster_ids = fcluster(Z, t=max_features, criterion="maxclust")
@@ -73,16 +138,13 @@ def select_features_by_correlation(
             continue
         # Medoid = column with smallest mean intra-cluster distance.
         sub = distances[np.ix_(members, members)]
-        medoid_local = int(np.argmin(sub.mean(axis=1)))
-        selected_indices.append(int(members[medoid_local]))
-
+        rank = sub.mean(axis=1)
+        if prefer is not None:
+            best = max(prefer[i] for i in members)
+            rank = np.where([prefer[i] == best for i in members], rank, np.inf)
+        selected_indices.append(int(members[int(np.argmin(rank))]))
     selected_indices.sort()
-    selected = [column_names[i] for i in selected_indices]
-    logger.debug(
-        f"feature selection: {n_features} → {len(selected)} "
-        f"(max_features={max_features})"
-    )
-    return selected
+    return [column_names[i] for i in selected_indices]
 
 
 def _correlation_distance_matrix(ref_scaled: np.ndarray) -> np.ndarray:

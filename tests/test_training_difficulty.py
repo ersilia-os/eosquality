@@ -28,8 +28,14 @@ def test_scores_and_metadata(fitted, query):
     score = res.scores["trn_difficulty"]
     assert ((score > 0) & (score <= 1)).all()
     assert set(res.metadata["trn_difficulty_spearman"]) == {"mw", "aromatic"}
-    assert "difficulty" in res.training_details.columns
-    np.testing.assert_allclose(res.training_details.difficulty, score)
+    details = res.training_details
+    assert list(details.columns[2:6]) == [
+        "trn_distance",
+        "trn_distance_raw",
+        "trn_difficulty",
+        "trn_in_training",
+    ]
+    np.testing.assert_allclose(details.trn_difficulty, score)
 
 
 def test_roundtrip(fitted, query, tmp_path):
@@ -73,7 +79,11 @@ def test_noisy_region_ranks_harder(tmp_path, smiles):
         folder / "mw.csv", index=False
     )
     eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
-    assert eq.training_difficulty.models_["mw"].spearman > 0.2
+    # The four inputs say how far and how uncertain, never which chemotype, so
+    # a noisy region defined by a substructure is only partly recoverable: the
+    # surrogate's own variance rises there, but nothing names sulfur. With the
+    # earlier 2048-bit structural inputs this reached > 0.2.
+    assert eq.training_difficulty.models_["mw"].spearman > 0.05
     score = eq.run(pd.DataFrame({"input": smiles[600:]})).scores["trn_difficulty"]
     held_out_noisy = noisy[600:]
     assert score[held_out_noisy].mean() > score[~held_out_noisy].mean() + 0.1
@@ -98,59 +108,35 @@ def test_out_of_fold_spearman_is_recorded(fitted):
         assert m.error_model.n_features_in_ == len(m.features)
 
 
-def test_inputs_follow_unique_feature_set_one(fitted):
+def test_inputs_are_the_four_scalars(fitted):
+    """Two neighbour similarities, the ensemble variance and the score."""
     from eosquality.scores import _error_model as em
 
     model = fitted.training_difficulty.models_["aromatic"]
-    names = em.feature_names(binary=True)
-    assert names[:166] == list(em.MACCS_NAMES) and names[-1] == "prediction"
-    assert "probability_top1" in names and "probability_top1" not in (
-        em.feature_names(binary=False)
-    )
+    names = em.feature_names()
+    assert names == [
+        "nn1_tanimoto",
+        "nn5_tanimoto",
+        "ensemble_variance",
+        "surrogate_score",
+    ]
     n = 7
     p = model.oof_prediction[:n]
-    inputs = em._inputs(
-        dist=np.zeros((n, model.k)),
-        prediction=p,
-        variance=model.oof_variance[:n],
-        log_density=np.zeros((n, 3)),
-        maccs=np.zeros((n, 166)),
-        binary=True,
-    )
+    dist = np.linspace(0.1, 0.9, n * model.k).reshape(n, model.k)
+    inputs = em._inputs(dist=dist, prediction=p, variance=model.oof_variance[:n])
     assert inputs.shape == (n, len(names))
-    top1 = inputs[:, names.index("probability_top1")]
-    np.testing.assert_allclose(top1, np.maximum(p, 1 - p))
-    assert ((top1 >= 0.5) & (top1 <= 1.0)).all()
+    # Distances in, similarities out.
+    np.testing.assert_allclose(inputs[:, 0], 1 - dist[:, 0])
+    np.testing.assert_allclose(inputs[:, 1], 1 - dist.mean(axis=1))
+    np.testing.assert_allclose(inputs[:, 3], p)
 
 
-def test_kde_matches_brute_force(smiles):
-    from scipy.special import logsumexp
-    from sklearn.metrics import pairwise_distances
-    from sklearn.neighbors import KernelDensity
+def test_surrogate_is_class_weighted_for_binary_labels():
+    from eosquality.scores._error_model import _new_surrogate
 
-    from eosquality.library.maccs import compute_maccs
-    from eosquality.scores._density import KDE_VARIANTS, TrainingDensity
-
-    maccs = compute_maccs(smiles[:120], show_progress=False).astype(float)
-    density = TrainingDensity.fit(maccs)
-    new = compute_maccs(smiles[600:603], show_progress=False).astype(float)
-    loo = density.log_density(maccs[:3], np.arange(3))
-    plain = density.log_density(new, np.full(3, -1))
-    for j, (kernel, metric) in enumerate(KDE_VARIANTS):
-        h = density.bandwidths[j]
-        point = maccs[:1]
-        single = KernelDensity(kernel=kernel, metric=metric, bandwidth=h)
-        log_k0 = single.fit(point).score_samples(point)[0]
-
-        def brute(q, ref, kernel=kernel, metric=metric, h=h, log_k0=log_k0):
-            d = pairwise_distances(q, ref, metric=metric)
-            log_k = log_k0 - (d * d / (2 * h * h) if kernel == "gaussian" else d / h)
-            return logsumexp(log_k, axis=1) - np.log(len(ref))
-
-        for i in range(3):
-            rest = np.delete(maccs, i, axis=0)
-            assert loo[i, j] == pytest.approx(brute(maccs[i : i + 1], rest)[0])
-        np.testing.assert_allclose(plain[:, j], brute(new, maccs))
+    assert _new_surrogate(binary=True).class_weight == "balanced"
+    # sklearn's regressor carries the attribute but ignores it; it stays unset.
+    assert _new_surrogate(binary=False).class_weight is None
 
 
 def test_congeneric_series_falls_back_to_random_folds(tmp_path):
@@ -180,3 +166,31 @@ def test_training_molecules_get_their_out_of_fold_difficulty(fitted):
         model.oof_error, model.sorted_oof_error, higher_is_higher=True
     )
     assert np.nanmean(calibrated) == pytest.approx(0.5, abs=0.01)
+
+
+def test_error_models_fit_on_at_most_max_fit_molecules(training_dir, monkeypatch):
+    from eosquality.scores import _error_model
+
+    monkeypatch.setattr(_error_model, "MAX_FIT_MOLECULES", 120)
+    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    model = eq.training_difficulty.models_["mw"]
+    column, vi = eq._training.columns["mw"], eq._training.indices["mw"]
+    assert model.n_fit == 120 and model.n_labelled == column.n > 120
+    assert np.isfinite(model.oof_error).sum() == 120
+    assert len(model.sorted_oof_error) == 120
+    # Training molecules outside the fitted subset are scored like queries.
+    predicted = model.predict(column, vi, column.smiles)
+    assert np.isfinite(predicted).all()
+    fitted_rows = np.isfinite(model.oof_error)
+    np.testing.assert_allclose(predicted[fitted_rows], model.oof_error[fitted_rows])
+
+
+def test_weak_error_model_is_reported(training_dir, tmp_path, monkeypatch):
+    from eosquality.scores import training_difficulty as td
+    from eosquality.utils.logging import logger
+
+    monkeypatch.setattr(td, "WEAK_SPEARMAN", 0.999)  # every model counts as weak
+    path = tmp_path / "fit.log"
+    with logger.log_file(path):
+        ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    assert "barely predictable" in path.read_text()

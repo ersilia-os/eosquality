@@ -7,7 +7,8 @@ predict, following UNIQUE's error models (see
 :mod:`eosquality.scores._error_model`): a surrogate random forest fitted
 with scaffold-grouped CV gives out-of-fold residuals, and a second random
 forest predicts them from UNIQUE's feature set (i): MACCS keys, base UQ
-metrics (kNN distance, KDE densities, ensemble variance) and the prediction.
+signals (nearest-neighbour similarities, ensemble variance) and the
+surrogate's own score.
 
 The query's predicted error is calibrated as its percentile among the
 training molecules' out-of-fold predicted errors: ~0.5 is as hard as a
@@ -26,6 +27,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,15 +38,25 @@ from eosquality.scores._base import ScoreComponent, read_json
 from eosquality.scores._error_model import (
     MIN_LABELLED,
     EndpointErrorModel,
+    feature_names,
     fit_endpoint,
     is_eligible,
 )
-from eosquality.scores._helpers import _cdf_score, _standardize
-from eosquality.scores._training_helpers import SUMMARY_QUANTILE, _columns_summary
+from eosquality.scores._helpers import _cdf_score
+from eosquality.scores._training_helpers import (
+    SUMMARY_QUANTILE,
+    TrainingQuery,
+    _columns_summary,
+)
 from eosquality.scores.training_distance import K_NEIGHBORS
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
 from eosquality.utils.logging import logger
+
+# Out-of-fold Spearman below which a column's error model is reported as
+# weak: it ranks its own held-out errors barely better than chance (seen on
+# noisy, chemically diverse endpoints such as aqueous solubility).
+WEAK_SPEARMAN = 0.2
 
 SUBFOLDER = "training_difficulty"
 STATE_FILE = "state.json"
@@ -55,6 +67,7 @@ class TrainingDifficultyRunResult:
     """Result returned by :meth:`TrainingDifficulty.run`."""
 
     score: pd.Series  # (n_query,) calibrated whole-model difficulty, in (0, 1]
+    inputs: pd.DataFrame | None = None  # (n_query, 4) the error model's inputs
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -129,13 +142,18 @@ class TrainingDifficulty(ScoreComponent):
         self._finish_fit(t0)
         return self
 
-    def run(self, query: pd.DataFrame) -> TrainingDifficultyRunResult:
+    def run(
+        self, query: pd.DataFrame, features: TrainingQuery | None = None
+    ) -> TrainingDifficultyRunResult:
         """Whole-model difficulty of each query.
 
         Parameters
         ----------
         query : pandas.DataFrame
             Needs an ``input`` SMILES column.
+        features : TrainingQuery, optional
+            The query's features, shared with training distance (built from
+            ``query`` when omitted).
 
         Returns
         -------
@@ -144,28 +162,36 @@ class TrainingDifficulty(ScoreComponent):
         """
         self._check_fitted()
         assert self._training is not None and self._models is not None
-        if "input" not in query.columns:
-            raise ValueError(
-                "TrainingDifficulty.run requires an 'input' SMILES column."
-            )
-        std = [_standardize(s) for s in query["input"]]
-        rows = np.flatnonzero([s is not None for s in std])
-        smiles = [std[i] for i in rows]
+        if features is None:
+            features = TrainingQuery.from_frame(query)
+        rows = features.rows
         names = list(self._models)
         calibrated = np.full((len(query), len(names)), np.nan)
+        n_features = len(feature_names())
+        stacked = np.full((len(query), len(names), n_features), np.nan)
         for j, name in enumerate(names):
             model = self._models[name]
-            predicted = model.predict(
-                self._training.columns[name], self._training.indices[name], smiles
-            )
+            column, vi = self._training.columns[name], self._training.indices[name]
+            model_inputs, _, _ = model.inputs(column, vi, features)
+            if len(model_inputs):
+                stacked[rows, j] = model_inputs
+            predicted = model.predict(column, vi, features)
             calibrated[rows, j] = _cdf_score(
                 predicted, model.sorted_oof_error, higher_is_higher=True
             )
+        # The error model's own inputs, averaged over the output columns so
+        # that one query gives one row (exact for a single-column model).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN rows
+            averaged = np.nanmean(stacked, axis=1)
         return TrainingDifficultyRunResult(
             score=pd.Series(
                 _columns_summary(calibrated),
                 index=list(query.index),
-                name="training_difficulty",
+                name="trn_difficulty",
+            ),
+            inputs=pd.DataFrame(
+                averaged, columns=list(feature_names()), index=list(query.index)
             ),
             metadata={
                 "columns": names,
@@ -233,4 +259,11 @@ def _warn_if_degraded(name: str, model: EndpointErrorModel) -> None:
         logger.warning(
             f"training difficulty | column {name!r}: the error model could not be "
             "validated (constant out-of-fold errors); its ranking is uninformative."
+        )
+    elif model.spearman < WEAK_SPEARMAN:
+        logger.warning(
+            f"training difficulty | column {name!r}: out-of-fold Spearman "
+            f"{model.spearman:.2f} (< {WEAK_SPEARMAN}); this column's errors are "
+            "barely predictable from its training data, so it adds little to "
+            "trn_difficulty."
         )

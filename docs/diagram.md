@@ -26,10 +26,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
-    LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
+    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?/value?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
+    LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
+    SEL --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (raw + calibrated)"]
-    IDX --> TDF["<b>Training difficulty</b> (columns with y)<br/>surrogate RF, scaffold CV → OOF errors<br/>error model on MACCS + kNN, KDE, variance + ŷ<br/>(UNIQUE feature set i) → calibrated rank,<br/>Q66 → one value"]
+    IDX --> TDF["<b>Training difficulty</b> (columns with y, ≤ 10k molecules)<br/>surrogate RF, scaffold CV → OOF errors<br/>error model on MACCS + kNN, KDE, variance + ŷ<br/>(UNIQUE feature set i) → calibrated rank,<br/>Q66 → one value"]
 ```
 
 ## Run
@@ -42,8 +43,9 @@ flowchart LR
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>physchem → SHAP → Gini"]
-    Q -- SMILES --> TDR["Training distance<br/>per column → 66th percentile"]
-    Q -- SMILES --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
+    Q -- SMILES --> TQ["TrainingQuery (once)<br/>standardise · MACCS · Morgan<br/>per-column kNN"]
+    TQ --> TDR["Training distance<br/>per column → 66th percentile"]
+    TQ --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
     TDR & TDF --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
     TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log, trn_in_training)"]
 ```

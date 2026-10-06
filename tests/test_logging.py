@@ -26,7 +26,8 @@ def test_verbose_turns_curated_output_on(training_dir):
     logger.set_verbosity(False)
     console.enable(False)
     text = capture.get()
-    assert "Training modality" in text and "Step 1/4" in text
+    assert "Training sets" in text and "Training modality" in text
+    assert "Step 1/3" in text
 
 
 def test_dependency_loggers_are_routed(tmp_path):
@@ -43,3 +44,13 @@ def test_log_file_records_the_caller(tmp_path):
     with logger.log_file(path):
         logger.info("caller check")
     assert "test_logging:test_log_file_records_the_caller" in path.read_text()
+
+
+def test_long_tables_are_cut_short():
+    console.enable(True)
+    with console.console.capture() as capture:
+        console.table(("a", "b"), [(str(i), "x") for i in range(40)])
+    console.enable(False)
+    text = capture.get()
+    assert "… and 25 more" in text
+    assert "14" in text and "15" not in text  # 15 rows printed, 0 … 14

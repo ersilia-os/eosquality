@@ -38,11 +38,11 @@ def default_details_path(output: str) -> str:
         ``scores.training_details.csv`` next to it.
     """
     p = pathlib.Path(output)
-    return str(p.with_name(f"{p.stem}.training_details{p.suffix or '.csv'}"))
+    return str(p.with_name(f"{p.stem}.training_details.csv"))
 
 
 def log_path_for(output: str) -> pathlib.Path:
-    """Log file of ``run``: ``scores.csv`` → ``scores.log`` (never the output itself).
+    """Log file of ``run``: ``scores.csv`` → ``scores.log``.
 
     Parameters
     ----------
@@ -52,12 +52,9 @@ def log_path_for(output: str) -> pathlib.Path:
     Returns
     -------
     pathlib.Path
-        ``<output stem>.log``, or ``<output>.log`` when the output already
-        ends in ``.log``.
+        ``<output stem>.log``.
     """
-    p = pathlib.Path(output)
-    log = p.with_suffix(".log")
-    return log if log != p else p.with_name(p.name + ".log")
+    return pathlib.Path(output).with_suffix(".log")
 
 
 def _load_artifacts(path: str) -> ErsiliaQuality:
@@ -83,7 +80,8 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
     "run",
     help=(
         "Score query molecules with every score in the artifacts."
-        "\n\nNames must carry the model, e.g. query_eos4e40_v1.csv."
+        "\n\nThe artifacts and output names must carry the model, e.g. "
+        "quality_eos4e40_v1.csv."
     ),
     short_help="Score query data against fitted artifacts.",
 )
@@ -98,7 +96,7 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
     help="Artifacts folder from 'fit'.",
 )
 @click.option(
-    "--output", "-o", required=True, metavar="PATH", help="Scores CSV to write."
+    "--output", "-o", required=True, metavar="CSV", help="Scores CSV to write (.csv)."
 )
 @verbose_option
 def run(
@@ -133,11 +131,11 @@ def _run(input_path, artifacts, output) -> None:
     import pandas as pd
 
     try:
-        named = model_from_names(
-            {"--input": input_path, "--artifacts": artifacts, "--output": output}
-        )
+        named = model_from_names({"--artifacts": artifacts, "--output": output})
     except ValueError as exc:
         raise CliError(str(exc)) from exc
+    if pathlib.Path(output).suffix.lower() != ".csv":
+        raise CliError(f"--output must be a .csv file (got '{output}').")
     if not pathlib.Path(artifacts).is_dir():
         raise CliError(f"artifacts folder '{artifacts}' does not exist.")
     require_new_path(output)
@@ -189,7 +187,7 @@ def _write_outputs(query, result, output, details_path) -> None:
     import pandas as pd
 
     with console.section("Write outputs") as section:
-        prepend = [c for c in ("key", "input") if c in query.columns]
+        prepend = [c for c in ("key", "input", "smiles") if c in query.columns]
         pd.concat(
             [
                 query[prepend].reset_index(drop=True),

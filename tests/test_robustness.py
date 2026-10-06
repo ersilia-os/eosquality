@@ -41,10 +41,8 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
     assert support.nearest_reference_ids[1] == []
 
 
-def test_log_path_never_equals_output():
+def test_log_path_sits_next_to_the_output():
     assert str(log_path_for("out/scores.csv")) == "out/scores.log"
-    assert str(log_path_for("scores.log")) == "scores.log.log"
-    assert str(log_path_for("scores")) == "scores.log"
 
 
 @pytest.mark.parametrize(
@@ -100,3 +98,40 @@ def test_set_verbosity_false_silences_the_console():
     assert console.enabled()
     eosquality.set_verbosity(False)
     assert not console.enabled()
+
+
+def test_library_code_never_starts_a_process_pool(monkeypatch):
+    """A pool started from a user's unguarded script re-runs it in every worker."""
+    import numpy as np
+
+    from eosquality.library.maccs import compute_maccs
+    from eosquality.utils import parallel
+
+    def no_pool(*args, **kwargs):
+        raise AssertionError("process pool started without n_jobs")
+
+    monkeypatch.setattr(parallel.mp, "Pool", no_pool)
+    smiles = ["CCO"] * (parallel.PARALLEL_MIN_ITEMS + 1)
+    assert compute_maccs(smiles).shape == (len(smiles), 166)
+    assert np.array_equal(
+        compute_maccs(smiles[:3], n_jobs=1)[0], compute_maccs(["CCO"])[0]
+    )
+
+
+def test_all_unparsable_queries_are_reported_not_crashed(
+    tmp_path, training_dir, capsys
+):
+    """Every SMILES invalid: NaN scores, a clear summary, no traceback."""
+    import pandas as pd
+
+    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    art = tmp_path / "art_eos0aaa_v1"
+    eq.save(art)
+    query = tmp_path / "q.csv"
+    pd.DataFrame({"key": ["a", "b"], "input": ["???", ""]}).to_csv(query, index=False)
+    out = tmp_path / "scores_eos0aaa_v1.csv"
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "-i", str(query), "-a", str(art), "-o", str(out)])
+    assert exc.value.code == 0
+    assert "noscoredmolecule" in _unwrapped(capsys.readouterr().err)
+    assert pd.read_csv(out).trn_distance.isna().all()

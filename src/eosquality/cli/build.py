@@ -136,9 +136,9 @@ def _build(input_path, output, max_k, radius, n_bits, max_samples, verbose) -> N
                 )
                 st.summary = f"{len(smiles):,} molecules"
             with steps("Physicochemical descriptors"):
-                BasicDescriptors.build_physchem(smiles, output)
+                BasicDescriptors.build_physchem(smiles, output, n_jobs=-1)
             with steps("MACCS keys"):
-                BasicDescriptors.build_maccs(smiles, output)
+                BasicDescriptors.build_maccs(smiles, output, n_jobs=-1)
         except Exception as exc:
             raise CliError(f"index build failed: {exc}") from exc
         section.summary = console.folder_size(output)
