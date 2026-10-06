@@ -123,16 +123,8 @@ def _read_reference(path: str | None) -> pd.DataFrame | None:
 @click.command(
     "fit",
     help=(
-        "Fit the quality scores of one model and save them in an artifacts folder. "
-        "--reference (the model's predictions on the reference library) fits the "
-        f"reference scores ({', '.join(REFERENCE_SCORES)}); --training-sets (a "
-        "folder with one <output_column>.csv per column) fits the training scores "
-        f"({', '.join(TRAINING_SCORES)}). Give either or both. Names carry the "
-        "model: the reference CSV, the training-sets folder and the artifacts "
-        "folder must each be named '[prefix_]<eos_id>_<version>' (e.g. "
-        "reference_eos4e40_v1.csv, training_eos4e40_v1/, artifacts_eos4e40_v1/), "
-        "for the same model. With only --training-sets, an existing artifacts "
-        "folder that has no training sets yet gets them added."
+        "Fit the quality scores of one model and save them in an artifacts folder."
+        "\n\nNames must carry the model, e.g. reference_eos4e40_v1.csv."
     ),
     short_help="Fit quality scores and save artifacts.",
 )
@@ -146,23 +138,16 @@ def _read_reference(path: str | None) -> pd.DataFrame | None:
     "--training-sets",
     "-t",
     metavar="DIR",
-    help="Folder with one <output_column>.csv per column ('smiles', 'y', 'key').",
+    help="Folder of training sets, one CSV per output column.",
 )
 @click.option(
-    "--artifacts",
-    "-a",
-    required=True,
-    metavar="DIR",
-    help="Artifacts folder to create (or to add --training-sets to).",
+    "--artifacts", "-a", required=True, metavar="DIR", help="Artifacts folder to write."
 )
 @click.option(
     "--exclude",
     multiple=True,
     metavar="SCORES",
-    help=(
-        "Scores not to fit, comma-separated or repeated, e.g. --exclude ref_signal. "
-        f"Choose from: {', '.join(ALL_SCORES)}."
-    ),
+    help=("Scores not to fit, comma-separated, e.g. ref_signal."),
 )
 @verbose_option
 def fit(

@@ -19,13 +19,7 @@ from eosquality.utils import console
 
 @click.command(
     "build",
-    help=(
-        "Build a Morgan-fingerprint kNN index (plus physchem and MACCS matrices) "
-        "for a SMILES library. A release / maintenance tool: use it to prepare "
-        "the next canonical reference library, or a non-canonical index for "
-        "testing (point EOSQUALITY_REFERENCE_LIBRARY_PATH at the result before "
-        "'fit')."
-    ),
+    help=("Build a reference-library index from a SMILES CSV (maintainers)."),
     short_help="Build a reference-library vector index from a SMILES CSV.",
 )
 @click.option(

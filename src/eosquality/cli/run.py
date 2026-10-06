@@ -82,13 +82,8 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
 @click.command(
     "run",
     help=(
-        "Score query molecules with every score in the artifacts. The output CSV "
-        "has the query's 'key' and 'input' columns, then each fitted score with "
-        "its '*_raw' companion. If the artifacts hold training scores, "
-        "<output stem>.training_details.csv lists each query's nearest training "
-        "molecules. The query, artifacts and output must each be named "
-        "'[prefix_]<eos_id>_<version>' for the same model (e.g. "
-        "drugs_eos4e40_v1.csv, artifacts_eos4e40_v1/, quality_drugs_eos4e40_v1.csv)."
+        "Score query molecules with every score in the artifacts."
+        "\n\nNames must carry the model, e.g. query_eos4e40_v1.csv."
     ),
     short_help="Score query data against fitted artifacts.",
 )
@@ -100,7 +95,7 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
     "-a",
     required=True,
     metavar="PATH",
-    help="Artifacts folder produced by 'eosquality fit'.",
+    help="Artifacts folder from 'fit'.",
 )
 @click.option(
     "--output", "-o", required=True, metavar="PATH", help="Scores CSV to write."
