@@ -28,8 +28,14 @@ def test_scores_and_metadata(fitted, query):
     score = res.scores["trn_difficulty"]
     assert ((score > 0) & (score <= 1)).all()
     assert set(res.metadata["trn_difficulty_spearman"]) == {"mw", "aromatic"}
-    assert "difficulty" in res.training_details.columns
-    np.testing.assert_allclose(res.training_details.difficulty, score)
+    details = res.training_details
+    assert list(details.columns[2:6]) == [
+        "trn_distance",
+        "trn_distance_raw",
+        "trn_difficulty",
+        "trn_in_training",
+    ]
+    np.testing.assert_allclose(details.trn_difficulty, score)
 
 
 def test_roundtrip(fitted, query, tmp_path):
@@ -180,3 +186,31 @@ def test_training_molecules_get_their_out_of_fold_difficulty(fitted):
         model.oof_error, model.sorted_oof_error, higher_is_higher=True
     )
     assert np.nanmean(calibrated) == pytest.approx(0.5, abs=0.01)
+
+
+def test_error_models_fit_on_at_most_max_fit_molecules(training_dir, monkeypatch):
+    from eosquality.scores import _error_model
+
+    monkeypatch.setattr(_error_model, "MAX_FIT_MOLECULES", 120)
+    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    model = eq.training_difficulty.models_["mw"]
+    column, vi = eq._training.columns["mw"], eq._training.indices["mw"]
+    assert model.n_fit == 120 and model.n_labelled == column.n > 120
+    assert np.isfinite(model.oof_error).sum() == 120
+    assert len(model.sorted_oof_error) == 120
+    # Training molecules outside the fitted subset are scored like queries.
+    predicted = model.predict(column, vi, column.smiles)
+    assert np.isfinite(predicted).all()
+    fitted_rows = np.isfinite(model.oof_error)
+    np.testing.assert_allclose(predicted[fitted_rows], model.oof_error[fitted_rows])
+
+
+def test_weak_error_model_is_reported(training_dir, tmp_path, monkeypatch):
+    from eosquality.scores import training_difficulty as td
+    from eosquality.utils.logging import logger
+
+    monkeypatch.setattr(td, "WEAK_SPEARMAN", 0.999)  # every model counts as weak
+    path = tmp_path / "fit.log"
+    with logger.log_file(path):
+        ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    assert "barely predictable" in path.read_text()

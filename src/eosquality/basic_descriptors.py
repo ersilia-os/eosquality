@@ -54,7 +54,7 @@ class BasicDescriptors:
         output_dir : str or pathlib.Path
             Library folder (created if needed).
         n_jobs : int, optional
-            Worker processes (default: every CPU).
+            Worker processes (default: in-process; ``-1``: every CPU).
         force : bool, optional
             Recompute even if the files already exist.
 
@@ -104,7 +104,7 @@ class BasicDescriptors:
         output_dir : str or pathlib.Path
             Library folder (created if needed).
         n_jobs : int, optional
-            Worker processes (default: every CPU).
+            Worker processes (default: in-process; ``-1``: every CPU).
         force : bool, optional
             Recompute even if the files already exist.
 

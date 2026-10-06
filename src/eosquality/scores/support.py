@@ -203,8 +203,8 @@ class Support(ScoreComponent):
         idx = list(query.index)
         reference_ids = self._shared.reference_ids
         return SupportRunResult(
-            score=pd.Series(support_score, index=idx, name="support"),
-            score_raw=pd.Series(nearest_similarity, index=idx, name="support_raw"),
+            score=pd.Series(support_score, index=idx, name="ref_support"),
+            score_raw=pd.Series(nearest_similarity, index=idx, name="ref_support_raw"),
             score_log=pd.Series(
                 -np.log10(support_score), index=idx, name="support_log"
             ),
@@ -216,8 +216,7 @@ class Support(ScoreComponent):
                 for row, dist in zip(query_fp_indices, query_fp_distances, strict=True)
             ],
             metadata={
-                "reference_support": self._reference_support,
-                "n_reference": len(reference_ids),
+                "anchor": self._reference_support,
                 "k": int(self._knn.k),
             },
         )

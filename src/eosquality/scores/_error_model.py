@@ -60,13 +60,18 @@ from eosquality.exceptions import ArtifactVersionError
 from eosquality.library.maccs import N_MACCS, compute_maccs
 from eosquality.scores._base import read_json, require_file
 from eosquality.scores._density import KDE_NAMES, TrainingDensity
-from eosquality.scores._training_helpers import _nearest_training
+from eosquality.scores._training_helpers import TrainingQuery
 from eosquality.training.data import TrainingColumn
 from eosquality.training.folds import cv_folds, morgan_bits
 from eosquality.vectorindex import VectorIndex
 
 # Minimum labelled training molecules for an endpoint to get an error model.
 MIN_LABELLED = 50
+# Most labelled molecules an endpoint's surrogate and error model are fitted
+# on (a seeded random subset beyond it). Bounds fit time, artifact size and
+# prediction time on large screens; training distance still uses every
+# molecule. The held-out validation used the same cap.
+MAX_FIT_MOLECULES = 10_000
 N_FOLDS = 5
 SEED = 0
 MACCS_NAMES = tuple(f"maccs_{i}" for i in range(1, N_MACCS + 1))
@@ -95,6 +100,7 @@ class EndpointErrorModel:
     spearman: float  # ρ(OOF predicted error, OOF residual): the honesty check
     cv: str = "scaffold"  # "scaffold", or "random" when scaffolds cannot split
     oof_error: np.ndarray | None = None  # (n,) OOF predicted error per molecule
+    n_fit: int | None = None  # labelled molecules fitted on (MAX_FIT_MOLECULES cap)
 
     @property
     def features(self) -> list[str]:
@@ -107,7 +113,10 @@ class EndpointErrorModel:
         return feature_names(self.binary)
 
     def predict(
-        self, column: TrainingColumn, vi: VectorIndex, smiles: list[str]
+        self,
+        column: TrainingColumn,
+        vi: VectorIndex,
+        features: TrainingQuery | list[str],
     ) -> np.ndarray:
         """Predicted |error| for standardised query SMILES.
 
@@ -117,30 +126,36 @@ class EndpointErrorModel:
             This endpoint's training set (labels for the neighbour inputs).
         vi : VectorIndex
             This endpoint's Morgan index.
-        smiles : list of str
-            Standardised, valid query SMILES.
+        features : TrainingQuery or list of str
+            The query's features (or its standardised, valid SMILES).
 
         Returns
         -------
         numpy.ndarray
             ``(n,)`` predicted absolute error, in the endpoint's label units.
         """
+        if not isinstance(features, TrainingQuery):
+            features = TrainingQuery(features)
+        smiles = features.smiles
         if not smiles:
             return np.zeros(0)
-        dist, _, _ = _nearest_training(vi, smiles, self.k)
-        surrogate = _surrogate_predict(self.surrogate, morgan_bits(smiles), self.binary)
+        dist, _, _ = features.nearest(vi, self.k)
+        dist = dist.copy()  # rows of training molecules are replaced below
+        surrogate = _surrogate_predict(self.surrogate, features.morgan, self.binary)
         # A query that is a training molecule gets exactly its fit-time inputs:
         # its out-of-fold prediction and variance (the final surrogate saw its
         # label) and its self-kNN distances.
         index = {s: i for i, s in enumerate(column.smiles)}
         rows = np.array([index.get(s, -1) for s in smiles])
+        # Training molecules the models were fitted on (others are new to them).
         known = rows >= 0
+        known[known] = np.isfinite(self.oof_prediction[rows[known]])
         if known.any():
             t = rows[known]
             dist[known] = vi.self_knn_distances(self.k)[t]
             surrogate[known, 0] = self.oof_prediction[t]
             surrogate[known, 1] = self.oof_variance[t]
-        maccs = compute_maccs(smiles, show_progress=False)
+        maccs = features.maccs
         position = {
             column.smiles[r]: p for p, r in enumerate(self.density.reference_rows)
         }
@@ -188,6 +203,7 @@ class EndpointErrorModel:
             "spearman": self.spearman,
             "cv": self.cv,
             "n_labelled": self.n_labelled,
+            "n_fit": self.n_fit,
             "features": self.features,
             "sklearn_version": sklearn.__version__,
         }
@@ -237,6 +253,7 @@ class EndpointErrorModel:
             n_labelled=int(state["n_labelled"]),
             spearman=float(state["spearman"]),
             cv=state.get("cv", "scaffold"),
+            n_fit=state.get("n_fit"),
         )
 
 
@@ -271,11 +288,13 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
     -------
     EndpointErrorModel
     """
-    y = column.y
+    fit_rows = _fit_rows(column.y)
+    smiles = [column.smiles[i] for i in fit_rows]
+    y = column.y[fit_rows]
     binary = column.y_kind == "binary"
-    labelled = np.isfinite(y)
-    X = morgan_bits(column.smiles)
-    folds, cv = cv_folds(column.smiles, labelled, N_FOLDS, SEED)
+    labelled = np.ones(len(fit_rows), dtype=bool)
+    X = morgan_bits(smiles)
+    folds, cv = cv_folds(smiles, labelled, N_FOLDS, SEED)
     surrogate_oof = _oof(
         lambda: _new_surrogate(binary),
         X,
@@ -287,12 +306,13 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
     )
     prediction, variance = surrogate_oof[:, 0], surrogate_oof[:, 1]
     residuals = np.abs(y - prediction)
-    maccs = compute_maccs(column.smiles, show_progress=False)
+    maccs = compute_maccs(smiles, show_progress=False)
     density = TrainingDensity.fit(maccs, SEED)
-    self_positions = np.full(column.n, -1)
+    self_positions = np.full(len(smiles), -1)
     self_positions[density.reference_rows] = np.arange(len(density.reference_rows))
+    density.reference_rows = fit_rows[density.reference_rows]  # column positions
     inputs = _inputs(
-        dist=vi.self_knn_distances(k),
+        dist=vi.self_knn_distances(k)[fit_rows],
         prediction=prediction,
         variance=variance,
         log_density=density.log_density(maccs, self_positions),
@@ -310,6 +330,13 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
     )[:, 0]
     scored = target & np.isfinite(oof_error)
     rho = spearmanr(oof_error[scored], residuals[scored]).statistic
+
+    def full(values: np.ndarray) -> np.ndarray:
+        """Per-molecule values on the whole column (NaN outside the fit rows)."""
+        out = np.full(column.n, np.nan)
+        out[fit_rows] = values
+        return out
+
     return EndpointErrorModel(
         name=column.name,
         binary=binary,
@@ -317,15 +344,28 @@ def fit_endpoint(column: TrainingColumn, vi: VectorIndex, k: int) -> EndpointErr
         surrogate=_new_surrogate(binary).fit(X[labelled], _target(y[labelled], binary)),
         density=density,
         error_model=_new_error_model().fit(inputs[target], residuals[target]),
-        residuals=residuals,
-        oof_prediction=prediction,
-        oof_variance=variance,
+        residuals=full(residuals),
+        oof_prediction=full(prediction),
+        oof_variance=full(variance),
         sorted_oof_error=np.sort(oof_error[scored]),
-        n_labelled=int(labelled.sum()),
+        n_labelled=int(np.isfinite(column.y).sum()),
         spearman=float(rho) if np.isfinite(rho) else float("nan"),
         cv=cv,
-        oof_error=oof_error,
+        oof_error=full(oof_error),
+        n_fit=len(fit_rows),
     )
+
+
+def _fit_rows(y: np.ndarray) -> np.ndarray:
+    """Positions of the labelled molecules to fit on (``MAX_FIT_MOLECULES`` at most).
+
+    A seeded random subset when there are more, kept in column order.
+    """
+    rows = np.flatnonzero(np.isfinite(y))
+    if len(rows) > MAX_FIT_MOLECULES:
+        rng = np.random.default_rng(SEED)
+        rows = np.sort(rng.choice(rows, MAX_FIT_MOLECULES, replace=False))
+    return rows
 
 
 def _oof(make, X, y, mask, folds, predict, *, binary: bool = False) -> np.ndarray:

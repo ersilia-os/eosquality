@@ -16,6 +16,7 @@ from eosquality._registry import (
 )
 from eosquality.cli._common import (
     CliError,
+    require_new_path,
     run_command,
     staged_log,
     verbose_option,
@@ -28,8 +29,6 @@ if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-u
     import pandas as pd
 
 LOG_FILE = "eosquality.log"
-REFERENCE_DIR = "reference_mode"
-TRAINING_DIR = "training_mode"
 
 
 def parse_exclude(values: tuple[str, ...]) -> list[str]:
@@ -87,25 +86,6 @@ def resolve_model(reference, training_sets, artifacts) -> tuple[str, str]:
         return model_from_names(paths)
     except ValueError as exc:
         raise CliError(str(exc)) from exc
-
-
-def _check_artifacts(reference, training_sets, artifacts: pathlib.Path) -> bool:
-    """Validate ``--artifacts``; return True when it is an add-training run."""
-    if reference is None and training_sets is None:
-        raise CliError("give --reference, --training-sets, or both.")
-    if not artifacts.exists():
-        return False
-    if reference is not None:
-        raise CliError(
-            f"artifacts folder '{artifacts}' already exists; delete or move it, or "
-            "give only --training-sets to add training sets to it."
-        )
-    if not (artifacts / REFERENCE_DIR).is_dir() or (artifacts / TRAINING_DIR).exists():
-        raise CliError(
-            f"cannot add training sets to '{artifacts}': training sets can only be "
-            f"added to artifacts that have {REFERENCE_DIR}/ and no {TRAINING_DIR}/."
-        )
-    return True
 
 
 def _read_reference(path: str | None) -> pd.DataFrame | None:
@@ -166,7 +146,7 @@ def fit(
     training_sets : str or None
         Training-sets folder.
     artifacts : str
-        Artifacts folder (new, or existing to add training sets to).
+        New artifacts folder.
     exclude : tuple of str
         Scores not to fit.
     verbose : bool
@@ -179,7 +159,9 @@ def fit(
 def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
     started = time.perf_counter()
     folder = pathlib.Path(artifacts)
-    add_training = _check_artifacts(reference, training_sets, folder)
+    if reference is None and training_sets is None:
+        raise CliError("give --reference, --training-sets, or both.")
+    require_new_path(artifacts, "artifacts folder")
     eos_id, version = resolve_model(reference, training_sets, artifacts)
     excluded = parse_exclude(exclude)
     fitted = [
@@ -189,7 +171,7 @@ def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
         if s not in excluded
     ]
     console.summary_panel(
-        "eosquality · fit" + (" (add training sets)" if add_training else ""),
+        "eosquality · fit",
         [
             ("model", f"{eos_id} {version}"),
             ("reference", console.path(reference) if reference else "—"),
@@ -201,25 +183,18 @@ def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
     )
     from eosquality.quality import ErsiliaQuality
 
-    if add_training:
-        with logger.log_file(folder / LOG_FILE) as log_path:
-            logger.info(f"fit | adding training sets {training_sets} → {folder}")
-            eq = ErsiliaQuality.add_training(
-                folder, training_sets, eos_id=eos_id, version=version, exclude=excluded
-            )
-    else:
-        with staged_log(folder / LOG_FILE) as log_path:
-            logger.info(f"fit | eosquality {eos_id} {version} → {folder}")
-            eq = ErsiliaQuality(verbose=verbose).fit(
-                _read_reference(reference),
-                training_sets,
-                eos_id=eos_id,
-                version=version,
-                exclude=excluded,
-            )
-            with console.section("Save") as section:
-                eq.save(folder)
-                section.summary = f"{console.folder_size(folder)}"
+    with staged_log(folder / LOG_FILE) as log_path:
+        logger.info(f"fit | eosquality {eos_id} {version} → {folder}")
+        eq = ErsiliaQuality(verbose=verbose).fit(
+            _read_reference(reference),
+            training_sets,
+            eos_id=eos_id,
+            version=version,
+            exclude=excluded,
+        )
+        with console.section("Save") as section:
+            eq.save(folder)
+            section.summary = f"{console.folder_size(folder)}"
     _fit_summary(eq, folder, log_path, started)
 
 

@@ -355,14 +355,14 @@ def _standardize(smiles: str) -> str | None:
     """
     if not isinstance(smiles, str) or not smiles:
         return None
-    with rdBase.BlockLogs():
+    with rdBase.BlockLogs():  # RDKit's sanitisation notes are not actionable here
         mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    frags = Chem.GetMolFrags(mol, asMols=True)
-    if len(frags) > 1:
-        mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
-    return Chem.MolToSmiles(mol)
+        if mol is None:
+            return None
+        frags = Chem.GetMolFrags(mol, asMols=True)
+        if len(frags) > 1:
+            mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
+        return Chem.MolToSmiles(mol)
 
 
 def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:

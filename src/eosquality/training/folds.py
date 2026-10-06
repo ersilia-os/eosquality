@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 
@@ -12,11 +12,33 @@ MORGAN_RADIUS = 2
 MORGAN_BITS = 2048
 
 
+def _scaffold(smiles: str) -> str:
+    """Murcko scaffold SMILES; ``""`` for acyclic molecules or on failure.
+
+    RDKit fails to canonicalise some scaffolds that keep a stereo double bond
+    next to a ring once the side chains are cut; those are retried without
+    stereo (the ring scaffold is the same).
+    """
+    try:
+        with rdBase.BlockLogs():  # the failure prints an RDKit banner otherwise
+            return MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles)
+    except RuntimeError:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        Chem.RemoveStereochemistry(mol)
+        try:
+            return MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
+        except RuntimeError:
+            return ""
+
+
 def scaffold_folds(smiles: list[str], n_folds: int = 5, seed: int = 0) -> np.ndarray:
     """Assign whole Murcko-scaffold groups to ``n_folds`` balanced folds.
 
     Groups are shuffled, then each goes to the currently smallest fold.
-    Acyclic molecules (empty scaffold) are their own singleton groups, so they
+    Acyclic molecules (empty scaffold), and the rare ones RDKit cannot
+    scaffold, are their own singleton groups, so they
     do not form one giant group.
 
     Parameters
@@ -33,10 +55,7 @@ def scaffold_folds(smiles: list[str], n_folds: int = 5, seed: int = 0) -> np.nda
     numpy.ndarray
         ``(n,)`` int fold id per molecule.
     """
-    scaffolds = [
-        MurckoScaffold.MurckoScaffoldSmiles(smiles=s) or f"__acyclic_{i}"
-        for i, s in enumerate(smiles)
-    ]
+    scaffolds = [_scaffold(s) or f"__single_{i}" for i, s in enumerate(smiles)]
     groups = pd.Series(range(len(smiles))).groupby(scaffolds).apply(list).tolist()
     rng = np.random.default_rng(seed)
     rng.shuffle(groups)
@@ -108,6 +127,7 @@ def morgan_bits(smiles: list[str]) -> np.ndarray:
         radius=MORGAN_RADIUS, fpSize=MORGAN_BITS
     )
     out = np.zeros((len(smiles), MORGAN_BITS), dtype=np.uint8)
-    for i, s in enumerate(smiles):
-        out[i] = gen.GetFingerprintAsNumPy(Chem.MolFromSmiles(s))
+    with rdBase.BlockLogs():
+        for i, s in enumerate(smiles):
+            out[i] = gen.GetFingerprintAsNumPy(Chem.MolFromSmiles(s))
     return out

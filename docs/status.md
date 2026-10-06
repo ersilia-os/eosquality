@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
+**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5, training format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
 
 ## Example results
 
@@ -100,39 +100,138 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
   - It trains on 1,000 rows (a fixed setting).
   - With physchem descriptors, raw Gini values cluster near their maximum (about 0.99 on the test fixture), so most of the discrimination comes from small differences.
   - The full val-slice |SHAP| matrix is saved to `signal/val_shap_attributions.npy` so other reductions can be prototyped offline.
-- **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30).
+- **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30). With
+  training sets, the candidates are first restricted to the columns that have
+  one (41 of eos7m30's 49), and both modalities then use the same 10.
 - **Support and molecule size:** Tanimoto similarity is lower for small molecules, so small fragments look somewhat more novel than they are. This is not corrected for (see Support).
 - **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
 - **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality setup`.
 - **Run time** for 1,000 queries is about 15–25 s with all five scores, dominated by FPSim2 queries (about 10 ms each) and Signal's descriptors. Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes about a minute without Signal; Signal adds a few minutes (SHAP over the ~135k-row val slice). Typicality and extremity fit in under a second each.
+- **Training-set quality is not assessed.** The loader standardises SMILES,
+  merges duplicates and reports how many rows it dropped or merged, but a set
+  whose labels are wrong, whose assay differs from the deployed model's, or
+  which is not actually the model's training data will be scored against
+  anyway. `trn_*` answers "how does this molecule relate to the data in this
+  folder", not "was this model trained well".
 - `binary_class_freq` is computed and saved, but no score reads it.
 
 ## Training modality (in progress)
 
-Each output column can have its own training set. It is fitted with `-t/--training-sets`, alone or with `-r/--reference`, or added later to existing reference artifacts (`fit -t … -a <existing artifacts>`).
+Each output column can have its own training set. It is fitted with
+`-t/--training-sets`, alone or together with `-r/--reference`; with both, the
+reference scores use only the columns that have a training set.
+
+![Training-score distributions](figures/training_scores.png)
+
+Read that figure critically: against every example query set, including a
+sample of the reference library itself, `trn_distance` sits well above 0.5
+and often saturates near 1. That is honest — the training sets hold a few
+thousand molecules against a 1.35M-molecule library, so almost any query is
+farther from them than their molecules are from each other — but it leaves
+the calibrated score with little resolution once everything is "far", which
+is why `trn_distance_raw` is reported alongside it (the same trade-off as
+`ref_support_log`). `trn_difficulty` stays spread over its whole range.
+Drugs are the closest set for eos4e40 (E. coli), whose training data is a
+drug-like screen; the synthetic set is the farthest for every model.
 
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
 | 2 | `trn_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
-| 3 | `trn_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on six public endpoints, below) |
+| 3 | `trn_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on 19 real endpoints, below) |
 | 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
 
-### Validation
+### Validation on the Ersilia example training sets
 
-Validation uses training sets only. `scripts/evaluate_training.py`:
-1. splits a labelled set by scaffold (80/20);
-2. fits the training modality on the 80%;
-3. trains a stand-in "black-box" model on the same 80%;
-4. checks how well each training score ranks that model's absolute errors on the held-out 20%.
+The headline evidence, on the example models' own training data.
 
-Three black boxes are used:
-- **`rf_morgan`**: a random forest on Morgan bits. It is the same family as the surrogate inside `trn_difficulty`, so this case is partly circular.
-- **`xgb_physchem`**: XGBoost on RDKit physicochemical descriptors.
-- **`knn_morgan`**: a 5-NN on Morgan bits.
+**Protocol** (`scripts/evaluate_training.py`, Protocol B). Split one labelled
+training set 80/20 by Murcko scaffold; fit the training modality on the 80%;
+train a stand-in "black-box" model on the same 80%; then ask how well each
+training score ranks that model's absolute errors on the held-out 20%. Three
+stand-ins are used: `rf_morgan` (a random forest on Morgan bits, the same
+family as difficulty's own surrogate, so partly circular), `xgb_physchem`
+(XGBoost on physicochemical descriptors) and `knn_morgan` (5-NN on Morgan
+bits). The last two are the transfer case an Ersilia black box represents.
 
-The last two test transfer to a different model, which is the situation of an Ersilia model.
+`scripts/evaluate_training_sets.py` runs this over 19 endpoints of the four
+example models and writes `output/training_validation.csv`;
+`scripts/figures/training_validation.py` plots it.
 
+![Training-score validation](figures/training_validation.png)
+
+Spearman of each score against the held-out |error|, averaged over the three
+stand-in models. † marks a value inside the permutation baseline, i.e.
+indistinguishable from random ranking.
+
+| endpoint | label | train | distance | difficulty |
+|---|---|---|---|---|
+| bbb_martins | binary | 1,580 | 0.28 | **0.72** |
+| cytotoxicity_hepg2 | binary | 7,998 | 0.04 | **0.68** |
+| cytotoxicity_imr90 | binary | 7,998 | 0.32 | **0.63** |
+| cyp3a4_veith | binary | 8,000 | 0.09 | **0.62** |
+| herg | binary | 507 | 0.31 | **0.60** |
+| abaumannii_inhibition_probability | binary | 6,145 | 0.11 | **0.57** |
+| ames | binary | 5,356 | 0.26 | **0.48** |
+| inhibition_50um | binary | 1,867 | 0.17 | **0.47** |
+| dili | binary | 373 | **0.19** | 0.08† |
+| vdss_lombardo | continuous | 888 | 0.22 | **0.57** |
+| ppbr_az | continuous | 1,435 | 0.08 | **0.43** |
+| clearance_hepatocyte_az | continuous | 816 | 0.09† | **0.36** |
+| clearance_microsome_az | continuous | 875 | 0.20 | **0.36** |
+| lipophilicity_astrazeneca | continuous | 3,359 | 0.27 | **0.32** |
+| half_life_obach | continuous | 532 | 0.21 | **0.29** |
+| ld50_zhu | continuous | 5,860 | 0.08 | **0.21** |
+| caco2_wang | continuous | 695 | 0.14 | **0.20** |
+| hydrationfreeenergy_freesolv | continuous | 432 | 0.10 | **0.10** |
+| solubility_aqsoldb | continuous | 7,929 | -0.01 | **0.06** |
+
+Read this critically:
+
+- **Difficulty beats distance in 18 of 19 endpoints**, and it still does when
+  the stand-in model is not a random forest (mean 0.48 binary, 0.25
+  continuous, against 0.16 and 0.14 for distance).
+- **Binary endpoints score far higher than continuous ones, and it is not
+  circularity.** The obvious suspicion is that for a binary label `|y − p|`
+  is nearly a function of the classifier's confidence, which the error model
+  sees (`probability_top1`, ensemble variance, and the prediction itself,
+  which for a binary label *is* P(y = 1)). Removing all three and leaving
+  only structure (MACCS, kNN distance, the three KDEs) cost at most 0.07:
+  hERG 0.52 → 0.50, BBBP 0.67 → 0.60, `inhibition_50um` 0.41 → 0.41. So the
+  binary advantage is in the chemistry, not in re-reading the confidence
+  (`scripts/ablate_confidence_inputs.py`). A likelier explanation is that
+  ranking a bounded, bimodal `|y − p|` is simply an easier task than ranking a
+  continuous residual. Either way, do not compare a binary column's number
+  with a continuous one.
+- **The continuous numbers are the conservative read** (0.25–0.29 mean), and
+  they sit in the range Novartis reports for error models on public ADME data
+  (0.16–0.46, Parrondo-Pizarro et al. 2026).
+- **Three endpoints fail.** On `solubility_aqsoldb` both scores are ~0: a
+  7,929-molecule set covering very diverse chemistry, where held-out error is
+  driven by measurement noise more than by locality.
+  `hydrationfreeenergy_freesolv` (432 molecules) is too small for either score
+  to say anything. On `dili` difficulty is indistinguishable from random while
+  distance is not. The per-column `trn_difficulty_spearman` in the run
+  metadata is the warning sign to check before trusting the score on a given
+  column, and the fit warns when it falls below 0.2.
+- **Ranking, not flagging.** Mean AUROC for picking the top-quartile errors
+  is 0.76 (binary) and 0.67 (continuous) for difficulty, 0.57 for distance.
+  Useful for triage, far from a decision rule.
+- **Calibration holds on real artifacts.** 400 training molecules of
+  eos4e40 scored against their own fitted artifacts average 0.492
+  (`trn_distance`) and 0.503 (`trn_difficulty`), and all 400 are flagged
+  `trn_in_training` — the leave-one-out and out-of-fold construction does
+  what it claims.
+- **The per-column values are not redundant.** On eos7m30's 10 selected
+  columns, the median pairwise Spearman between per-column distances is 0.50,
+  so the Q66 across columns is aggregating genuinely different views rather
+  than repeating one. Calibration also spreads the per-column values (mean
+  within-molecule sd 0.18, against 0.09 raw), and the calibrated and raw
+  whole-model values rank queries slightly differently (ρ = 0.95).
+
+### Design benchmark (MoleculeNet)
+
+The score's design was chosen on public data, with the same protocol.
 Results on six MoleculeNet endpoints follow (Spearman of score vs held-out |error|). † marks a value within the permutation baseline (95th percentile of |ρ| under 1,000 permutations), i.e. indistinguishable from random. Bold is the better of the two scores.
 
 | endpoint | rf_morgan: distance / difficulty | xgb_physchem: distance / difficulty | knn_morgan: distance / difficulty |
@@ -162,7 +261,15 @@ The error model's hyperparameters matter little. On five of these endpoints, the
 
 Distance alone reached 0.17.
 
-**Cost.** The training modality is fitted once per labelled column, and the time grows with the training set: about 35 s for 4,000 molecules, 4 min for 20,000 and 9 min for 50,000. Two-thirds of that is the surrogate random forest, cross-validated and then fitted on everything. Scoring 1,000 queries takes 3–4 s.
+**Cost.** The error models dominate the fit, and each is capped at 10,000
+labelled molecules (`MAX_FIT_MOLECULES`). On eos42ez (3 columns of 39,044
+molecules) that cap took the error models from 6m 15s to 1m 51s and the whole
+fit from 9m 03s to 4m 27s, while the out-of-fold Spearman moved by at most
+0.02 (0.924 → 0.922, 0.959 → 0.943, 0.878 → 0.861); the saved artifacts went
+from 646 MB to 361 MB. Scoring 1,000 queries against 10 columns takes about
+8 s: the query's SMILES, MACCS keys, Morgan bits and per-column neighbour
+searches are computed once and shared by both training scores
+(`TrainingQuery`), which halved it.
 
 The surrogate considers every fingerprint bit at each split (`max_features=1.0`). Restricting it to a third of the bits, or to their square root, is up to 15 times faster, but it ranked held-out errors less well on the two largest continuous sets: lipophilicity 0.31 and 0.30 instead of 0.32, BACE pIC50 0.28 and 0.24 instead of 0.30. So the slower setting stays.
 
@@ -178,6 +285,21 @@ Carried over from the previous README TODO list:
 - [ ] Signal: train on more rows (e.g. 100,000) and check how stable calibration is. Early stopping already evaluates 5,000 val rows, and calibration already uses the full val slice (about 135k rows).
 - [ ] Signal: choose training compounds for quality (e.g. high consistency, diverse) instead of at random.
 - [ ] Signal: handle trivial models (e.g. molecular weight), where a few descriptors explain everything. One option is to bin the reference.
+
+Training modality:
+
+- [ ] `trn_distance` saturates near 1 against query sets that are all far from
+      the training sets, so its calibrated form loses resolution exactly where
+      a user most wants it. Consider a log companion (`trn_distance_log`), as
+      `ref_support_log` does for support.
+- [ ] `trn_difficulty` is near random on noisy, diverse endpoints
+      (`solubility_aqsoldb`, `dili`). The fit warns below Spearman 0.2, but a
+      weak column still enters the Q66 with equal weight. Consider dropping or
+      down-weighting such columns.
+- [ ] The error models are fitted on at most 10,000 molecules per column. The
+      cap cost at most 0.02 out-of-fold Spearman on eos42ez, but it has not
+      been checked on a set much larger than 39,000.
+- [ ] Conformal expected-error intervals (stage 4 above).
 
 New:
 

@@ -38,9 +38,20 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
 
 Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
 
+### Fitting training sets
+
+`-t` takes a folder with one `<output_column>.csv` per model output, each
+with a `smiles` column and, optionally, a label column (`y` or `value`).
+Labels add `trn_difficulty`, a learned error model. Given both `-r` and `-t`,
+the scores cover only the output columns that have a training set.
+
+```bash
+eosquality fit -r reference_eos4e40_v1.csv -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/
+```
+
 ### Running against new samples
 
-At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. The output CSV has `key`, `input`, and, for each score, a calibrated column in `(0, 1]` plus its `*_raw` value, named `ref_<score>` for the reference scores and `trn_<score>` for the training scores.
+At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. A training-only artifact needs nothing but SMILES, in an `input` or `smiles` column. The output CSV has `key`, `input`, and, for each score, a calibrated column in `(0, 1]` plus its `*_raw` value, named `ref_<score>` for the reference scores and `trn_<score>` for the training scores.
 
 ```bash
 eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e40_v1.csv

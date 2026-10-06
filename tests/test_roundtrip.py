@@ -169,3 +169,20 @@ def test_old_flat_layout_is_rejected(fitted, tmp_path):
     (tmp_path / "art/reference_mode").rename(tmp_path / "art/shared")
     with pytest.raises(ArtifactVersionError, match="old flat layout"):
         ErsiliaQuality.load(tmp_path / "art")
+
+
+def test_metadata_keys_are_stable(fitted, query):
+    """The public metadata contract (docs/api.md)."""
+    metadata = fitted.run(query).metadata
+    assert metadata["n_reference"] == 600
+    for score in REFERENCE:
+        assert metadata[f"ref_{score}_anchor"] == pytest.approx(0.5, abs=0.02)
+    assert {"ref_support_k", "ref_consistency_k"} <= set(metadata)
+    assert metadata["ref_signal_descriptor"] == "physchem"
+    # No key repeats its own score name, and none is left unprefixed.
+    for key in metadata:
+        if key == "n_reference":
+            continue
+        assert key.startswith(("ref_", "trn_")), key
+        score = "_".join(key.split("_")[:2])
+        assert not key[len(score) + 1 :].startswith(score.split("_")[1]), key

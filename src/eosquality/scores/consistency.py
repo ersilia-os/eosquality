@@ -231,14 +231,13 @@ class Consistency(ScoreComponent):
         )
         idx = list(query.index)
         return ConsistencyRunResult(
-            score=pd.Series(score, index=idx, name="consistency"),
-            score_raw=pd.Series(distance_k_mean, index=idx, name="consistency_raw"),
+            score=pd.Series(score, index=idx, name="ref_consistency"),
+            score_raw=pd.Series(distance_k_mean, index=idx, name="ref_consistency_raw"),
             distance_k_mean=pd.Series(
                 distance_k_mean, index=idx, name="distance_k_mean"
             ),
             metadata={
-                "reference_consistency": self._reference_consistency,
-                "n_reference": len(self._shared.reference_ids),
+                "anchor": self._reference_consistency,
                 "k": int(self._knn.k),
                 "n_fp_bins": self.n_bins_,
             },

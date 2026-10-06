@@ -1,4 +1,4 @@
-"""Saving, loading and extending :class:`~eosquality.quality.ErsiliaQuality` artifacts."""
+"""Saving and loading :class:`~eosquality.quality.ErsiliaQuality` artifacts."""
 
 from __future__ import annotations
 
@@ -93,55 +93,6 @@ def save_training(eq, folder: pathlib.Path) -> None:
     save_training_state(eq._training, root)
     for component in eq._training_components().values():
         component.save_component(root)
-
-
-def add_training(
-    eq_cls,
-    path: str | pathlib.Path,
-    training_sets: str | pathlib.Path,
-    *,
-    eos_id: str | None = None,
-    version: str | None = None,
-    exclude=(),
-) -> ErsiliaQuality:
-    """Add ``training_mode/`` to an existing artifacts folder in place.
-
-    ``reference_mode/`` is left untouched; ``training_mode/`` and
-    ``manifest.json`` are written. Refuses if the artifacts already hold a
-    training modality or belong to another model.
-
-    Parameters
-    ----------
-    eq_cls : type
-        :class:`ErsiliaQuality` (or a subclass).
-    path : str or pathlib.Path
-        Existing artifacts folder.
-    training_sets : str or pathlib.Path
-        Folder with one ``<output_column>.csv`` per column.
-    eos_id, version : str, optional
-        Model id of the training sets.
-    exclude : iterable of str, optional
-        Training scores not to fit, by public name.
-
-    Returns
-    -------
-    ErsiliaQuality
-        The loaded instance with the training modality added.
-    """
-    folder = pathlib.Path(path)
-    if (folder / TRAINING_DIR).exists():
-        raise FileExistsError(
-            f"{folder} already has a training modality; fit into a new folder "
-            "to replace it."
-        )
-    instance = load(eq_cls, folder)
-    instance.fit_training(
-        training_sets, eos_id=eos_id, version=version, exclude=exclude
-    )
-    save_training(instance, folder)
-    write_manifest(instance, folder)
-    logger.info(f"Training modality added → {folder}")
-    return instance
 
 
 def write_manifest(eq, folder: pathlib.Path) -> None:

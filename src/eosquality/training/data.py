@@ -44,6 +44,8 @@ class TrainingColumn:
     y: np.ndarray | None  # (n,) float labels, NaN where missing; None if no y column
     y_kind: str | None  # "binary" | "count" | "continuous"; None without y
     pred: np.ndarray | None = None  # (n,) model predictions on these molecules
+    n_unparsable: int = 0  # file rows dropped: SMILES missing or unparsable
+    n_conflicting: int = 0  # molecules listed more than once with different labels
 
     @property
     def n(self) -> int:
@@ -122,10 +124,11 @@ def load_training(
     )
 
     columns: dict[str, TrainingColumn] = {}
+    standardized: dict[str, str | None] = {}  # shared: panels repeat molecules
     for name in order:
         if name not in files:
             continue
-        column = _load_column(name, pd.read_csv(files[name]))
+        column = _load_column(name, pd.read_csv(files[name]), standardized)
         if column.n < MIN_TRAINING_MOLECULES:
             logger.warning(
                 f"training | column {name!r}: only {column.n} usable molecules "
@@ -147,7 +150,9 @@ def load_training(
     return columns
 
 
-def _load_column(name: str, df: pd.DataFrame) -> TrainingColumn:
+def _load_column(
+    name: str, df: pd.DataFrame, standardized: dict[str, str | None] | None = None
+) -> TrainingColumn:
     smiles_col = next((c for c in _SMILES_COLUMNS if c in df.columns), None)
     if smiles_col is None:
         raise SchemaError(
@@ -161,10 +166,13 @@ def _load_column(name: str, df: pd.DataFrame) -> TrainingColumn:
             f"Training file for column {name!r}: {y_col!r} must be numeric."
         )
 
-    std = df[smiles_col].map(_standardize)
+    cache = {} if standardized is None else standardized
+    std = df[smiles_col].map(
+        lambda s: cache[s] if s in cache else cache.setdefault(s, _standardize(s))
+    )
     n_bad = int(std.isna().sum())
     if n_bad:
-        logger.warning(f"training | column {name!r}: {n_bad} unparsable SMILES dropped")
+        logger.info(f"training | column {name!r}: {n_bad} unparsable SMILES dropped")
     ids = (
         df["key"].astype(str)
         if "key" in df.columns
@@ -190,14 +198,22 @@ def _load_column(name: str, df: pd.DataFrame) -> TrainingColumn:
             y = grouped["y"].median().reindex(smiles).to_numpy(dtype=float)
         conflicts = int((grouped["y"].nunique() > 1).sum())
         if conflicts:
-            logger.warning(
+            logger.info(
                 f"training | column {name!r}: {conflicts} molecules appear more "
                 "than once with different labels (merged)"
             )
     n_dupes = len(table) - len(smiles)
     if n_dupes:
         logger.info(f"training | column {name!r}: {n_dupes} duplicate rows merged")
-    return TrainingColumn(name=name, smiles=smiles, ids=first_ids, y=y, y_kind=y_kind)
+    return TrainingColumn(
+        name=name,
+        smiles=smiles,
+        ids=first_ids,
+        y=y,
+        y_kind=y_kind,
+        n_unparsable=n_bad,
+        n_conflicting=conflicts if has_y else 0,
+    )
 
 
 def _prediction_lookup(

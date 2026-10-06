@@ -337,12 +337,12 @@ class Signal(ScoreComponent):
         )
         idx = list(query.index)
         return SignalRunResult(
-            score=pd.Series(score, index=idx, name="signal"),
-            score_raw=pd.Series(row_aggregate, index=idx, name="signal_raw"),
+            score=pd.Series(score, index=idx, name="ref_signal"),
+            score_raw=pd.Series(row_aggregate, index=idx, name="ref_signal_raw"),
             metadata={
                 "descriptor": self._backend.name,
-                "reference_signal": self._reference_signal,
-                "reference_signal_raw": self._reference_signal_raw,
+                "anchor": self._reference_signal,
+                "anchor_raw": self._reference_signal_raw,
                 "formula_version": SIGNAL_FORMULA_VERSION,
                 "n_outputs": int(len(self._output_columns or [])),
                 "n_features": int(self._backend.n_features),

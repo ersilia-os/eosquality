@@ -1,4 +1,4 @@
-"""Order-preserving per-molecule map: serial for small inputs, a process pool for large ones."""
+"""Order-preserving per-molecule map: in-process, or a process pool on request."""
 
 from __future__ import annotations
 
@@ -10,9 +10,12 @@ import numpy as np
 
 from eosquality.utils.progress import make_progress
 
-# Below this many items the work runs in-process: spawning a pool (each
-# worker re-imports RDKit) costs more than it saves, and run-time callers
-# never need an ``if __name__ == "__main__":`` guard in their scripts.
+# A process pool is used only when the caller asks for it (``n_jobs > 1``)
+# and the input is at least this large: spawning workers (each re-imports
+# RDKit) costs more than it saves on small inputs. Library code (fit, run)
+# never asks: with the "spawn" start method (macOS, Windows) a pool started
+# from a user's script without an ``if __name__ == "__main__":`` guard
+# re-executes that script in every worker. Only ``eosquality build`` opts in.
 PARALLEL_MIN_ITEMS = 5_000
 
 
@@ -39,7 +42,8 @@ def map_rows(
     label : str
         Progress-bar title.
     n_jobs : int, optional
-        Worker processes for parallel runs (default: every CPU).
+        Worker processes. ``None`` or 1 (the default) runs in-process; ``-1``
+        uses every CPU.
     chunksize : int, optional
         Items per task sent to a worker.
     show_progress : bool, optional
@@ -48,13 +52,15 @@ def map_rows(
     Returns
     -------
     numpy.ndarray
-        ``out``, filled. Inputs of at least :data:`PARALLEL_MIN_ITEMS` use a
-        process pool; smaller ones run in-process.
+        ``out``, filled. A process pool is used only with ``n_jobs`` other
+        than 1 and at least :data:`PARALLEL_MIN_ITEMS` inputs.
     """
     n = len(items)
     if n == 0:
         return out
-    n_jobs = max(1, min(n_jobs or os.cpu_count() or 1, n))
+    if n_jobs is not None and n_jobs < 0:
+        n_jobs = os.cpu_count() or 1
+    n_jobs = max(1, min(n_jobs or 1, n))
     parallel = n_jobs > 1 and n >= PARALLEL_MIN_ITEMS
     progress = (
         make_progress(label)

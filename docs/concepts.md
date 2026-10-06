@@ -11,7 +11,7 @@
 Every score starts from the same fit-time state (`shared/`):
 
 1. **Scaling.** Each numeric output column is scaled with [`eosframes`](https://github.com/ersilia-os/eosframes). eosframes classifies each column (constant, binary, count, skewed or centred continuous) and maps it robustly into `[-1, 1]`.
-2. **Feature selection.** If there are more than `max_features` columns (default 10), columns are clustered on `1 − |Pearson r|` with average linkage, and only the medoid of each cluster is kept. Typicality, extremity, consistency and signal see only the selected columns.
+2. **Feature selection.** If there are more than `max_features` columns (default 10), columns are clustered on `1 − |Pearson r|` with average linkage, and only the medoid of each cluster is kept. Typicality, extremity, consistency and signal see only the selected columns. When training sets are given too, only the columns with a usable training set are candidates, and the training scores use the selected columns. A training-only fit has no predictions to correlate, so its columns are clustered on `1 − Jaccard` overlap of their training molecules instead, keeping the largest set of each cluster.
 3. **Split.** The reference is split once into a fixed, seeded 80/10/10 train/val/test partition (seed 0). Signal uses the train and val slices. The full split is always the one saved to disk.
 
 ## Calibration
@@ -127,7 +127,7 @@ How to read the two values: higher is farther for both. The raw value means the 
 
 Training difficulty asks how hard the query is to predict, judging by the training data. It needs labels `y` and gives **one value per molecule for the whole model**. Distance measures novelty; difficulty also catches regions that are close to the training set but hard to learn: noisy assays, activity cliffs, chemotypes the labels disagree on.
 
-It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own:
+It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own. A column with more than 10,000 labelled molecules is fitted on a seeded random 10,000 of them, which bounds fit time and artifact size; training molecules outside that subset are scored like any query. Training distance still uses every molecule.
 1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. A congeneric training set, with fewer usable Murcko scaffolds than folds or one scaffold holding over 40% of the labelled molecules, falls back to random folds; the fit warns that its out-of-fold errors are then optimistic, and the metadata records `cv`. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
 2. **Inputs.** These are UNIQUE's feature set (i), "data features + base UQ metrics + prediction":
    - **Data features:** the 166 MACCS keys.
@@ -140,7 +140,7 @@ It is an **error model**, following the error models of Novartis's UNIQUE (adapt
 3. **Error model.** A second random forest learns inputs → residual. Its out-of-fold predictions on the same folds give the calibration table, and their Spearman correlation with the true residuals is the **honesty check**: 0 means no better than random.
 
 **Why feature set (i) only.** UNIQUE also builds error models on "base UQ + prediction" and on "transformed UQ (DiffkNN) + prediction", and benchmarks them. Both UNIQUE papers found set (i) best, and so did our benchmark:
-- **Setup:** six MoleculeNet endpoints (ESOL, lipophilicity, FreeSolv, BACE pIC50, BBBP, BACE class), each split by scaffold. Each set's predictions were scored against the held-out errors of three different models (see Validation in `status.md`).
+- **Setup:** six MoleculeNet endpoints (ESOL, lipophilicity, FreeSolv, BACE pIC50, BBBP, BACE class), each split by scaffold. (The score is validated on the Ersilia training sets themselves in `status.md`; these public sets are what the design was chosen on.) Each set's predictions were scored against the held-out errors of three different models (see Validation in `status.md`).
 - **Set (i) with MACCS** had the best mean Spearman: 0.36, against 0.30 for "base + prediction", 0.28 for the transformed set and 0.16 for distance alone.
 - **Choosing the set per column by out-of-fold Spearman was harmful.** It mostly picked the transformed set, whose neighbour-based inputs look predictive out-of-fold but not on new scaffolds. A training molecule's neighbours usually share its scaffold, hence its fold and its fold model's errors; a new-scaffold query's neighbours do not.
 - **MACCS beat Morgan bits** as data features: 0.36 against 0.33.
@@ -150,9 +150,11 @@ For a query, the error model predicts its error, calibrated as the percentile am
 How to read it:
 - It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
 - It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
-- Check the per-column Spearman values in the run metadata (`trn_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: when the surrogate is right, the error `|y − p|` is almost a fixed function of its confidence, which is an input (`probability_top1`). On BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+- Check the per-column Spearman values in the run metadata (`trn_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: on BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. That is not the error model re-reading the classifier's confidence — dropping every confidence input (`probability_top1`, ensemble variance and the prediction, which for a binary label is P(y = 1)) costs at most 0.07 on held-out errors (`status.md`) — but binary and continuous columns are still not comparable to each other. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
 
 Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `trn_difficulty`.
+
+**Where it fails.** On the 19 Ersilia endpoints in `status.md`, difficulty ranked held-out errors better than distance in 18, but it was indistinguishable from random on `dili` (373 training molecules) and near zero on `solubility_aqsoldb`, a large, chemically diverse set where held-out error is driven by measurement noise rather than by locality. Check `trn_difficulty_spearman` before trusting the score on a given column; the fit warns when a column's out-of-fold Spearman is below 0.2.
 
 A query that is itself a training molecule gets its own out-of-fold predicted error, the value the calibration table was built from. Re-using the final surrogate and error model for it would be in-sample, since both were trained on its label, and would rate it optimistically easy.
 
