@@ -4,7 +4,7 @@
 # scores (typicality, extremity, support, consistency, signal).
 #
 # Produces, in output/ (or $OUT_DIR):
-#   output/artifacts_<eos>/                           per-model fit artifacts
+#   output/artifacts_<eos>_v1/                        per-model fit artifacts
 #   output/scores_<dataset>_<eos>_v1.csv              per-(model, dataset) scores
 #
 # Auto-discovers both the model list and the per-model query list — no
@@ -16,7 +16,6 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
-ALL_SCORES="typicality,extremity,support,consistency,signal"
 OUT_DIR="${OUT_DIR:-output}"
 
 mkdir -p "$OUT_DIR"
@@ -35,13 +34,10 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
     STRIPPED="${BASENAME#emh_paper_}"     # eos4e40_v1.csv
     EOS="${STRIPPED%_v1.csv}"             # eos4e40
 
-    ARTIFACTS="$OUT_DIR/artifacts_${EOS}"
+    ARTIFACTS="$OUT_DIR/artifacts_${EOS}_v1"
     echo "==> [$EOS] eosquality fit (all scores) → $ARTIFACTS"
     rm -rf "$ARTIFACTS"
-    eosquality fit \
-        --reference "$FIT_INPUT" \
-        -o "$ARTIFACTS" \
-        --scores "$ALL_SCORES"
+    eosquality fit -r "$FIT_INPUT" -a "$ARTIFACTS"
 
     shopt -s nullglob
     QUERY_FILES=(data/run_examples/*_1000_"${EOS}"_v1.csv)

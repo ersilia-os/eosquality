@@ -6,10 +6,7 @@ import json
 import pathlib
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-
 from eosquality._registry import INDEX_AWARE, KNN_USERS, SCORE_ORDER
-from eosquality.config import ErsiliaQualityConfig, NeighborConfig
 from eosquality.exceptions import ArtifactVersionError, IncompatibleArtifactsError
 from eosquality.knn.load import load_knn
 from eosquality.knn.save import save_knn
@@ -102,10 +99,10 @@ def add_training(
     eq_cls,
     path: str | pathlib.Path,
     training_sets: str | pathlib.Path,
-    training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
     *,
     eos_id: str | None = None,
     version: str | None = None,
+    exclude=(),
 ) -> ErsiliaQuality:
     """Add ``training_mode/`` to an existing artifacts folder in place.
 
@@ -121,10 +118,10 @@ def add_training(
         Existing artifacts folder.
     training_sets : str or pathlib.Path
         Folder with one ``<output_column>.csv`` per column.
-    training_predictions : str, pathlib.Path or pandas.DataFrame, optional
-        The model's predictions on the training molecules.
     eos_id, version : str, optional
         Model id of the training sets.
+    exclude : iterable of str, optional
+        Training scores not to fit, by public name.
 
     Returns
     -------
@@ -139,7 +136,7 @@ def add_training(
         )
     instance = load(eq_cls, folder)
     instance.fit_training(
-        training_sets, training_predictions, eos_id=eos_id, version=version
+        training_sets, eos_id=eos_id, version=version, exclude=exclude
     )
     save_training(instance, folder)
     write_manifest(instance, folder)
@@ -282,8 +279,6 @@ def _load_reference(instance, root: pathlib.Path) -> None:
     instance._shared = shared
     for name in present:
         setattr(instance, name, SCORE_CLASSES[name].load(root, shared=shared, knn=knn))
-    if knn is not None:
-        instance.config = ErsiliaQualityConfig(neighbors=NeighborConfig(k=knn.k))
 
 
 def check_artifacts_compatibility(

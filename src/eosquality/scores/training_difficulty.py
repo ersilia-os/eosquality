@@ -11,7 +11,7 @@ metrics (kNN distance, KDE densities, ensemble variance) and the prediction.
 
 The query's predicted error is calibrated as its percentile among the
 training molecules' out-of-fold predicted errors: ~0.5 is as hard as a
-typical training molecule, near 1 among the hardest. ``training_difficulty``
+typical training molecule, near 1 among the hardest. ``trn_difficulty``
 is the 66th percentile across labelled columns. There is no raw column:
 predicted errors are in each endpoint's own units and cannot be combined.
 

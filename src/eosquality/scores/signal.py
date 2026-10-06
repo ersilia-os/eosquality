@@ -6,19 +6,11 @@ attribution is focused on a few features ("focused" chemistry), low
 when attribution scatters across many features ("scattered"
 chemistry).
 
-The feature backend is chosen at fit time via :class:`Signal`'s
-``descriptor`` argument:
-
-- ``"physchem"`` (default) — the RDKit physicochemical descriptor set
-  (``Descriptors._descList``; ~200 descriptors, exact count depends on the
-  RDKit version), precomputed at library build time alongside the FP index.
-- ``"maccs"`` — RDKit MACCS structural keys, precomputed at library build
-  time as ``maccs.npy``.
-
-Both descriptors feed the same Gini aggregator. The choice is baked
-into the saved artifact via the ``descriptor`` field in
-``umbrella.json`` and recovered at load time — there is no run-time
-override.
+The features are the RDKit physicochemical descriptor set
+(``Descriptors._descList``; ~200 descriptors, exact count depends on the
+RDKit version), precomputed at library build time alongside the FP index.
+The descriptor is recorded in ``umbrella.json``. The learner trains on
+``TRAIN_SAMPLES`` rows of the canonical train slice.
 
 ``signal_raw = Gini(|SHAP|_per_feature)`` bounded in ``[0, 1]``,
 **high = focused** (one feature carries most of the attribution).
@@ -86,6 +78,9 @@ VAL_SHAP_ATTRIBUTIONS_FILE = "val_shap_attributions.npy"
 # physchem-only artifacts fail load with a clear "refit" message instead
 # of silently scoring against a backend that wasn't recorded.
 SIGNAL_FORMULA_VERSION: str = "gini_v2"
+# Rows of the train slice the learner is trained on (calibration always uses
+# the full val slice).
+TRAIN_SAMPLES = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +189,7 @@ class Signal(ScoreComponent):
     """Per-query model-signal score via SHAP-attribution Gini.
 
     Fits a single XGBoost regressor (:class:`SignalLearner`) on the
-    reference library, using the descriptor chosen at fit time (RDKit
-    physchem descriptors by default, or MACCS keys). At run time, for each
+    reference library, using RDKit physchem descriptors. At run time, for each
     query, computes the per-query ``|SHAP|`` attribution over those
     features (summed across outputs when multi-output) and reduces it to
     the Gini coefficient: high when one (or a few) features carry most of
@@ -233,8 +227,6 @@ class Signal(ScoreComponent):
         *,
         vector_index: str | pathlib.Path | VectorIndex,
         shared: SharedFitState,
-        descriptor: str = DEFAULT_DESCRIPTOR,
-        max_train_samples: int | None = None,
         **learner_kwargs: Any,
     ) -> Signal:
         """Fit the XGBoost regressor and calibrate its SHAP Gini on the val slice.
@@ -247,11 +239,6 @@ class Signal(ScoreComponent):
             Index whose folder holds the library descriptor matrices.
         shared : SharedFitState
             Shared fit state (splits, scaled outputs, selected columns).
-        descriptor : {"physchem", "maccs"}, optional
-            Feature backend; recorded in ``umbrella.json``.
-        max_train_samples : int, optional
-            Cap on training rows; ``None`` or non-positive uses the full train
-            slice. Calibration always uses the full val slice.
         **learner_kwargs
             Forwarded to :meth:`SignalLearner.fit_from_arrays`.
 
@@ -261,11 +248,11 @@ class Signal(ScoreComponent):
             ``self``, fitted.
         """
         t0 = time.perf_counter()
-        backend = _backend_for(descriptor, vector_index)
+        backend = _backend_for(DEFAULT_DESCRIPTOR, vector_index)
         Y, cols = _normalize_y(reference, shared)
-        train_idx, val_idx = _clean_split(Y, shared, max_train_samples)
+        train_idx, val_idx = _clean_split(Y, shared, TRAIN_SAMPLES)
         logger.info(
-            f"signal | fit | descriptor={descriptor} n_features={backend.n_features} "
+            f"signal | fit | descriptor={backend.name} n_features={backend.n_features} "
             f"n_train={len(train_idx):,} n_val={len(val_idx):,}"
         )
         X_val = backend.compute_reference_subset(reference, val_idx).astype(
@@ -455,11 +442,11 @@ class Signal(ScoreComponent):
 
     @property
     def backend_(self) -> DescriptorBackend:
-        """The fitted descriptor backend (PhyschemBackend or MaccsBackend).
+        """The fitted descriptor backend.
 
         Returns
         -------
-        PhyschemBackend or MaccsBackend
+        PhyschemBackend
         """
         self._check_fitted()
         assert self._backend is not None
@@ -472,7 +459,7 @@ class Signal(ScoreComponent):
         Returns
         -------
         str
-            ``"physchem"`` or ``"maccs"``.
+            ``"physchem"``.
         """
         return self.backend_.name
 

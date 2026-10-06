@@ -12,14 +12,14 @@ from the output columns' training sets without pooling them:
   column's own leave-one-out raw values (each training molecule vs its k
   nearest *other* training molecules): ~0.5 for a query as close as a typical
   training molecule, near 1 when farther than almost all of them.
-- **Whole model.** ``training_distance`` and ``training_distance_raw`` are
+- **Whole model.** ``trn_distance`` and ``trn_distance_raw`` are
   the 66th percentile across columns of the calibrated and the raw values:
   at least two-thirds of the columns are this close or closer. Calibrated
   values are percentiles of each column's own training set, so columns of
   very different sizes and densities combine fairly; a large training set
   cannot hide that the query is far from a small one.
 
-Higher is farther; there is no in/out cutoff. ``in_training`` flags queries
+Higher is farther; there is no in/out cutoff. ``trn_in_training`` flags queries
 that are a training molecule of any column. The details table has one row
 per query with the 5 nearest training molecules over all columns (keys,
 similarities, the columns each belongs to).

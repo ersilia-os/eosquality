@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5. The project is a work in progress. The four default scores are functional and calibrated; Signal is provisional.
+**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
 
 ## Example results
 
@@ -49,7 +49,7 @@ The query sets:
 
 Since format 4, support asks whether the library contains a close analogue of the molecule. The raw value is the Tanimoto similarity of the nearest library molecule; the dashed lines in panel A mark 0.4 (related chemistry), 0.6 (close analogue) and 0.8 (near-identical).
 
-| Query set | nearest-analogue similarity (median) | support median | `support_log` median (p90) |
+| Query set | nearest-analogue similarity (median) | support median | `ref_support_log` median (p90) |
 |---|---|---|---|
 | Library sample | 0.73 | 0.51 | 0.30 (1.10) |
 | Drugs | 0.74 | 0.55 | 0.26 (1.72) |
@@ -61,7 +61,7 @@ What the panels show:
 - **Synthetic molecules.** 99% have no library analogue at Tanimoto ≥ 0.4. They are generated, strained ring systems unlike the drug-like library.
 - **Natural products** split into two groups: those with real analogues in the library (around 0.7) and novel scaffolds (0.2–0.4).
 - **Drugs.** The spike of drugs at 1.0 consists of drugs with a fingerprint-identical stereoisomer in the library (see the self-match rule under Decisions to review).
-- **The 0–1 scale** collapses everything far from the library onto 0; `support_log` keeps those molecules apart.
+- **The 0–1 scale** collapses everything far from the library onto 0; `ref_support_log` keeps those molecules apart.
 
 **How the definition was chosen.** These options were compared on the five query sets:
 - **Nearest-analogue similarity (chosen).** It calibrates as well as the previous definition (KS 0.024) and separates natural products from library molecules best (AUC 0.79).
@@ -97,7 +97,7 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 ## Known limitations
 
 - **Signal is provisional.**
-  - It trains on 1,000 rows by default (`--max-signal-samples`).
+  - It trains on 1,000 rows (a fixed setting).
   - With physchem descriptors, raw Gini values cluster near their maximum (about 0.99 on the test fixture), so most of the discrimination comes from small differences.
   - The full val-slice |SHAP| matrix is saved to `signal/val_shap_attributions.npy` so other reductions can be prototyped offline.
 - **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30).
@@ -109,13 +109,13 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 
 ## Training modality (in progress)
 
-Each output column can have its own training set. It is fitted with `--training-sets`, alone or with `--reference`, or added to existing artifacts with `--artifacts`.
+Each output column can have its own training set. It is fitted with `-t/--training-sets`, alone or with `-r/--reference`, or added later to existing reference artifacts (`fit -t … -a <existing artifacts>`).
 
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
-| 2 | `training_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
-| 3 | `training_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on six public endpoints, below) |
+| 2 | `trn_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
+| 3 | `trn_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on six public endpoints, below) |
 | 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
 
 ### Validation
@@ -127,7 +127,7 @@ Validation uses training sets only. `scripts/evaluate_training.py`:
 4. checks how well each training score ranks that model's absolute errors on the held-out 20%.
 
 Three black boxes are used:
-- **`rf_morgan`**: a random forest on Morgan bits. It is the same family as the surrogate inside `training_difficulty`, so this case is partly circular.
+- **`rf_morgan`**: a random forest on Morgan bits. It is the same family as the surrogate inside `trn_difficulty`, so this case is partly circular.
 - **`xgb_physchem`**: XGBoost on RDKit physicochemical descriptors.
 - **`knn_morgan`**: a 5-NN on Morgan bits.
 
@@ -166,7 +166,7 @@ Distance alone reached 0.17.
 
 The surrogate considers every fingerprint bit at each split (`max_features=1.0`). Restricting it to a third of the bits, or to their square root, is up to 15 times faster, but it ranked held-out errors less well on the two largest continuous sets: lipophilicity 0.31 and 0.30 instead of 0.32, BACE pIC50 0.28 and 0.24 instead of 0.30. So the slower setting stays.
 
-The design of `training_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
+The design of `trn_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
 
 To reproduce, download the MoleculeNet CSVs (`delaney-processed.csv`, `Lipophilicity.csv`, `BBBP.csv`, `SAMPL.csv`, `bace.csv` from `deepchemdata.s3-us-west-1.amazonaws.com/datasets/`) and run, for example, `python scripts/evaluate_training.py --csv Lipophilicity.csv --y-col exp`.
 

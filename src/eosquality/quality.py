@@ -18,13 +18,11 @@ from eosquality import _artifacts, _reference_modality, _training_modality
 from eosquality._registry import (
     ALL_SCORES,
     DEFAULT_MAX_FEATURES,
-    DEFAULT_SCORES,
     INDEX_AWARE,
-    MIN_REFERENCE_SAMPLES,
     SCORE_ORDER,
     TRAINING_ORDER,
+    split_exclude,
 )
-from eosquality.config import ErsiliaQualityConfig, NeighborConfig
 from eosquality.exceptions import (
     NotFittedError,
     SchemaError,
@@ -49,8 +47,6 @@ from eosquality.vectorindex import VectorIndex
 
 __all__ = [
     "ALL_SCORES",
-    "DEFAULT_SCORES",
-    "MIN_REFERENCE_SAMPLES",
     "ErsiliaQuality",
     "RunResult",
 ]
@@ -67,30 +63,14 @@ class ErsiliaQuality:
       (training_distance, and training_difficulty when labels allow).
     """
 
-    def __init__(
-        self,
-        k: int = 5,
-        verbose: bool = False,
-        config: ErsiliaQualityConfig | None = None,
-    ) -> None:
+    def __init__(self, verbose: bool = False) -> None:
         """Build an unfitted orchestrator.
 
         Parameters
         ----------
-        k:
-            Number of nearest neighbors for the FP self-kNN. Ignored
-            if ``config`` is provided.
-        verbose:
-            If ``True``, route the package's loguru output to stderr at
-            DEBUG level.
-        config:
-            Full :class:`ErsiliaQualityConfig`. If omitted, a default
-            config is built from ``k``.
+        verbose : bool, optional
+            Show the step-by-step output and DEBUG messages (as the CLI does).
         """
-        if config is not None:
-            self.config = config
-        else:
-            self.config = ErsiliaQualityConfig(neighbors=NeighborConfig(k=k))
         self.verbose = verbose
         if verbose:
             logger.set_verbosity(True)
@@ -114,76 +94,70 @@ class ErsiliaQuality:
     def fit(
         self,
         reference: pd.DataFrame | None = None,
-        eos_id: str | None = None,
-        version: str = "v1",
-        vector_index: str | pathlib.Path | None = None,
-        ignore_size: bool = False,
-        scores: Iterable[str] = DEFAULT_SCORES,
-        max_features: int | None = DEFAULT_MAX_FEATURES,
-        max_signal_train_samples: int | None = 1000,
-        signal_descriptor: str = "physchem",
         training_sets: str | pathlib.Path | None = None,
-        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
+        *,
+        eos_id: str,
+        version: str = "v1",
+        exclude: Iterable[str] = (),
+        max_features: int | None = DEFAULT_MAX_FEATURES,
+        vector_index: str | pathlib.Path | None = None,
     ) -> ErsiliaQuality:
         """Fit the reference modality, the training modality, or both.
+
+        Every score of each given modality is fitted unless excluded.
 
         Parameters
         ----------
         reference : pandas.DataFrame, optional
             Predictions on the reference library (``key``, ``input``, one
-            numeric column per output). ``None`` for a training-only fit.
+            numeric column per output), in library order. ``None`` for a
+            training-only fit.
+        training_sets : str or pathlib.Path, optional
+            Folder with one ``<output_column>.csv`` per column.
         eos_id : str
             Model identifier, e.g. ``"eos4e40"``.
         version : str, optional
-            Dataset version, e.g. ``"v1"``.
-        vector_index : str or pathlib.Path, optional
-            Custom index folder for the reference modality (default: canonical).
-        ignore_size : bool, optional
-            Skip the ``MIN_REFERENCE_SAMPLES`` minimum (testing only).
-        scores : iterable of str, optional
-            Reference scores to fit, from ``ALL_SCORES``.
+            Model version, e.g. ``"v1"``.
+        exclude : iterable of str, optional
+            Scores not to fit, by public name (``ALL_SCORES``), e.g.
+            ``["ref_signal"]``.
         max_features : int, optional
-            Feature-selection cap; ``None`` disables it.
-        max_signal_train_samples : int, optional
-            Signal training rows; ``None`` or ``0`` uses the full train slice.
-        signal_descriptor : {"physchem", "maccs"}, optional
-            Feature backend of the signal score.
-        training_sets : str or pathlib.Path, optional
-            Folder with one ``<output_column>.csv`` per column; fits the training mode.
-        training_predictions : str, pathlib.Path or pandas.DataFrame, optional
-            The model's predictions on the training molecules.
+            Feature-selection cap of the reference modality; ``None``
+            disables it.
+        vector_index : str or pathlib.Path, optional
+            Reference library index folder (default: the resolved canonical
+            library). For tests and custom libraries.
 
         Returns
         -------
         ErsiliaQuality
             ``self``, fitted. See ``docs/api.md`` for details on each argument.
         """
-        if eos_id is None:
-            raise ValueError("fit needs eos_id= (e.g. 'eos4e40').")
         validate_eos_id(eos_id)
         validate_version(version)
         if reference is None and training_sets is None:
             raise ValueError("fit needs reference predictions, training sets, or both.")
+        skip_reference, skip_training = split_exclude(exclude)
         self._reset()
         t_start = time.perf_counter()
         console.set_active_color(console.STEP_COLORS["fit"])
         logger.info(f"fit | {eos_id} {version}")
         if reference is not None:
+            scores = [c for c in SCORE_ORDER if c not in skip_reference]
+            if not scores:
+                raise ValueError("Every reference score is excluded: nothing to fit.")
             _reference_modality.fit_reference(
                 self,
                 reference,
                 eos_id=eos_id,
                 version=version,
                 vector_index=vector_index,
-                ignore_size=ignore_size,
                 scores=scores,
                 max_features=max_features,
-                max_signal_train_samples=max_signal_train_samples,
-                signal_descriptor=signal_descriptor,
             )
         if training_sets is not None:
             self.fit_training(
-                training_sets, training_predictions, eos_id=eos_id, version=version
+                training_sets, eos_id=eos_id, version=version, exclude=exclude
             )
         self.is_fitted_ = True
         fitted = list(self._components()) + list(self._training_components())
@@ -196,10 +170,10 @@ class ErsiliaQuality:
     def fit_training(
         self,
         training_sets: str | pathlib.Path,
-        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
         *,
         eos_id: str | None = None,
         version: str | None = None,
+        exclude: Iterable[str] = (),
     ) -> ErsiliaQuality:
         """Fit (or replace) the training modality on this instance.
 
@@ -212,10 +186,10 @@ class ErsiliaQuality:
         ----------
         training_sets : str or pathlib.Path
             Folder with one ``<output_column>.csv`` per column.
-        training_predictions : str, pathlib.Path or pandas.DataFrame, optional
-            The model's predictions on the training molecules.
         eos_id, version : str, optional
             Model id; default to the reference modality's.
+        exclude : iterable of str, optional
+            Scores not to fit, by public name (training ones apply here).
 
         Returns
         -------
@@ -233,9 +207,12 @@ class ErsiliaQuality:
             raise ValueError("fit_training needs eos_id= for a training-only fit.")
         validate_eos_id(eos_id)
         validate_version(version)
+        _, skip = split_exclude(exclude)
+        if set(TRAINING_ORDER) <= skip:
+            raise ValueError("Every training score is excluded: nothing to fit.")
         t = time.perf_counter()
         _training_modality.fit_training_modality(
-            self, training_sets, training_predictions, eos_id=eos_id, version=version
+            self, training_sets, eos_id=eos_id, version=version, skip=skip
         )
         self.is_fitted_ = True
         logger.info(f"training | fitted | {time.perf_counter() - t:.1f}s")
@@ -348,10 +325,10 @@ class ErsiliaQuality:
         cls,
         path: str | pathlib.Path,
         training_sets: str | pathlib.Path,
-        training_predictions: str | pathlib.Path | pd.DataFrame | None = None,
         *,
         eos_id: str | None = None,
         version: str | None = None,
+        exclude: Iterable[str] = (),
     ) -> ErsiliaQuality:
         """Add the training modality to an existing artifacts folder in place.
 
@@ -361,10 +338,10 @@ class ErsiliaQuality:
             Existing artifacts folder (must not already hold a training modality).
         training_sets : str or pathlib.Path
             Folder with one ``<output_column>.csv`` per column.
-        training_predictions : str, pathlib.Path or pandas.DataFrame, optional
-            The model's predictions on the training molecules.
         eos_id, version : str, optional
             Model id of the training sets; must match the artifacts' model.
+        exclude : iterable of str, optional
+            Training scores not to fit, by public name.
 
         Returns
         -------
@@ -375,9 +352,9 @@ class ErsiliaQuality:
             cls,
             path,
             training_sets,
-            training_predictions,
             eos_id=eos_id,
             version=version,
+            exclude=exclude,
         )
 
     # ------------------------------------------------------------------

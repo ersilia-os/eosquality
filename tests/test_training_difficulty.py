@@ -25,9 +25,9 @@ def test_fitted_only_on_labelled_columns(fitted):
 
 def test_scores_and_metadata(fitted, query):
     res = fitted.run(query[["key", "input"]])
-    score = res.scores["training_difficulty"]
+    score = res.scores["trn_difficulty"]
     assert ((score > 0) & (score <= 1)).all()
-    assert set(res.metadata["training_difficulty_spearman"]) == {"mw", "aromatic"}
+    assert set(res.metadata["trn_difficulty_spearman"]) == {"mw", "aromatic"}
     assert "difficulty" in res.training_details.columns
     np.testing.assert_allclose(res.training_details.difficulty, score)
 
@@ -57,9 +57,7 @@ def test_no_labels_no_difficulty(tmp_path, smiles):
     pd.DataFrame({"smiles": smiles[:200]}).to_csv(folder / "mw.csv", index=False)
     eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
     assert eq.training_difficulty is None
-    assert (
-        "training_difficulty" not in eq.run(pd.DataFrame({"input": smiles[:5]})).scores
-    )
+    assert "trn_difficulty" not in eq.run(pd.DataFrame({"input": smiles[:5]})).scores
 
 
 def test_noisy_region_ranks_harder(tmp_path, smiles):
@@ -76,7 +74,7 @@ def test_noisy_region_ranks_harder(tmp_path, smiles):
     )
     eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
     assert eq.training_difficulty.models_["mw"].spearman > 0.2
-    score = eq.run(pd.DataFrame({"input": smiles[600:]})).scores["training_difficulty"]
+    score = eq.run(pd.DataFrame({"input": smiles[600:]})).scores["trn_difficulty"]
     held_out_noisy = noisy[600:]
     assert score[held_out_noisy].mean() > score[~held_out_noisy].mean() + 0.1
 

@@ -9,6 +9,14 @@ from eosquality import ErsiliaQuality
 from eosquality.exceptions import SchemaError
 from eosquality.training import load_training
 
+# Exclude every reference score but typicality (fast reference fits).
+ONLY_TYPICALITY = [
+    "ref_extremity",
+    "ref_support",
+    "ref_consistency",
+    "ref_signal",
+]
+
 COLUMNS = ["mw", "logp", "tpsa", "aromatic", "hbd", "noisy"]
 
 
@@ -62,10 +70,10 @@ def test_loader_without_schema_takes_all_files(training_dir):
 def both(reference, library, training_dir):
     return ErsiliaQuality().fit(
         reference,
+        training_dir,
         eos_id="eos0aaa",
         vector_index=library,
-        ignore_size=True,
-        training_sets=training_dir,
+        exclude=["ref_signal"],
     )
 
 
@@ -124,21 +132,21 @@ def test_whole_model_value_is_q66_of_columns(both, query):
     raw, calibrated, _, _ = distance._per_column(list(query.input))
     res = both.run(query)
     np.testing.assert_allclose(
-        res.scores["training_distance"], np.quantile(calibrated, 0.66, axis=1)
+        res.scores["trn_distance"], np.quantile(calibrated, 0.66, axis=1)
     )
     np.testing.assert_allclose(
-        res.scores["training_distance_raw"], np.quantile(raw, 0.66, axis=1)
+        res.scores["trn_distance_raw"], np.quantile(raw, 0.66, axis=1)
     )
 
 
 def test_run_columns_and_details(both, query):
     result = both.run(query)
-    for c in ("training_distance", "training_distance_raw", "in_training"):
+    for c in ("trn_distance", "trn_distance_raw", "trn_in_training"):
         assert c in result.scores.columns
-    assert "support" in result.scores.columns  # reference modality still there
+    assert "ref_support" in result.scores.columns  # reference modality still there
     det = result.training_details
     assert len(det) == len(query) and det.key.tolist() == query.key.tolist()
-    np.testing.assert_allclose(det.distance, result.scores["training_distance"])
+    np.testing.assert_allclose(det.distance, result.scores["trn_distance"])
     known = {"mw", "aromatic", "hbd"}
     for row in det.itertuples():
         sims = [float(v) for v in row.nn_similarities.split("|")]
@@ -159,15 +167,15 @@ def test_roundtrip_with_training(both, query, tmp_path):
 
 
 def test_training_only(training_dir, query, tmp_path):
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    eq = ErsiliaQuality().fit(training_sets=training_dir, eos_id="eos0aaa")
     assert eq.modalities_ == ["training"]
     smiles_only = query[["key", "input"]]
     res = eq.run(smiles_only)
     assert list(res.scores.columns) == [
-        "training_distance",
-        "training_distance_raw",
-        "training_difficulty",
-        "in_training",
+        "trn_distance",
+        "trn_distance_raw",
+        "trn_difficulty",
+        "trn_in_training",
     ]
     eq.save(tmp_path / "art")
     assert not (tmp_path / "art/reference_mode").exists()
@@ -188,7 +196,7 @@ def _digest(folder):
 def test_add_training_in_place(reference, library, training_dir, query, tmp_path):
     art = tmp_path / "art"
     ErsiliaQuality().fit(
-        reference, eos_id="eos0aaa", vector_index=library, ignore_size=True
+        reference, eos_id="eos0aaa", vector_index=library, exclude=["ref_signal"]
     ).save(art)
     shared_before = _digest(art / "reference_mode")
     ErsiliaQuality.add_training(art, training_dir, eos_id="eos0aaa")
@@ -199,7 +207,7 @@ def test_add_training_in_place(reference, library, training_dir, query, tmp_path
         "reference",
         "training",
     ]
-    assert "training_distance" in loaded.run(query).scores.columns
+    assert "trn_distance" in loaded.run(query).scores.columns
     with pytest.raises(FileExistsError):
         ErsiliaQuality.add_training(art, training_dir)
 
@@ -210,14 +218,15 @@ def test_add_training_rejects_other_model(reference, library, training_dir, tmp_
         reference,
         eos_id="eos0aaa",
         vector_index=library,
-        ignore_size=True,
-        scores=["typicality"],
+        exclude=ONLY_TYPICALITY,
     ).save(art)
     with pytest.raises(ValueError, match="eos9zzz"):
         ErsiliaQuality.add_training(art, training_dir, eos_id="eos9zzz")
 
 
-def test_training_files_named_after_ersilia_columns(tmp_path, smiles, make_outputs):
+def test_training_files_named_after_ersilia_columns(
+    tmp_path, smiles, make_outputs, library
+):
     """Training files are matched to model outputs by Ersilia column name."""
     columns = ["cytotoxicity_hepg2", "cytotoxicity_hskmc", "cytotoxicity_imr90"]
     ref = make_outputs(smiles[:600], seed=0)[["key", "input", "mw", "logp", "tpsa"]]
@@ -231,10 +240,10 @@ def test_training_files_named_after_ersilia_columns(tmp_path, smiles, make_outpu
         )
     eq = ErsiliaQuality().fit(
         ref,
+        folder,
         eos_id="eos42ez",
-        ignore_size=True,
-        scores=["typicality"],
-        training_sets=folder,
+        vector_index=library,
+        exclude=ONLY_TYPICALITY,
     )
     assert eq.training_distance.training_.column_names == columns
     details = eq.run(ref.head(5)).training_details
@@ -248,8 +257,8 @@ def test_training_files_named_after_ersilia_columns(tmp_path, smiles, make_outpu
     with pytest.raises(SchemaError, match="cytotoxicity_hela"):
         ErsiliaQuality().fit(
             ref,
+            folder,
             eos_id="eos42ez",
-            ignore_size=True,
-            scores=["typicality"],
-            training_sets=folder,
+            vector_index=library,
+            exclude=ONLY_TYPICALITY,
         )

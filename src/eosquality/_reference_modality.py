@@ -15,11 +15,10 @@ import numpy as np
 import pandas as pd
 
 from eosquality._registry import (
-    ALL_SCORES,
-    INDEX_AWARE,
     KNN_USERS,
-    MIN_REFERENCE_SAMPLES,
+    N_NEIGHBORS,
     SCORE_ORDER,
+    score_name,
 )
 from eosquality.exceptions import SchemaError
 from eosquality.knn.fit import fit_knn
@@ -49,11 +48,8 @@ def fit_reference(
     eos_id: str,
     version: str,
     vector_index: str | pathlib.Path | None,
-    ignore_size: bool,
     scores: Iterable[str],
     max_features: int | None,
-    max_signal_train_samples: int | None,
-    signal_descriptor: str,
 ) -> None:
     """Fit the reference-modality components of ``eq`` on the reference predictions.
 
@@ -62,30 +58,23 @@ def fit_reference(
     eq : ErsiliaQuality
         The orchestrator to fill (``_shared``, the score attributes).
     reference : pandas.DataFrame
-        Predictions on the reference library.
+        Predictions on the reference library, in library order.
     eos_id, version : str
         Model identifier and dataset version.
     vector_index : str, pathlib.Path or None
-        Custom index folder, or ``None`` for the canonical library.
-    ignore_size : bool
-        Skip the minimum-size check.
+        Custom index folder, or ``None`` for the resolved canonical library.
     scores : iterable of str
-        Reference scores to fit.
+        Reference components to fit (``SCORE_ORDER`` names).
     max_features : int or None
         Feature-selection cap.
-    max_signal_train_samples : int or None
-        Signal training rows.
-    signal_descriptor : str
-        Signal descriptor backend.
     """
     scores_set = set(scores)
     requested = [n for n in SCORE_ORDER if n in scores_set]
-    uses_index = bool(scores_set & INDEX_AWARE)
     uses_knn = bool(scores_set & KNN_USERS)
-    steps = console.Steps(2 + uses_index + uses_knn + len(requested))
+    steps = console.Steps(3 + uses_knn + len(requested))
     with console.section("Reference modality") as section:
         with steps("Validate reference predictions") as st:
-            _validate_reference(reference, scores, ignore_size)
+            _validate_reference(reference)
             st.summary = f"{len(reference):,} molecules · {len(requested)} score(s)"
         logger.info(
             f"fit | eos_id={eos_id} version={version} scores=[{', '.join(requested)}]"
@@ -96,16 +85,13 @@ def fit_reference(
             steps,
             eos_id=eos_id,
             version=version,
-            vector_index=vector_index if uses_index else False,
+            vector_index=vector_index,
             max_features=max_features,
             uses_knn=uses_knn,
         )
-        k = eq.config.neighbors.k
-        fitters = _fitters(
-            reference, shared, vi, knn, k, signal_descriptor, max_signal_train_samples
-        )
+        fitters = _fitters(reference, shared, vi, knn)
         for name in requested:
-            with steps(f"Score: {name}"):
+            with steps(f"Score: {score_name(name)}"):
                 setattr(eq, name, fitters[name]())
                 anchor = getattr(getattr(eq, name), f"reference_{name}_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
@@ -118,23 +104,23 @@ def _fit_upstream(
 ):
     """Index, shared state and kNN steps; return ``(vi, shared, knn)``.
 
-    ``vector_index=False`` means no score needs the index.
+    The index is always loaded: it checks that the reference predictions are
+    for exactly the library's molecules, in order (which also fixes their
+    number).
     """
-    vi = None
-    if vector_index is not False:
-        with steps("Load the vector index") as st:
-            vi = _load_index(reference, vector_index)
-            st.summary = (
-                f"{console.plain(vi.library_name or 'custom index')} · "
-                f"{vi.n_reference:,} molecules match the reference"
-            )
+    with steps("Load the reference library") as st:
+        vi = _load_index(reference, vector_index)
+        st.summary = (
+            f"{console.plain(vi.library_name or 'custom index')} · "
+            f"{vi.n_reference:,} molecules match the reference"
+        )
     with steps("Shared state: schema, scaling, feature selection, splits") as st:
         shared = fit_shared(
             reference,
             eos_id=eos_id,
             version=version,
-            library_id=vi.library_name if vi is not None else "",
-            vector_index_path=_custom_index_path(vi) if vi is not None else "",
+            library_id=vi.library_name,
+            vector_index_path=_custom_index_path(vi),
             max_features=max_features,
         )
         st.summary = (
@@ -144,57 +130,33 @@ def _fit_upstream(
     eq._shared = shared
     knn = None
     if uses_knn:
-        k = eq.config.neighbors.k
-        with steps(f"Nearest neighbours (k={k})") as st:
-            knn = fit_knn(shared=shared, vector_index=vi, k=k)
+        with steps(f"Nearest neighbours (k={N_NEIGHBORS})") as st:
+            knn = fit_knn(shared=shared, vector_index=vi, k=N_NEIGHBORS)
             st.summary = "self-kNN taken from the index"
     return vi, shared, knn
 
 
-def _fitters(reference, shared, vi, knn, k, signal_descriptor, max_signal_samples):
+def _fitters(reference, shared, vi, knn):
     """Zero-argument fitters for each reference score."""
     return {
         "typicality": lambda: Typicality().fit(reference, shared=shared),
         "support": lambda: Support().fit(
-            reference, vector_index=vi, k=k, shared=shared, knn=knn
+            reference, vector_index=vi, k=N_NEIGHBORS, shared=shared, knn=knn
         ),
         "consistency": lambda: Consistency().fit(
-            reference, vector_index=vi, k=k, shared=shared, knn=knn
+            reference, vector_index=vi, k=N_NEIGHBORS, shared=shared, knn=knn
         ),
         "extremity": lambda: Extremity().fit(reference, shared=shared),
-        "signal": lambda: Signal().fit(
-            reference,
-            vector_index=vi,
-            shared=shared,
-            descriptor=signal_descriptor,
-            max_train_samples=max_signal_samples,
-        ),
+        "signal": lambda: Signal().fit(reference, vector_index=vi, shared=shared),
     }
 
 
-def _validate_reference(
-    reference: pd.DataFrame, scores: Iterable[str], ignore_size: bool
-) -> set[str]:
-    """Check the requested scores and the reference table; return the score set."""
-    scores_set = set(scores)
-    unknown = scores_set - set(ALL_SCORES)
-    if unknown:
-        raise ValueError(
-            f"Unknown score(s): {sorted(unknown)}. Valid choices: {ALL_SCORES}."
-        )
+def _validate_reference(reference: pd.DataFrame) -> None:
+    """Check the reference table: non-empty, SMILES input column, unique keys."""
     if reference.empty:
         raise SchemaError("Reference DataFrame is empty.")
-    if scores_set & INDEX_AWARE:
-        validate_input_column(reference)
-    if not ignore_size and len(reference) < MIN_REFERENCE_SAMPLES:
-        raise ValueError(
-            f"Reference dataset has {len(reference):,} rows. Fitting requires "
-            f"at least {MIN_REFERENCE_SAMPLES:,} rows for reliable results. "
-            "Pass ignore_size=True (CLI: --ignore-size) to bypass this check "
-            "(not recommended for production use)."
-        )
+    validate_input_column(reference)
     check_unique_keys(reference)
-    return scores_set
 
 
 def _load_index(
@@ -246,14 +208,15 @@ def run_reference(
         neighbours = _shared_neighbours(eq, query, query_repr, steps)
         metadata["n_reference"] = len(eq._shared.reference_ids)
         for name, component in components.items():
-            with steps(f"Score: {name}") as st:
+            with steps(f"Score: {score_name(name)}") as st:
                 result = _run_component(name, component, query, query_repr, neighbours)
                 st.summary = f"median {float(result.score.median()):.3f}"
-            columns[name] = result.score
-            columns[f"{name}_raw"] = result.score_raw
+            column = score_name(name)
+            columns[column] = result.score
+            columns[f"{column}_raw"] = result.score_raw
             if hasattr(result, "score_log"):
-                columns[f"{name}_log"] = result.score_log
-            metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
+                columns[f"{column}_log"] = result.score_log
+            metadata.update({f"{column}_{k}": v for k, v in result.metadata.items()})
             logger.info(
                 f"score {name!r} | mean={float(result.score.mean()):.4f} "
                 f"raw mean={float(result.score_raw.mean()):.4f}"
