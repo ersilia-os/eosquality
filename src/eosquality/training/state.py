@@ -42,7 +42,11 @@ SUBFOLDER = "training_sets"
 # 5: error models are fitted on at most MAX_FIT_MOLECULES labelled molecules
 #    per column, so the per-molecule arrays (residuals, oof_*) are NaN
 #    outside that subset and state.json carries `n_fit`.
-TRAINING_FORMAT_VERSION = 5
+# 6: the error model's inputs are four scalars (nn1_tanimoto, nn5_tanimoto,
+#    ensemble_variance, surrogate_score); the MACCS data features and the
+#    three KDE log-densities are gone, so density.joblib is no longer written
+#    and scores/_density.py was deleted.
+TRAINING_FORMAT_VERSION = 6
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

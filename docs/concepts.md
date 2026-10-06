@@ -129,21 +129,30 @@ Training difficulty asks how hard the query is to predict, judging by the traini
 
 It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own. A column with more than 10,000 labelled molecules is fitted on a seeded random 10,000 of them, which bounds fit time and artifact size; training molecules outside that subset are scored like any query. Training distance still uses every molecule.
 1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. A congeneric training set, with fewer usable Murcko scaffolds than folds or one scaffold holding over 40% of the labelled molecules, falls back to random folds; the fit warns that its out-of-fold errors are then optimistic, and the metadata records `cv`. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
-2. **Inputs.** These are UNIQUE's feature set (i), "data features + base UQ metrics + prediction":
-   - **Data features:** the 166 MACCS keys.
-   - **Base UQ metrics:**
-     - kNN distance: the mean Tanimoto distance to the 5 nearest *other* training molecules.
-     - Three kernel density estimates on the MACCS keys: Gaussian/Euclidean, Gaussian/Manhattan and exponential/Manhattan. Each bandwidth is chosen by 5-fold grid search over {0.1, 0.5, 1}.
-     - Ensemble variance: across the surrogate's trees.
-     - For binary labels, the top-1 class probability `max(p, 1 − p)`.
-   - **The prediction** `ŷ`.
+2. **Inputs.** Four scalars, all read off that same cross-validation, and all reported as output columns (`trn_nn1_tanimoto` and so on) so they can be inspected or modelled directly:
+   - `nn1_tanimoto`: Morgan Tanimoto similarity to the nearest *other* training molecule.
+   - `nn5_tanimoto`: the mean over the 5 nearest.
+   - `ensemble_variance`: variance of the surrogate's prediction across its trees.
+   - `surrogate_score`: the out-of-fold prediction `ŷ`.
+
+   For a binary label the surrogate is class-weighted (`class_weight="balanced"`), because several real endpoints have 1–9% actives and an unweighted forest predicts near zero almost everywhere. That makes `surrogate_score` a reweighted score rather than an estimate of P(y = 1) under the true prior; the error model only needs it to rank.
 3. **Error model.** A second random forest learns inputs → residual. Its out-of-fold predictions on the same folds give the calibration table, and their Spearman correlation with the true residuals is the **honesty check**: 0 means no better than random.
 
-**Why feature set (i) only.** UNIQUE also builds error models on "base UQ + prediction" and on "transformed UQ (DiffkNN) + prediction", and benchmarks them. Both UNIQUE papers found set (i) best, and so did our benchmark:
+**What the inputs used to be, and why they changed.** Earlier versions fed the error model 166 MACCS keys (later 2048 Morgan bits) plus three kernel-density estimates — UNIQUE's feature set (i), "data features + base UQ metrics + prediction". Two findings removed them.
+
+The **KDEs were not densities**. For a molecule outside the KDE's reference set — which is every query at run time — the log-density tracked the distance to the single nearest neighbour at ρ = −0.98 to −1.00, and the two Manhattan variants tracked each other at +1.000. The bandwidth grid inherited from UNIQUE, `{0.1, 0.5, 1}`, is pinned to its lower boundary for every column inspected, and at those widths every kernel but the nearest underflows against Hamming distances of tens, so the sum collapses to its maximum. Three inputs, one number, already carried by `nn1_tanimoto`.
+
+The **structural features rested on a thin margin**: 0.36 against 0.33 on six MoleculeNet endpoints, no confidence intervals, and the comparison swapped the KDE representation at the same time since both read one array.
+
+**The cost of dropping them, measured.** Structural inputs let the error model learn *which chemotypes* are unreliable. On a fixture where pure-noise labels are given to sulfur-containing molecules, the out-of-fold Spearman falls from above 0.2 to 0.115 without them: the four scalars say how far and how uncertain, never which substructure. That is the mechanism behind the original benchmark, and it is a real loss on endpoints whose noise is chemotype-specific.
+
+For the record, the old benchmark of UNIQUE's three feature sets:
 - **Setup:** six MoleculeNet endpoints (ESOL, lipophilicity, FreeSolv, BACE pIC50, BBBP, BACE class), each split by scaffold. (The score is validated on the Ersilia training sets themselves in `status.md`; these public sets are what the design was chosen on.) Each set's predictions were scored against the held-out errors of three different models (see Validation in `status.md`).
 - **Set (i) with MACCS** had the best mean Spearman: 0.36, against 0.30 for "base + prediction", 0.28 for the transformed set and 0.16 for distance alone.
 - **Choosing the set per column by out-of-fold Spearman was harmful.** It mostly picked the transformed set, whose neighbour-based inputs look predictive out-of-fold but not on new scaffolds. A training molecule's neighbours usually share its scaffold, hence its fold and its fold model's errors; a new-scaffold query's neighbours do not.
-- **MACCS beat Morgan bits** as data features: 0.36 against 0.33.
+- **MACCS beat Morgan bits** as data features: 0.36 against 0.33. That margin did not survive later scrutiny — six endpoints, no confidence intervals, and the comparison swapped the KDE representation at the same time, since both read one array. The data features are now Morgan, matching the rest of the tool.
+
+**Novartis disagree with us here.** Their own error models use **no structural features at all** — "EMs were built with the following input features: (i) Manhattan distance to the training set, (ii) ensemble variance, (iii) predicted value from the original GNN model" (Parrondo-Pizarro et al., *JCIM* 2026, 66(2), 923–935, §2.4.1). They have a 300-dimensional learned latent vector available and deliberately use it only to compute the distance. Their newer preprint ("Error Models for Uncertainty Quantification in Molecular Machine Learning", ChemRxiv, 31 Aug 2026) reports the same three-scalar set as the robust default, with richer feature sets giving "generally modest" gains. Our benchmark points the other way, so this is an open disagreement rather than a settled question.
 
 For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `trn_difficulty` is the **66th percentile** across labelled columns, as for distance.
 
@@ -161,9 +170,11 @@ A query that is itself a training molecule gets its own out-of-fold predicted er
 The surrogate, densities and error model are saved with joblib (pickle), so only load artifacts from a trusted source. The scikit-learn version is recorded, and loading with another version is refused (refit).
 
 **Differences from UNIQUE.** Some are forced by the black-box setting, the rest are choices:
+- **Classification is ours, not UNIQUE's.** UNIQUE is regression-only — "Current UNIQUE implementation supports UQ for regression tasks" (Lanini et al., *JCIM* 2024, 64(22), 8379–8386, §2). Its `problem_type` flag gates the UQ-metric and evaluation layers but is never passed to an error model, and the only targets implemented are `l1`, `l2` and signed `unsigned` on raw numeric columns. Binary endpoints here are our own extension: the surrogate becomes a classifier, `ŷ` is P(y = 1), `probability_top1` is added as an input, and the target stays `|y − ŷ|`. DEUP, which UNIQUE adapts, *does* define classification and prescribes log-loss; we tested that and it did not help (10 endpoints × 3 stand-in models: `l1` 0.563, log-loss 0.527, misclassification indicator 0.528).
 - **Errors come from a surrogate.** UNIQUE uses the real model's predictions. Ersilia models are black boxes, so we use a surrogate.
 - **Training errors are all out-of-fold.** UNIQUE trains its error model on in-sample TRAIN errors plus out-of-sample CALIBRATION errors. Here every error is out-of-fold.
 - **Training molecules are left out of their own neighbours and kernel.** UNIQUE counts a training molecule as its own nearest neighbour.
+- **A permutation baseline is reported.** `scripts/evaluate_training.py` gives the 95th percentile of |Spearman| under 1,000 permutations of the score, so a number indistinguishable from random ranking is marked as such. Parrondo-Pizarro et al. recommend exactly this (§2.4.2) and show several standard UQ metrics fail it; the UNIQUE library does not implement it.
 - **Densities are summed exactly.** They are computed in log space; scikit-learn's `score_samples` approximates densities far in the tails. For large training sets, the bandwidth grid search uses at most 2,000 molecules and the densities are built on at most 5,000.
 - **One feature set.** Only UNIQUE's set (i) is fitted. UNIQUE fits all three and picks the best on a held-out test split, with bootstrap and Wilcoxon tests; we have no such split at inference time, and picking by out-of-fold Spearman proved unreliable (see above).
 - **Output.** We report a percentile combined across columns. UNIQUE reports raw predicted errors for one endpoint.

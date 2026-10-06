@@ -264,6 +264,11 @@ def run_training(
                 scored = difficulty.run(query, features)
                 st.summary = console.median_summary(scored.score)
             columns[name] = scored.score
+            if scored.inputs is not None:
+                # The error model's own inputs, so they can be inspected or
+                # modelled directly; prefixed like every other output column.
+                for feature in scored.inputs.columns:
+                    columns[f"trn_{feature}"] = scored.inputs[feature]
             metadata.update({f"{name}_{k}": v for k, v in scored.metadata.items()})
             if details is not None:
                 details.insert(4, name, scored.score.to_numpy())

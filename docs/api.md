@@ -80,6 +80,7 @@ eq = ErsiliaQuality.load("artifacts/")
 | `ref_signal`, `ref_signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
 | `trn_distance`, `trn_distance_raw` | (0, 1], [0, 1] | one value for the whole model: the 66th percentile across output columns of the calibrated distance (percentile among the column's leave-one-out values) and of the raw distance (1 − mean Tanimoto to the 5 nearest training molecules) |
 | `trn_difficulty` | (0, 1] | one value for the whole model: the 66th percentile across labelled output columns of the error model's predicted error, as a percentile among the training molecules' out-of-fold predicted errors (higher is harder); no raw column |
+| `trn_nn1_tanimoto`, `trn_nn5_tanimoto`, `trn_ensemble_variance`, `trn_surrogate_score` | [0, 1], [0, 1], ≥ 0, label units | the error model's own four inputs, emitted so they can be inspected or modelled directly (present whenever `trn_difficulty` is). Averaged over the output columns, so exact for a single-column model |
 | `trn_in_training` | bool | the query is itself a training molecule of some column |
 
 The `ref_` columns come from the reference modality and the `trn_` columns from the training modality. Scores that were not fit are left out; `trn_in_training` is present whenever `trn_distance` is. A row with no usable output feature has NaN typicality, extremity and consistency.

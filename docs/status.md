@@ -205,7 +205,10 @@ Read this critically:
   with a continuous one.
 - **The continuous numbers are the conservative read** (0.25–0.29 mean), and
   they sit in the range Novartis reports for error models on public ADME data
-  (0.16–0.46, Parrondo-Pizarro et al. 2026).
+  (0.16–0.46 on public sets, 0.06–0.39 on their in-house ones: Parrondo-Pizarro
+  et al., *JCIM* 2026, 66(2), 923–935, §3.2.3). Their error models also beat
+  every standard UQ metric they tested, so this is the band to judge
+  `trn_difficulty` against, not 1.0.
 - **Three endpoints fail.** On `solubility_aqsoldb` both scores are ~0: a
   7,929-molecule set covering very diverse chemistry, where held-out error is
   driven by measurement noise more than by locality.
@@ -247,7 +250,7 @@ Results on six MoleculeNet endpoints follow (Spearman of score vs held-out |erro
 What the table shows:
 - **Difficulty beats distance** in 17 of 18 cases, including against the two black boxes that differ from its surrogate, so it is not only learning its own random forest.
 - **Binary endpoints gain most.** For them the error is dominated by classifier confidence, which the error model sees through the surrogate's probability and tree variance.
-- **Continuous endpoints are harder.** The values (0.3–0.4) are in the range Novartis reports for error models on public ADME data (Spearman 0.16–0.46, Parrondo-Pizarro et al. 2026).
+- **Continuous endpoints are harder.** The values (0.3–0.4) are in the range Novartis reports for error models on public ADME data (Spearman 0.16–0.46, Parrondo-Pizarro et al., *JCIM* 2026, 66(2), 923–935).
 - **Small sets are noise.** FreeSolv (432 training molecules, 210 test) is noise for everything, and XGBoost on physchem descriptors is hardest to anticipate from fingerprints.
 
 The evaluation also reports UNIQUE's ranking metrics and Spearman on the most feature-, label- and discontinuity-shifted test molecules.

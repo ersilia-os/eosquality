@@ -1,18 +1,18 @@
-"""Is `trn_difficulty`'s advantage on binary endpoints just classifier confidence?
+"""Is `trn_difficulty` just the surrogate's confidence?
 
-For a binary label the absolute error ``|y − p|`` is nearly a function of the
-surrogate's confidence, and the error model sees that confidence three ways:
-``probability_top1``, the ensemble variance, and the prediction itself (for a
-binary label the prediction *is* P(y = 1)). If the high binary scores came
-from rediscovering that identity, removing all three should collapse them.
+The error model sees four scalars: ``nn1_tanimoto``, ``nn5_tanimoto``,
+``ensemble_variance`` and ``surrogate_score``. The last two are views of how
+confident the surrogate is, and for a binary label the absolute error
+``|y - p|`` is largely determined by ``p`` itself. So the score could be
+reporting "the surrogate is unsure" rather than "this molecule sits in
+sparse chemistry".
 
-This script measures it: it evaluates the training scores as usual
+This script measures that: it evaluates the training scores as usual
 (`evaluate_training.py`, Protocol B), then re-evaluates with an error model
-that sees only structure — MACCS keys, the kNN distance and the three KDE
-log-densities — and prints the difference. The result is quoted in
-``docs/status.md``.
+that sees only the two neighbour similarities, and prints the difference.
+The result is quoted in ``docs/status.md``.
 
-    python scripts/ablate_confidence_inputs.py [--endpoints eos7m30:herg,…]
+    python scripts/ablate_confidence_inputs.py [--endpoints eos7m30:herg,...]
         [--max-n 6000]
 """
 
@@ -38,28 +38,26 @@ DEFAULT_ENDPOINTS = ["eos7m30:herg", "eos7m30:bbb_martins", "eos4e40:inhibition_
 BLACK_BOXES = ("xgb_physchem", "knn_morgan")
 
 
-def structure_only_inputs(
-    *, dist, prediction, variance, log_density, maccs, binary
-) -> np.ndarray:
-    """Feature set (i) with every view of the surrogate's confidence removed."""
-    return np.hstack([maccs, dist.mean(axis=1)[:, None], log_density]).astype(
+def distance_only_inputs(*, dist, prediction, variance, binary=False) -> np.ndarray:
+    """The two neighbour similarities, with both confidence views removed."""
+    return np.column_stack([1.0 - dist[:, 0], 1.0 - dist.mean(axis=1)]).astype(
         np.float64
     )
 
 
-def structure_only_names(binary: bool) -> list[str]:
-    """Input names matching :func:`structure_only_inputs`.
+def distance_only_names(binary: bool = False) -> list[str]:
+    """Input names matching :func:`distance_only_inputs`.
 
     Parameters
     ----------
-    binary : bool
+    binary : bool, optional
         Unused; kept for the signature the error model expects.
 
     Returns
     -------
     list of str
     """
-    return [*em.MACCS_NAMES, "knn_distance", *em.KDE_NAMES]
+    return ["nn1_tanimoto", "nn5_tanimoto"]
 
 
 def mean_difficulty_spearman(eos: str, column: str, max_n: int) -> float:
@@ -107,15 +105,15 @@ def main() -> None:
     baseline = {}
     for eos, column in endpoints:
         baseline[column] = mean_difficulty_spearman(eos, column, args.max_n)
-        print(f"feature set (i)   {column:24s} {baseline[column]:.3f}", flush=True)
+        print(f"all four      {column:24s} {baseline[column]:.3f}", flush=True)
 
-    em._inputs, em.feature_names = structure_only_inputs, structure_only_names
+    em._inputs, em.feature_names = distance_only_inputs, distance_only_names
     ablated = {}
     for eos, column in endpoints:
         ablated[column] = mean_difficulty_spearman(eos, column, args.max_n)
-        print(f"structure only    {column:24s} {ablated[column]:.3f}", flush=True)
+        print(f"distances only{column:24s} {ablated[column]:.3f}", flush=True)
 
-    print("\nendpoint, feature set (i), structure only, cost of the ablation")
+    print("\nendpoint, all four, distances only, cost of the ablation")
     for column, value in baseline.items():
         print(
             f"{column}, {value:.3f}, {ablated[column]:.3f}, {value - ablated[column]:+.3f}"

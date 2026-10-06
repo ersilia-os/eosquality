@@ -4,7 +4,11 @@ import pytest
 
 from eosquality import ErsiliaQuality
 from eosquality.exceptions import SchemaError
+from eosquality.scores._error_model import feature_names
 from eosquality.training import load_training
+
+# The error model's four inputs, emitted alongside the scores.
+ERROR_MODEL_INPUTS = feature_names()
 
 # Exclude every reference score but typicality (fast reference fits).
 ONLY_TYPICALITY = [
@@ -195,6 +199,7 @@ def test_training_only(training_dir, query, tmp_path):
         "trn_distance",
         "trn_distance_raw",
         "trn_difficulty",
+        *(f"trn_{f}" for f in ERROR_MODEL_INPUTS),
         "trn_in_training",
     ]
     eq.save(tmp_path / "art")
@@ -322,7 +327,10 @@ def test_excluding_one_training_score(training_dir, query):
         training_sets=training_dir, eos_id="eos0aaa", exclude=["trn_distance"]
     )
     res = no_distance.run(smiles_only)
-    assert list(res.scores.columns) == ["trn_difficulty"]
+    assert list(res.scores.columns) == [
+        "trn_difficulty",
+        *(f"trn_{f}" for f in ERROR_MODEL_INPUTS),
+    ]
     assert res.training_details is None  # the details come from the distance
 
     no_difficulty = ErsiliaQuality().fit(

@@ -28,7 +28,7 @@ eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                 
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_signal     # skip a score
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `trn_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `trn_difficulty`, a learned error model; the fit log reports, per column, how well it ranks held-out errors.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `trn_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `trn_difficulty`, a learned error model, together with its four inputs as columns of their own (`trn_nn1_tanimoto`, `trn_nn5_tanimoto`, `trn_ensemble_variance`, `trn_surrogate_score`); the fit log reports, per column, how well it ranks held-out errors.
 
 **Common behaviour:**
 - **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
