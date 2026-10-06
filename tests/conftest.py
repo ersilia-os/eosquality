@@ -47,6 +47,11 @@ def model_outputs(smiles: list[str], seed: int) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="session")
+def make_outputs():
+    return model_outputs
+
+
+@pytest.fixture(scope="session")
 def smiles() -> list[str]:
     return list(pd.read_csv(DATA / "smiles_700.csv")["smiles"])
 
@@ -71,3 +76,32 @@ def reference(smiles) -> pd.DataFrame:
 def query(smiles) -> pd.DataFrame:
     """60 novel molecules + 40 molecules that are in the reference."""
     return model_outputs(smiles[N_REF : N_REF + 60] + smiles[:40], seed=1)
+
+
+@pytest.fixture(scope="session")
+def training_dir(tmp_path_factory, smiles) -> pathlib.Path:
+    """Training sets for three output columns of the fixture model.
+
+    ``mw`` (continuous y), ``aromatic`` (binary y) and ``hbd`` (no y), drawn
+    from the 700-molecule fixture so some overlap the reference and queries.
+    ``mw`` also carries a salt form and an exact duplicate of a molecule to
+    exercise standardisation and label merging.
+    """
+    folder = tmp_path_factory.mktemp("training") / "training_eos0aaa_v1"
+    folder.mkdir()
+    outputs = model_outputs(smiles, seed=2)
+    mw = outputs.iloc[100:400][["input", "mw"]].rename(
+        columns={"input": "smiles", "mw": "y"}
+    )
+    extra = pd.DataFrame(
+        {"smiles": [mw.smiles.iloc[0] + ".Cl", mw.smiles.iloc[1]], "y": [1.0, 2.0]}
+    )
+    pd.concat([mw, extra]).to_csv(folder / "mw.csv", index=False)
+    arom = outputs.iloc[300:650][["input", "aromatic"]].rename(
+        columns={"input": "smiles", "aromatic": "y"}
+    )
+    arom.to_csv(folder / "aromatic.csv", index=False)
+    outputs.iloc[0:250][["input"]].rename(columns={"input": "smiles"}).to_csv(
+        folder / "hbd.csv", index=False
+    )
+    return folder

@@ -17,6 +17,16 @@ def load_knn(root: str | pathlib.Path) -> KnnFitState:
 
     The fit-only fields are returned as ``None``. The vector index is
     resolved on demand at run time from ``shared.metadata``.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        Folder that contains ``knn/``.
+
+    Returns
+    -------
+    KnnFitState
+        With ``k`` only; the fit-time arrays are not persisted.
     """
     folder = pathlib.Path(root) / SUBFOLDER
     if not folder.is_dir():

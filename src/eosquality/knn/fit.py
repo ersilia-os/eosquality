@@ -39,6 +39,11 @@ def fit_knn(
         persisted on the returned state — only ``k`` is.
     k:
         Number of neighbors.
+
+    Returns
+    -------
+    KnnFitState
+        ``k`` plus the fit-time neighbour indices and mean FP distances.
     """
     t0 = time.perf_counter()
     logger.info(f"fit_knn | loading FP self-kNN | k={k}")

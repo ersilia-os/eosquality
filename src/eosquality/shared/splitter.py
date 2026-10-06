@@ -52,6 +52,16 @@ class Splitter:
 
         ``n_train + n_val + n_test == n`` is guaranteed; any rounding
         residue is absorbed by the test slice.
+
+        Parameters
+        ----------
+        n : int
+            Number of rows.
+
+        Returns
+        -------
+        Split
+            Disjoint train / val / test index arrays.
         """
         if n <= 0:
             raise ValueError(f"Splitter requires n > 0; got n={n}.")

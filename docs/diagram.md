@@ -22,6 +22,16 @@ flowchart LR
     LIB -- "physchem / MACCS" --> SIG
 ```
 
+## Fit — training modality
+
+```mermaid
+flowchart LR
+    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
+    LD --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
+    IDX --> TD["<b>Training distance</b><br/>mean distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (raw + calibrated)"]
+    IDX --> TDF["<b>Training difficulty</b> (columns with y)<br/>surrogate RF, scaffold CV → OOF errors<br/>error model on MACCS + kNN, KDE, variance + ŷ<br/>(UNIQUE feature set i) → calibrated rank,<br/>Q66 → one value"]
+```
+
 ## Run
 
 ```mermaid
@@ -32,26 +42,43 @@ flowchart LR
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
     Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
-    TYP & EXT & SUP & CON & SIG --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
+    Q -- SMILES --> TDR["Training distance<br/>per column → 66th percentile"]
+    Q -- SMILES --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
+    TDR & TDF --> DET["training_details.csv<br/>one row per query · 5 nearest training molecules"]
+    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
 ```
 
 ## Save layout
 
+One subfolder per modality; either or both may be present.
+
 ```
-<root>/
-  manifest.json                         # informational summary (format_version, scores, k, library)
-  shared/                               # always
-    schema.json  scaler.json  binary_class_freq.json
-    metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
-    reference_ids.json  splits.json  selected_columns.json
-    reference_repr.npy                  # (n_ref, n_selected) scaled reference
-  knn/state.json                        # {"k": …}; iff support or consistency
-  typicality/   state.json  reference_self_aggregates.npy  metadata.json
-  extremity/    state.json  reference_self_aggregates.npy  metadata.json
-  support/      state.json  reference_nearest_similarities.npy  metadata.json
-  consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
-  signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
-                physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
+<artifacts>/
+  manifest.json                           # informational: eos_id, version, modalities, scores
+  reference_mode/                         # iff fitted with --reference
+    shared/
+      schema.json  scaler.json  binary_class_freq.json
+      metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
+      reference_ids.json  splits.json  selected_columns.json
+      reference_repr.npy                  # (n_ref, n_selected) scaled reference
+    knn/state.json                        # {"k": …}; iff support or consistency
+    typicality/   state.json  reference_self_aggregates.npy  metadata.json
+    extremity/    state.json  reference_self_aggregates.npy  metadata.json
+    support/      state.json  reference_nearest_similarities.npy  metadata.json
+    consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
+    signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
+                  physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
+  training_mode/                          # iff fitted with --training
+    training_sets/
+      metadata.json                       # training_format_version, eos_id, version, columns
+      columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
+      indices/c000/ …                     # one VectorIndex per output column
+    training_distance/  state.json  loo_mean_distances.npz  metadata.json
+    training_difficulty/  state.json  metadata.json  # iff some column has ≥ 50 labels
+      c000/ …           surrogate.joblib  density.joblib  error_model.joblib
+                        arrays.npz  state.json      # one folder per labelled column
 ```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.
+
+A standalone score class (e.g. `Support().fit(...).save(folder)`) writes its own subfolder plus the `shared/` (and `knn/`) folders it needs directly into `folder`. That is the same structure as one `reference_mode/`.

@@ -14,15 +14,16 @@ conda activate eosquality
 pip install -e ".[dev]"        # add ",viz" for the figure scripts (stylia)
 ```
 
-The canonical library lives under `data/indices/ersilia_reference_library_v0/` (gitignored, via eosvc) or `~/.eosquality/` (`eosquality download`). Library resolution looks in `./data/indices/` relative to the **current working directory**. When running from elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH`.
+The canonical library lives under `data/indices/ersilia_reference_library_v0/` (gitignored, via eosvc) or `~/.eosquality/` (`eosquality setup`). Library resolution looks in `./data/indices/` relative to the **current working directory**. When running from elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH`.
 
 ## Common Commands
 
 ```bash
-ruff check src tests scripts
-black src tests scripts
-pytest -q                       # ~12 s; builds a tiny custom library from tests/fixtures/
-bash scripts/run_all_scores.sh  # refit + score the 5 example models into output/ (hours)
+ruff check src tests scripts     # lint (org config + bugbear/pyupgrade)
+ruff format src tests scripts    # formatting: ruff format only, no black
+pre-commit install               # runs ruff-check and ruff-format on commit
+pytest -q                        # ~20 s; builds a tiny custom library from tests/fixtures/
+bash scripts/run_all_scores.sh   # refit + score the 5 example models into output/ (~30 min)
 conda run -n stylia python scripts/figures/<figure>.py   # writes docs/figures/
 ```
 
@@ -32,6 +33,13 @@ The package is installed in editable mode. A long `run_all_scores.sh` run import
 
 The package is organized as **per-score components** (one class per score) on top of two **shared upstream layers**, plus a thin orchestrator and a few flat infrastructure modules.
 
+### Two modalities
+
+- **reference**: the model's predictions on the reference library. It covers the five scores below and the `shared/` + `knn/` tiers, saved under `<artifacts>/reference_mode/`.
+- **training**: the model's per-output-column training sets. It covers the `training/` package (`training_sets/` on disk) and the `training_*` scores, saved under `<artifacts>/training_mode/`.
+
+Each modality is fitted only when its data is given (`fit --reference`, `fit --training-sets`, or both). Training can also be added to existing artifacts (`fit --training-sets DIR --artifacts PATH` / `ErsiliaQuality.add_training`; the Python argument is `training_sets=`). `run` computes every fitted score.
+
 ### Per-score components — `scores/`
 
 Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bookkeeping, `metadata.json` and save/load:
@@ -39,7 +47,15 @@ Each score subclasses `ScoreComponent` (`scores/_base.py`), which handles fit bo
 - `save_component(root)` writes only the component's own subfolder.
 - `load(root, shared=None, knn=None)` reads `shared/` and `knn/` from disk unless they are passed in.
 
-Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
+Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Class flags select the upstream tiers: `USES_SHARED` (default True), `USES_KNN`, `USES_TRAINING`.
+
+- **`scores/training_distance.py`** — `TrainingDistance` (training modality, `USES_SHARED=False`). It gives **one value per molecule for the whole model**, built per column without pooling the training sets. Per column (`_per_column`, internal), the raw distance is 1 − mean Tanimoto (Morgan) to the `K_NEIGHBORS = 5` nearest training molecules. A query that is a training molecule drops itself. The calibrated distance is `_cdf_score` (higher = farther) against the column's leave-one-out raw values, from the index's identity-stripped self-kNN, saved as `loo_mean_distances.npz`. There is no cutoff. The scores `training_distance` / `training_distance_raw` are `nanquantile(per-column, 0.66)`, plus `in_training` (any column). The details table has one row per query: the whole-model distances and the 5 nearest training molecules over all columns, deduplicated, with `nn_columns`.
+- **`scores/training_difficulty.py`** — `TrainingDifficulty` (training modality, needs labels). One value per molecule for the whole model: `nanquantile(per-column, 0.66)` of a calibrated predicted error. It is fitted only for columns with ≥ `MIN_LABELLED = 50` labels; if none qualify, the orchestrator leaves it as `None`. There is no `_raw` column, by design: per-column errors are in different units. The per-column learner is in **`scores/_error_model.py`** (`EndpointErrorModel`, `fit_endpoint`):
+  - **Surrogate.** An sklearn RF on Morgan bits with 5 scaffold folds (`training/folds.py`) gives OOF residuals.
+  - **Inputs: UNIQUE's feature set (i)** (`feature_names`): 166 MACCS keys (data features); base UQ: kNN distance, 3 KDE log-densities (**`scores/_density.py`**: UNIQUE's 3 kernel/metric variants on MACCS with a grid-searched bandwidth; exact log-sum-exp; leave-one-out for reference molecules; at most 2k molecules for the grid and 5k for the reference), ensemble variance, top-1 probability for binary labels; and the prediction ŷ. Sets (ii)/(iii) and DiffkNN were dropped after the benchmark in `docs/concepts.md`: selecting among sets by OOF Spearman picked the leaky transformed set.
+  - **Error model.** An sklearn RF on |residual|. Its OOF predictions are the CDF table, and `spearman` is the honesty check. Folds come from `training/folds.cv_folds` (scaffold, or random when scaffolds cannot split; `cv`). A query that is a training molecule reuses its OOF inputs and OOF predicted error.
+  - **Persistence.** Saved with joblib under `training_difficulty/c000/`, with the sklearn version checked on load.
+- **`scores/_training_helpers.py`** — `_nearest_training` (top-k training neighbours with the self match dropped) and `_columns_summary` (Q66 across columns), shared by both training scores.
 
 - **`scores/typicality.py`** — `Typicality`. Density-based score: per-column int8 count LUTs, then the Q66 aggregate, then the CDF. Needs only `SharedFitState`.
 - **`scores/extremity.py`** — `Extremity`. Position-based score: `min(|scaled|, 1)`, then Q66, then the CDF. Needs only `SharedFitState`.
@@ -63,9 +79,15 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
 
 ### Shared upstream layers
 
+- **`training/`** — the training-modality tier.
+  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None, predictions=None)`. One `<column>.csv` per output column (`smiles`, optional `y`, optional `key`). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicates are merged: binary by majority, otherwise by median. Columns with fewer than 20 molecules are skipped.
+  - `folds.py`: `scaffold_folds` (balanced Murcko-grouped CV folds, acyclic molecules as singletons) and `morgan_bits`.
+  - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex`, `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
+  - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
+
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
   - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata, reference_ids, splits, selected_columns, and `ref_repr` (the scaled, feature-selected reference matrix, read by Consistency at run time).
-  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 4). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `vector_index_path` (custom indices only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 5). `load_shared` rejects other format versions with `ArtifactVersionError`.
   - **`splitter.py`.** Fixed 80/10/10 split with seed 0.
   - **`feature_selection.py`.** Correlation-cluster medoids, capped at `max_features`.
 - **`knn/`** — `KnnFitState` holds `k`, plus the fit-time-only `mean_fp_distances` and `reference_knn_indices`. `fit_knn` slices the precomputed self-kNN from the index. Only `{"k": …}` is persisted.
@@ -73,10 +95,9 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
 ### Orchestrator + flat infrastructure modules
 
 - **`quality.py`** — `ErsiliaQuality`.
-  - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `_SCORE_ORDER`.
+  - **`fit(..., scores=[...], vector_index=None)`.** Checks the size, checks unique keys, loads the index once and checks that its SMILES match the reference, then fits shared + knn once, then each requested component in `SCORE_ORDER`.
   - **`run`.** Validates and scales the query once, runs the FP kNN once, and returns `RunResult(scores, metadata)`. Score columns come in `name, name_raw` pairs, plus `support_log`; metadata keys are prefixed `<component>_`.
-  - **`save`.** Writes `shared/` and `knn/` once, then `save_component` for each score, plus `manifest.json`.
-  - **`load`.** Reads `shared/` and `knn/` once and passes them into each component's `load`.
+  - **`save` / `load` / `add_training`** live in `_artifacts.py`. `save` writes `reference_mode/` (`shared/` and `knn/` once, then `save_component` for each score) and `training_mode/` (`training_sets/` plus training components), each only if fitted, plus `manifest.json`. `load` reads whichever subfolders exist and rejects the old flat layout. The fit and run of the reference modality live in `_reference_modality.py`, and those of the training modality in `_training_modality.py`; score names, orders and defaults are in `_registry.py` (constants only, so the CLI can read them cheaply), and the name → class map `SCORE_CLASSES` is in `_artifacts.py`.
 - **`vectorindex.py`** — `VectorIndex`, the Morgan/FPSim2 kNN index.
   - **API.** `build`, `load` (memory-mapped kNN arrays), `query`, `self_knn_indices` / `self_knn_distances`, and the properties `library_name`, `index_dir`, `smiles`, `n_reference`.
   - **Resume.** `build` resumes only when the SMILES digest and parameters match.
@@ -86,27 +107,41 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`.
 - **`schema/`** — `Schema` / `ColumnSpec` and column inference / validation.
 - **`library/`** — library identity and the descriptor builders.
   - `identity.py` resolves the canonical library locally: env override → `./data/indices/` → `~/.eosquality/`. It never touches the network.
-  - `download.py` is used only by `eosquality download`.
+  - `download.py` is used only by `eosquality setup`.
   - `physchem.py` / `maccs.py` contain the descriptor functions shared by build and query.
-- **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`, which sets the INFO log level. Subcommands: `build`, `download`, `fit` (with `--vector-index`), `run`.
+- **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`. Subcommands: `setup`, `fit`, `run` and (maintainers) `build`. `_common.run_command(fn, verbose=, command=)` turns the curated console on in the command's colour and prints failures as `✖ error:` lines. Each command opens with a `summary_panel` header and ends with a summary panel. `fit` stages its log into `<artifacts>/eosquality.log` (`staged_log`); `run` writes `<output>.log`.
+  - `fit` takes `--reference CSV`, `--training-sets DIR`, `--training-predictions CSV`, `-o NEW` or `--artifacts EXISTING`, and `--vector-index`.
+  - `run --training-details PATH` (default `<output>.training_details.csv`).
 - **`utils/`**
-  - `logging.py`: a loguru logger bound with `extra["eosquality"]` and a filtered sink. Quiet (WARNING) as a library, INFO in the CLI, DEBUG with `set_verbosity(True)`.
-  - `progress.py`: rich progress bars.
+  - Output is in two layers, as in ZairaChem and Olinda; both write through one shared stderr Rich console.
+    - `console.py`: the curated, user-facing layer. It provides `section()`, `Steps(n)` (`▪ Step i/N` + a timed `✓` line, `.skip()`), `detail`, `table`, `summary_panel`, `progress` (only on a TTY), `STEP_COLORS` per command, and the path/size/time formatting. It is silent until `console.enable()` is called, by the CLI or by verbose library use.
+    - `logging.py`: the diagnostic layer, a loguru logger bound with `extra["eosquality"]` on a `RichHandler`. It prints WARNING by default and DEBUG with `set_verbosity(True)`, which also enables the console. `log_file(path)` adds a DEBUG file sink for one command (`module:function:line`, `diagnose=False`, no rotation or retention) and records any exception escaping the block, with its traceback. The `eosframes` stdlib logger is routed into it (`ROUTED_LOGGERS`).
+  - `progress.py`: an alias of `console.progress`.
   - `parallel.py`: `map_rows`, serial below 5,000 items, otherwise a process pool.
   - `identifiers.py`: EOS id / version parsing.
 - **`config.py`**, **`exceptions.py`** — `ErsiliaQualityConfig(neighbors=NeighborConfig(k))`. Exceptions: `SchemaError`, `NotFittedError`, `IncompatibleArtifactsError`, and its subclass `ArtifactVersionError`.
 
 ### Save layout
 
-See `docs/diagram.md`. Each component's `metadata.json` carries only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`. Dataset information lives once, in `shared/metadata.json`. `manifest.json` is informational, and the loader does not read it.
+See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training_mode/`. Each component's `metadata.json` carries only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`. Dataset information lives once, in `reference_mode/shared/metadata.json`. `manifest.json` is informational, and the loader does not read it.
 
 ### When adding new functionality
 
 1. Decide whether it's a **score component**, **shared upstream state**, or **infrastructure**.
-2. For a new score, subclass `ScoreComponent` under `scores/<name>.py`, modelled on `Typicality` (no index) or `Support` (index-aware). Then add it to `_SCORE_ORDER` / `_SCORE_CLASSES` in `quality.py`, to the dispatch in `ErsiliaQuality.run`, and to `DEFAULT_SCORES` / `ALL_SCORES`.
+2. For a new score, subclass `ScoreComponent` under `scores/<name>.py`, modelled on `Typicality` (no index) or `Support` (index-aware). Then add it to `SCORE_ORDER` (and `DEFAULT_SCORES` / `ALL_SCORES`) in `_registry.py`, to `SCORE_CLASSES` in `_artifacts.py`, to the fitters in `_reference_modality._fitters` and to the run dispatch in `_reference_modality._run_component`.
 3. For new shared upstream state, extend `SharedFitState` (always on, cheap) or `KnnFitState` (kNN tier).
 4. Any change to what saved files mean (formula, layout, calibration) must bump `ARTIFACT_FORMAT_VERSION` in `shared/metadata.py`.
 5. Add tests under `tests/`; the `library`, `reference` and `query` fixtures in `conftest.py` build a tiny custom library.
+
+## Code Conventions
+
+- **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used.
+- **Dependencies** are pinned to exact versions in `pyproject.toml`; bump them deliberately.
+- **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `✖ error:` lines and exit status 1. The library fetch command is `setup`, matching the other Ersilia tools.
+- **Output:** user-facing status goes through `utils/console.py` (steps, panels), never through `logger.info`. `logger` is for diagnostics, which go to the log file and appear on screen only with `-v`. Library code narrates fit/run with `console.section` + `console.Steps`, which are no-ops while the console is off.
+- **Size limits:** modules stay under 600 lines and functions under 80; split them before they grow past that.
+- **Start-up imports:** `import eosquality` and the CLI must not import pandas, scikit-learn, SciPy, RDKit, XGBoost, FPSim2 or eosframes, which take about 2 s. The package `__init__` resolves its classes lazily (PEP 562 `__getattr__`), `_registry.py` holds constants only, and CLI modules import heavy modules inside command bodies, using `TYPE_CHECKING` for annotations. `tests/test_startup.py` enforces this.
+- **Docstrings:** every public module, class, function and method in `src/` and `scripts/` has a NumPy-style docstring, with `Parameters` and `Returns` sections where they apply. Test functions in `tests/` are exempt from the docstring rules; pytest test names and fixtures are self-describing.
 
 ## Documentation Maintenance
 

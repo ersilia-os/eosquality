@@ -22,4 +22,10 @@ class Schema:
 
     @property
     def column_names(self) -> list[str]:
+        """Names of the schema's columns, in order.
+
+        Returns
+        -------
+        list of str
+        """
         return [c.name for c in self.columns]

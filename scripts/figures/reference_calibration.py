@@ -21,7 +21,22 @@ stylia.set_style("ersilia")
 
 
 def plot_ecdf_deviation(ax, values_by_model, colors):
-    """Draw ECDF(x) − x per model; return the worst KS statistic."""
+    """Draw ECDF(x) − x per model; return the worst KS statistic.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw into.
+    values_by_model : dict of str to numpy.ndarray
+        Calibrated scores per model.
+    colors : list
+        One colour per model.
+
+    Returns
+    -------
+    float
+        Worst KS statistic across models.
+    """
     n_min = min(int(np.isfinite(v).sum()) for v in values_by_model.values())
     band = 1.358 / np.sqrt(max(n_min, 1))  # 95% two-sided KS critical value
     ax.axhspan(-band, band, color=stylia.ErsiliaColors().gray, alpha=0.2)
@@ -44,6 +59,7 @@ def plot_ecdf_deviation(ax, values_by_model, colors):
 
 
 def main():
+    """Command-line entry point (see the module docstring for usage)."""
     args = parse_args(__doc__)
     df = load_scores(args.scores_dir)
     df = df[df["query_set"] == "molecules"]

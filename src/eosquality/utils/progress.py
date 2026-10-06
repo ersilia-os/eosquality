@@ -1,32 +1,27 @@
-"""Shared ``rich`` progress bar for long per-molecule loops (stderr)."""
+"""Progress bars for long per-molecule loops, on the shared curated console.
+
+Kept as a thin alias of :func:`eosquality.utils.console.progress` so every
+bar is themed with the active command colour and stays silent while the
+curated output is off (library use).
+"""
 
 from __future__ import annotations
 
-from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
+from rich.progress import Progress
 
-_console = Console(stderr=True, highlight=False)
+from eosquality.utils import console
 
 
 def make_progress(label: str) -> Progress:
-    """Return a not-yet-started progress bar titled ``label``."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn(f"[bold cyan]{label}[/bold cyan]"),
-        BarColumn(bar_width=None),
-        MofNCompleteColumn(),
-        "•",
-        TimeElapsedColumn(),
-        "•",
-        TimeRemainingColumn(),
-        console=_console,
-        transient=False,
-    )
+    """Return a not-yet-started progress bar titled ``label``.
+
+    Parameters
+    ----------
+    label : str
+        Title shown next to the bar.
+
+    Returns
+    -------
+    rich.progress.Progress
+    """
+    return console.progress(label)

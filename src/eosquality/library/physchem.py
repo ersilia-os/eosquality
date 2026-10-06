@@ -29,7 +29,7 @@ from collections.abc import Iterable
 
 import numpy as np
 import sklearn
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit import __version__ as _RDKIT_VERSION
 from rdkit.Chem import Descriptors
 from sklearn.preprocessing import StandardScaler
@@ -72,7 +72,8 @@ def _compute_one(smi: str) -> np.ndarray:
     """
     row = np.full(N_DESCRIPTORS, np.nan, dtype=np.float32)
     try:
-        mol = Chem.MolFromSmiles(smi)
+        with rdBase.BlockLogs():
+            mol = Chem.MolFromSmiles(smi)
     except Exception:
         return row
     if mol is None:
@@ -103,6 +104,20 @@ def compute_physchem_raw(
 
     Rows are in input order. Raw values may include NaN; imputation happens
     in :func:`fit_scaler` and :func:`apply_scaler`, not here.
+
+    Parameters
+    ----------
+    smiles : iterable of str
+        Input SMILES.
+    n_jobs : int, optional
+        Worker processes for large inputs (default: every CPU).
+    show_progress : bool, optional
+        Show a progress bar; ``None`` shows it only for parallel runs.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, N_DESCRIPTORS)`` float32 raw descriptors; unparsable SMILES give a NaN row.
     """
     smiles_list = list(smiles)
     out = np.empty((len(smiles_list), N_DESCRIPTORS), dtype=np.float32)
@@ -129,6 +144,16 @@ def fit_scaler(raw: np.ndarray) -> dict:
     per-column median (computed over finite values). StandardScaler is
     then fit on the imputed matrix. Returns a JSON-serialisable dict
     with every parameter needed by :func:`apply_scaler`.
+
+    Parameters
+    ----------
+    raw : numpy.ndarray
+        ``(n, N_DESCRIPTORS)`` raw descriptor matrix.
+
+    Returns
+    -------
+    dict
+        ``descriptor_names``, ``median``, ``mean``, ``scale`` and versions.
     """
     if raw.ndim != 2 or raw.shape[1] != N_DESCRIPTORS:
         raise ValueError(f"fit_scaler expected (n, {N_DESCRIPTORS}); got {raw.shape}.")
@@ -167,6 +192,11 @@ def check_descriptor_names(scaler_params: dict) -> None:
     ``Descriptors._descList``; if RDKit added, removed or reordered a
     descriptor since the library was built, columns would silently
     misalign with the scaler and the trained model.
+
+    Parameters
+    ----------
+    scaler_params : dict
+        Parameters from :func:`fit_scaler` (``descriptor_names`` is checked).
     """
     fitted = list(scaler_params.get("descriptor_names", []))
     if fitted != DESCRIPTOR_NAMES:
@@ -187,6 +217,18 @@ def apply_scaler(raw: np.ndarray, scaler_params: dict) -> np.ndarray:
     whose ``scale`` is 0 (constant in the reference) are divided by 1
     to avoid division-by-zero, matching scikit-learn's internal
     ``_handle_zeros_in_scale`` convention. Returns float32.
+
+    Parameters
+    ----------
+    raw : numpy.ndarray
+        ``(n, N_DESCRIPTORS)`` raw descriptors.
+    scaler_params : dict
+        Parameters from :func:`fit_scaler`.
+
+    Returns
+    -------
+    numpy.ndarray
+        Imputed, standard-scaled float32 matrix.
     """
     median = np.asarray(scaler_params["median"], dtype=np.float64)
     mean = np.asarray(scaler_params["mean"], dtype=np.float64)

@@ -18,6 +18,18 @@ def save_knn(state: KnnFitState, root: str | pathlib.Path) -> pathlib.Path:
     Only ``k`` is persisted; the fit-only fields
     (``mean_fp_distances``, ``reference_knn_indices``) are dropped —
     each score persists its own reduction.
+
+    Parameters
+    ----------
+    state : KnnFitState
+        The kNN state.
+    root : str or pathlib.Path
+        Folder to write ``knn/`` into.
+
+    Returns
+    -------
+    pathlib.Path
+        The ``knn`` folder.
     """
     folder = pathlib.Path(root) / SUBFOLDER
     folder.mkdir(parents=True, exist_ok=True)

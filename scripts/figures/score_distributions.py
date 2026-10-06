@@ -34,7 +34,19 @@ HALF_WIDTH = 0.42
 
 
 def plot_violins(ax, values_by_model, colors, lo, hi):
-    """Stepped, peak-normalised histogram silhouettes, first model on top."""
+    """Stepped, peak-normalised histogram silhouettes, first model on top.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axis to draw into.
+    values_by_model : list of numpy.ndarray
+        Values per row, top to bottom.
+    colors : list
+        One colour per row.
+    lo, hi : float
+        x-axis range.
+    """
     bins = np.linspace(lo, hi, N_BINS + 1)
     centers = 0.5 * (bins[:-1] + bins[1:])
     for pos, (values, color) in enumerate(zip(values_by_model, colors, strict=True), 1):
@@ -48,6 +60,7 @@ def plot_violins(ax, values_by_model, colors, lo, hi):
 
 
 def main():
+    """Command-line entry point (see the module docstring for usage)."""
     raw = "--raw" in sys.argv
     if raw:
         sys.argv.remove("--raw")

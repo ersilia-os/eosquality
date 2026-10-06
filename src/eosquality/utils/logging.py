@@ -1,23 +1,43 @@
-"""Pretty, informative logging for eosquality using loguru + rich.
+"""Diagnostic logging for eosquality: loguru on Rich, in the ZairaChem / Olinda style.
 
-eosquality logs through a loguru logger bound with ``extra["eosquality"]``
-and owns exactly one stderr sink that only accepts those records. Handlers
-the host application added are left untouched; only loguru's pristine
-default handler (id 0) is removed so package messages are not printed
-twice.
+Two layers, as in ZairaChem and Olinda. User-facing status (steps, panels,
+progress) belongs to :mod:`eosquality.utils.console`. This module is the
+other half: DEBUG/INFO diagnostics for the record, and warnings and errors
+that surface. The terminal sink is a ``RichHandler`` on the **same** shared
+console, so a warning printed during a live progress bar is drawn cleanly
+above it.
 
-Levels: as a library, eosquality is quiet by default (WARNING and above).
-``set_verbosity(True)`` (or ``ErsiliaQuality(verbose=True)``) switches to
-DEBUG and enables the Rich diagnostic tables. The CLI shows INFO progress
-by default and DEBUG with ``-v``.
+- **Terminal.** WARNING and above by default; DEBUG with
+  :meth:`Logger.set_verbosity` (``-v`` in the CLI,
+  ``ErsiliaQuality(verbose=True)``).
+- **Log file.** :meth:`Logger.log_file` adds a DEBUG sink with
+  ``module:function:line`` context. It belongs to one command, so it is
+  neither rotated nor pruned (retention globbing could delete unrelated logs).
+  An exception escaping the block is recorded in it, with its traceback.
+  ``diagnose=False`` keeps variable values (e.g. SMILES) out of tracebacks.
+  The CLI writes one per command (``<artifacts>/eosquality.log`` for
+  ``fit``, ``<output>.log`` for ``run``).
+
+eosquality logs through a loguru logger bound with ``extra["eosquality"]``,
+and its sinks accept only those records. The standard-library loggers of
+dependencies that print on their own (``eosframes``, which logs at INFO by
+default) are routed into it, so their messages follow the same policy:
+in the log file, and on screen only when they are warnings or ``-v`` is on. Handlers the host application added
+are left untouched; only loguru's pristine default handler (id 0) is
+removed, so package messages are not printed twice.
 """
 
-import sys
+from __future__ import annotations
+
+import logging as _stdlib_logging
+import pathlib
+from contextlib import contextmanager
 
 from loguru import logger as _root_logger
-from rich import box
-from rich.console import Console
-from rich.table import Table
+from rich.logging import RichHandler
+
+from eosquality.utils.console import console as _console
+from eosquality.utils.console import enable as _enable_console
 
 try:
     _root_logger.remove(0)  # loguru's default stderr handler, if still present
@@ -26,296 +46,265 @@ except ValueError:
 
 _loguru = _root_logger.bind(eosquality=True)
 
-_FORMAT = "<green>{time:HH:mm:ss}</green> <level>{level: <8}</level> {message}"
 DEFAULT_LEVEL = "WARNING"
+_FILE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}"
+)
+
+
+# Dependencies whose standard-library loggers are routed into eosquality's.
+ROUTED_LOGGERS = ("eosframes",)
 
 
 def _only_eosquality(record) -> bool:
     return bool(record["extra"].get("eosquality"))
 
 
+def _terminal(record) -> bool:
+    """Terminal sink filter: eosquality records not marked ``file_only``."""
+    return _only_eosquality(record) and not record["extra"].get("file_only")
+
+
+class _ToLoguru(_stdlib_logging.Handler):
+    """Forward standard-library log records to the eosquality loguru logger."""
+
+    def emit(self, record: _stdlib_logging.LogRecord) -> None:
+        try:
+            try:
+                level = _loguru.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            origin = {
+                "name": record.name,
+                "function": record.funcName,
+                "line": record.lineno,
+            }
+            _loguru.patch(lambda r: r.update(origin)).opt(
+                exception=record.exc_info
+            ).log(level, record.getMessage())
+        except Exception:  # logging must never break the caller
+            self.handleError(record)
+
+
+def _route_dependency_loggers() -> None:
+    """Forward ``ROUTED_LOGGERS`` to loguru, unless the host already set them up.
+
+    Done by logger name, without importing the dependency (eosframes pulls in
+    pandas). eosframes only adds its own handler when its logger has none, so
+    the forward installed here stays in place when it configures itself later.
+    A logger that already has handlers was configured by the host application
+    (or by the dependency itself, if imported first) and is left alone.
+    """
+    for name in ROUTED_LOGGERS:
+        dependency = _stdlib_logging.getLogger(name)
+        if dependency.handlers:
+            continue
+        dependency.handlers = [_ToLoguru()]
+        dependency.setLevel(_stdlib_logging.DEBUG)
+        dependency.propagate = False
+
+
 class Logger:
-    """Thin wrapper around loguru + rich for informative, pretty output."""
+    """The usual levels plus ``success()``, following the Ersilia convention."""
 
     def __init__(self) -> None:
         self.logger = _loguru
-        self._console = Console(stderr=True, highlight=False)
         self._sink_id: int | None = None
-        self._verbose: bool = False
+        self._verbose = False
         self.set_level(DEFAULT_LEVEL)
+        _route_dependency_loggers()
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
 
     def set_level(self, level: str) -> None:
-        """Set the minimum level of the package's stderr sink."""
-        if self._sink_id is not None:
-            self.logger.remove(self._sink_id)
-        self._sink_id = self.logger.add(
-            sys.stderr,
-            format=_FORMAT,
-            colorize=True,
-            level=level,
-            filter=_only_eosquality,
-        )
-
-    @property
-    def verbose(self) -> bool:
-        return self._verbose
-
-    def set_verbosity(self, verbose: bool) -> None:
-        """Toggle DEBUG-level output and the Rich diagnostic tables.
-
-        ``verbose=False`` restores the quiet library default (WARNING).
-        """
-        self._verbose = verbose
-        self.set_level("DEBUG" if verbose else DEFAULT_LEVEL)
-
-    # ------------------------------------------------------------------
-    # Standard log levels
-    # ------------------------------------------------------------------
-
-    def debug(self, text: str) -> None:
-        self.logger.debug(text)
-
-    def info(self, text: str) -> None:
-        self.logger.info(text)
-
-    def warning(self, text: str) -> None:
-        self.logger.warning(text)
-
-    def error(self, text: str) -> None:
-        self.logger.error(text)
-
-    def success(self, text: str) -> None:
-        self.logger.success(text)
-
-    # ------------------------------------------------------------------
-    # Rich display helpers
-    # ------------------------------------------------------------------
-
-    def rule(self, title: str = "", style: str = "dim blue") -> None:
-        """Print a horizontal rule, optionally with a title."""
-        if not self._verbose:
-            return
-        if title:
-            self._console.rule(f"[bold cyan]{title}[/]", style=style)
-        else:
-            self._console.rule(style=style)
-
-    def reference_table(
-        self,
-        n_samples: int,
-        n_features: int,
-        column_names: list[str],
-    ) -> None:
-        """Display a summary of the reference population being fitted."""
-        if not self._verbose:
-            return
-        table = Table(
-            title="[bold]Reference population[/bold]",
-            box=box.SIMPLE_HEAVY,
-            show_header=True,
-            header_style="bold magenta",
-            title_justify="left",
-            padding=(0, 1),
-        )
-        table.add_column("Metric", style="cyan", no_wrap=True, min_width=16)
-        table.add_column("Value", justify="right", min_width=14)
-
-        table.add_row("Samples", f"{n_samples:,}")
-        table.add_row("Features", f"{n_features:,}")
-        table.add_row(
-            "Columns",
-            ", ".join(column_names[:8]) + ("…" if len(column_names) > 8 else ""),
-        )
-
-        self._console.print(table)
-        self._console.line()
-
-    def reference_report_table(
-        self,
-        reference_support: float | None = None,
-        reference_typicality: float | None = None,
-        reference_extremity: float | None = None,
-        reference_consistency: float | None = None,
-        reference_signal: float | None = None,
-    ) -> None:
-        """Display per-score reference baselines computed during fit.
-
-        Only baselines that were fit (non-``None``) are shown.
-        """
-        if not self._verbose:
-            return
-        rows = [
-            (name, value)
-            for name, value in (
-                ("reference_support", reference_support),
-                ("reference_typicality", reference_typicality),
-                ("reference_extremity", reference_extremity),
-                ("reference_consistency", reference_consistency),
-                ("reference_signal", reference_signal),
-            )
-            if value is not None
-        ]
-        if not rows:
-            return
-        table = Table(
-            title="[bold]Reference baselines[/bold]",
-            box=box.SIMPLE_HEAVY,
-            show_header=True,
-            header_style="bold magenta",
-            title_justify="left",
-            padding=(0, 1),
-        )
-        table.add_column("Metric", style="cyan", no_wrap=True, min_width=22)
-        table.add_column("Value", justify="right", min_width=10)
-
-        def _quality_style(v: float) -> str:
-            if v >= 0.7:
-                return "green"
-            if v >= 0.4:
-                return "yellow"
-            return "red"
-
-        for name, value in rows:
-            table.add_row(name, f"[{_quality_style(value)}]{value:.4f}[/]")
-
-        self._console.print(table)
-        self._console.line()
-
-    def scores_summary_table(self, scores_df) -> None:
-        """Display a summary of score distributions from a run() call."""
-        if not self._verbose:
-            return
-        score_cols = ["typicality", "extremity", "support", "consistency", "signal"]
-        present = [c for c in score_cols if c in scores_df.columns]
-
-        table = Table(
-            title="[bold]Score summary[/bold]",
-            box=box.SIMPLE_HEAVY,
-            show_header=True,
-            header_style="bold magenta",
-            title_justify="left",
-            padding=(0, 1),
-        )
-        table.add_column("Score", style="cyan", no_wrap=True, min_width=20)
-        table.add_column("mean", justify="right", min_width=8)
-        table.add_column("median", justify="right", min_width=8)
-        table.add_column("min", justify="right", min_width=8)
-        table.add_column("max", justify="right", min_width=8)
-
-        for col in present:
-            s = scores_df[col]
-            table.add_row(
-                col,
-                f"{s.mean():.4f}",
-                f"{s.median():.4f}",
-                f"{s.min():.4f}",
-                f"{s.max():.4f}",
-            )
-
-        self._console.print(table)
-        self._console.line()
-
-    def index_input_table(self, n_molecules: int, n_unique: int) -> None:
-        """Display a summary of the molecule collection passed to VectorIndex.build()."""
-        if not self._verbose:
-            return
-        table = Table(
-            title="[bold]Input data[/bold]",
-            box=box.SIMPLE_HEAVY,
-            show_header=True,
-            header_style="bold magenta",
-            title_justify="left",
-            padding=(0, 1),
-        )
-        table.add_column("Metric", style="cyan", no_wrap=True, min_width=20)
-        table.add_column("Value", justify="right", min_width=14)
-
-        table.add_row("Molecules", f"{n_molecules:,}")
-        table.add_row("Unique SMILES", f"{n_unique:,}")
-
-        self._console.print(table)
-        self._console.line()
-
-    def index_config_table(
-        self,
-        max_k: int,
-        radius: int,
-        n_bits: int,
-        rdkit_version: str,
-        output_dir: str,
-        library_name: str = "",
-    ) -> None:
-        """Display the configuration used to build a VectorIndex."""
-        if not self._verbose:
-            return
-        table = Table(
-            title="[bold]Index configuration[/bold]",
-            box=box.SIMPLE_HEAVY,
-            show_header=True,
-            header_style="bold magenta",
-            title_justify="left",
-            padding=(0, 1),
-        )
-        table.add_column("Parameter", style="cyan", no_wrap=True, min_width=20)
-        table.add_column("Value", justify="right", min_width=16)
-
-        if library_name:
-            table.add_row("Library", library_name)
-        table.add_row("Output dir", output_dir)
-        table.add_row("Method", "Morgan (FPSim2)")
-        table.add_row("Radius", str(radius))
-        table.add_row("FP bits", f"{n_bits:,}")
-        table.add_row("max_k", str(max_k))
-        table.add_row("RDKit version", rdkit_version)
-
-        self._console.print(table)
-        self._console.line()
-
-    def timing_table(
-        self, steps: list[tuple[str, float, bool]], title: str = "Fit timing breakdown"
-    ) -> None:
-        """Print a per-step timing breakdown.
+        """Set the minimum level of the terminal sink.
 
         Parameters
         ----------
-        steps:
-            List of (name, seconds, is_subtask) tuples.
-            ``is_subtask=True`` → indented row, % column left blank.
-        title:
-            Table title (default: "Fit timing breakdown").
+        level : str
+            loguru level name.
         """
-        if not self._verbose:
-            return
-        top_level_times = [t for _, t, sub in steps if not sub]
-        total = sum(top_level_times) if top_level_times else 0.0
-
-        table = Table(
-            title=f"[bold]{title}[/bold]",
-            box=box.ROUNDED,
-            show_header=True,
-            header_style="bold cyan",
-            title_justify="left",
-            padding=(0, 1),
+        if self._sink_id is not None:
+            self.logger.remove(self._sink_id)
+        self._level = level
+        handler = RichHandler(
+            console=_console,
+            rich_tracebacks=True,
+            markup=False,
+            log_time_format="%H:%M:%S",
+            show_path=False,
+            show_level=True,
         )
-        table.add_column("Step", min_width=30)
-        table.add_column("Time (s)", justify="right", min_width=9)
-        table.add_column("%", justify="right", min_width=5)
+        self._sink_id = self.logger.add(
+            handler, format="{message}", level=level, filter=_terminal
+        )
 
-        for name, t, is_subtask in steps:
-            label = f"  {name}" if is_subtask else name
-            pct_str = (
-                "" if is_subtask else (f"{100 * t / total:.0f}%" if total > 0 else "—")
+    @property
+    def level(self) -> str:
+        """Minimum level of the terminal sink.
+
+        Returns
+        -------
+        str
+        """
+        return self._level
+
+    @property
+    def verbose(self) -> bool:
+        """Whether DEBUG output is on.
+
+        Returns
+        -------
+        bool
+        """
+        return self._verbose
+
+    def set_verbosity(self, verbose: bool) -> None:
+        """Toggle DEBUG terminal output (and the curated console output).
+
+        ``verbose=True`` also turns the curated output of
+        :mod:`eosquality.utils.console` on, so library users see the same
+        steps as the CLI; ``verbose=False`` turns both off again (warnings
+        only).
+
+        Parameters
+        ----------
+        verbose : bool
+            Turn DEBUG output on or off.
+        """
+        self._verbose = bool(verbose)
+        self.set_level("DEBUG" if verbose else DEFAULT_LEVEL)
+        _enable_console(self._verbose)
+
+    def add_file(self, path: str | pathlib.Path) -> int:
+        """Start writing every eosquality record (DEBUG+) to ``path``.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Log file; appended to if it exists.
+
+        Returns
+        -------
+        int
+            Sink id, for :meth:`remove_file`.
+        """
+        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return self.logger.add(
+            str(path),
+            level="DEBUG",
+            format=_FILE_FORMAT,
+            backtrace=True,
+            diagnose=False,
+            filter=_only_eosquality,
+            enqueue=False,
+        )
+
+    def remove_file(self, sink_id: int) -> None:
+        """Stop and close a file sink added by :meth:`add_file`.
+
+        Parameters
+        ----------
+        sink_id : int
+            Id returned by :meth:`add_file`.
+        """
+        try:
+            self.logger.remove(sink_id)
+        except ValueError:
+            pass
+
+    @contextmanager
+    def log_file(self, path: str | pathlib.Path):
+        """Write a DEBUG log file for the duration of the block.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Log file.
+
+        Yields
+        ------
+        pathlib.Path
+            The log file path.
+        """
+        sink = self.add_file(path)
+        try:
+            yield pathlib.Path(path)
+        except BaseException as exc:
+            # Record the failure while the sink is still open; the caller
+            # (e.g. the CLI error handler) runs only after it is closed.
+            self.logger.bind(file_only=True).opt(exception=True).error(
+                f"failed: {type(exc).__name__}: {exc}"
             )
-            style = "dim" if is_subtask else ""
-            table.add_row(label, f"{t:.2f}", pct_str, style=style)
+            raise
+        finally:
+            self.remove_file(sink)
 
-        table.add_row(
-            "[bold]TOTAL[/bold]",
-            f"[bold]{total:.2f}[/bold]",
-            "[bold]100%[/bold]",
-        )
-        self._console.print(table)
-        self._console.line()
+    # ------------------------------------------------------------------
+    # Levels
+    # ------------------------------------------------------------------
+
+    def debug(self, text: str) -> None:
+        """Record ``text`` for diagnosis (terminal only with ``-v``).
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1).debug(text)
+
+    def info(self, text: str) -> None:
+        """Record ``text`` (terminal only with ``-v``; user-facing status is the console's job).
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1).info(text)
+
+    def success(self, text: str) -> None:
+        """Record the completion of a step (terminal only with ``-v``).
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1).success(text)
+
+    def warning(self, text: str) -> None:
+        """Report something suspect that did not stop the run.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1).warning(text)
+
+    def error(self, text: str) -> None:
+        """Report a failure the caller is expected to handle or surface.
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1).error(text)
+
+    def exception(self, text: str) -> None:
+        """Log an error with the active exception's traceback (in the log file).
+
+        Parameters
+        ----------
+        text : str
+            Message.
+        """
+        self.logger.opt(depth=1, exception=True).error(text)
 
 
 logger = Logger()

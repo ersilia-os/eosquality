@@ -45,7 +45,24 @@ class BasicDescriptors:
         n_jobs: int | None = None,
         force: bool = False,
     ) -> pathlib.Path:
-        """Compute + persist the scaled physchem matrix and scaler params."""
+        """Compute + persist the scaled physchem matrix and scaler params.
+
+        Parameters
+        ----------
+        smiles : list of str
+            Library SMILES, in index order.
+        output_dir : str or pathlib.Path
+            Library folder (created if needed).
+        n_jobs : int, optional
+            Worker processes (default: every CPU).
+        force : bool, optional
+            Recompute even if the files already exist.
+
+        Returns
+        -------
+        pathlib.Path
+            ``output_dir``.
+        """
         output_dir = pathlib.Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         scaled_path = output_dir / PHYSCHEM_SCALED_FILE
@@ -78,7 +95,24 @@ class BasicDescriptors:
         n_jobs: int | None = None,
         force: bool = False,
     ) -> pathlib.Path:
-        """Compute + persist the 166-bit MACCS matrix."""
+        """Compute + persist the 166-bit MACCS matrix.
+
+        Parameters
+        ----------
+        smiles : list of str
+            Library SMILES, in index order.
+        output_dir : str or pathlib.Path
+            Library folder (created if needed).
+        n_jobs : int, optional
+            Worker processes (default: every CPU).
+        force : bool, optional
+            Recompute even if the files already exist.
+
+        Returns
+        -------
+        pathlib.Path
+            ``output_dir``.
+        """
         output_dir = pathlib.Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         maccs_path = output_dir / MACCS_FILE

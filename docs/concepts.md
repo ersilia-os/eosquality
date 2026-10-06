@@ -1,8 +1,10 @@
 # Concepts
 
-`eosquality` compares how an Ersilia model behaves on a query molecule with how the same model behaves on a fixed **reference library**: about 1.35M molecules shipped with each major version.
+`eosquality` judges a prediction in two modalities. Each is available only when its data was given at fit time.
 
-The reference population is the model's own predictions on that library. It is **not** ground truth, so every score describes how similar a query is to the model's behaviour on the reference. No score estimates whether a prediction is correct.
+**Reference modality.** It compares how an Ersilia model behaves on a query molecule with how the same model behaves on a fixed **reference library**: about 1.35M molecules shipped with each major version. The reference population is the model's own predictions on that library. It is **not** ground truth, so these scores describe how similar a query is to the model's behaviour on the reference. They don't estimate whether a prediction is correct.
+
+**Training modality.** It compares a query with the model's **training sets**: one per output column, optionally with labels. Training labels are observations, so this modality can say whether the model has seen chemistry like the query. Its scores are reported as raw distances, not calibrated. Planned label-aware scores will also estimate how reliable a prediction is likely to be. See [Training modality](#training-modality).
 
 ## Shared preprocessing
 
@@ -101,3 +103,75 @@ The question consistency answers is: are this prediction's neighbours unusually 
 At fit time, one XGBoost regressor is trained from a chemical descriptor to the scaled, selected model outputs. The descriptor is either RDKit physchem descriptors (`physchem`, the default) or MACCS keys (`maccs`). Training uses at most `max_signal_train_samples` rows of the train slice (default 1000). Early stopping is evaluated on 5,000 val rows.
 
 For each query, the per-feature `|SHAP|` attributions are reduced to a Gini coefficient: about 1 when one descriptor carries all the attribution, about 0 when attribution is spread evenly. The Gini is then calibrated against the full val slice. The `|SHAP|` matrix of the val slice is saved as `signal/val_shap_attributions.npy` so other reductions can be tried offline.
+
+## Training modality
+
+Each output column of a model may have its own training set: SMILES, plus optional labels `y` (binary or continuous). Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each column gets its own Morgan fingerprint index (radius 2, 2048 bits).
+
+### Training distance
+
+Training distance asks how far the query is from the molecules the model was trained on. It gives **one value per molecule for the whole model**. It is the classic kNN applicability domain: the mean similarity to the 5 nearest training molecules is among the best structural predictors of prediction error (Sheridan et al., *J. Chem. Inf. Comput. Sci.* 2004). Following the kNN domain of Tropsha and the OECD principle that a domain is judged against the training set itself, the query is compared with how close training molecules are to each other. There is no in/out cutoff: both a raw distance and a calibrated percentile are reported.
+
+The value is built from each output column's own training set; the sets are **not pooled**:
+- **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**. A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value.
+- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules. About 0.5 means as close as a typical training molecule; near 1 means farther than almost all of them.
+- **Whole model:** `training_distance` (calibrated) and `training_distance_raw` are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
+
+Why not pool the training sets into one? Pooled, a large training set could hide that the query is far from a small one. Each calibrated per-column value is a percentile of that column's own training set, so columns of very different sizes and densities combine fairly.
+
+How to read the two values: higher is farther for both. The raw value means the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry. The calibrated value is relative to how dense the training sets are, so a diverse training set makes the same raw distance look more typical. Read them together.
+
+`in_training` flags a query that is a training molecule of any column. `training_details` lists, per query, the 5 nearest training molecules over all columns (keys, similarities, and the columns each belongs to).
+
+### Training difficulty
+
+Training difficulty asks how hard the query is to predict, judging by the training data. It needs labels `y` and gives **one value per molecule for the whole model**. Distance measures novelty; difficulty also catches regions that are close to the training set but hard to learn: noisy assays, activity cliffs, chemotypes the labels disagree on.
+
+It is an **error model**, following the error models of Novartis's UNIQUE (adapted from DEUP, Lahlou et al. 2021). Each output column with at least 50 labels gets its own:
+1. **Surrogate.** A random forest on Morgan bits (scikit-learn) is fitted with 5-fold scaffold-grouped cross-validation. A congeneric training set, with fewer usable Murcko scaffolds than folds or one scaffold holding over 40% of the labelled molecules, falls back to random folds; the fit warns that its out-of-fold errors are then optimistic, and the metadata records `cv`. Every training molecule gets an out-of-fold prediction `ŷ` (P(y = 1) for binary labels) and the variance across the forest's trees. Labelled ones also get an out-of-fold residual `|y − ŷ|`, UNIQUE's L1 error. The surrogate stands in for the Ersilia model, whose own out-of-fold predictions are not available.
+2. **Inputs.** These are UNIQUE's feature set (i), "data features + base UQ metrics + prediction":
+   - **Data features:** the 166 MACCS keys.
+   - **Base UQ metrics:**
+     - kNN distance: the mean Tanimoto distance to the 5 nearest *other* training molecules.
+     - Three kernel density estimates on the MACCS keys: Gaussian/Euclidean, Gaussian/Manhattan and exponential/Manhattan. Each bandwidth is chosen by 5-fold grid search over {0.1, 0.5, 1}.
+     - Ensemble variance: across the surrogate's trees.
+     - For binary labels, the top-1 class probability `max(p, 1 − p)`.
+   - **The prediction** `ŷ`.
+3. **Error model.** A second random forest learns inputs → residual. Its out-of-fold predictions on the same folds give the calibration table, and their Spearman correlation with the true residuals is the **honesty check**: 0 means no better than random.
+
+**Why feature set (i) only.** UNIQUE also builds error models on "base UQ + prediction" and on "transformed UQ (DiffkNN) + prediction", and benchmarks them. Both UNIQUE papers found set (i) best, and so did our benchmark:
+- **Setup:** six MoleculeNet endpoints (ESOL, lipophilicity, FreeSolv, BACE pIC50, BBBP, BACE class), each split by scaffold. Each set's predictions were scored against the held-out errors of three different models (see Validation in `status.md`).
+- **Set (i) with MACCS** had the best mean Spearman: 0.36, against 0.30 for "base + prediction", 0.28 for the transformed set and 0.16 for distance alone.
+- **Choosing the set per column by out-of-fold Spearman was harmful.** It mostly picked the transformed set, whose neighbour-based inputs look predictive out-of-fold but not on new scaffolds. A training molecule's neighbours usually share its scaffold, hence its fold and its fold model's errors; a new-scaffold query's neighbours do not.
+- **MACCS beat Morgan bits** as data features: 0.36 against 0.33.
+
+For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `training_difficulty` is the **66th percentile** across labelled columns, as for distance.
+
+How to read it:
+- It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
+- It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
+- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: when the surrogate is right, the error `|y − p|` is almost a fixed function of its confidence, which is an input (`probability_top1`). On BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+
+Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
+
+A query that is itself a training molecule gets its own out-of-fold predicted error, the value the calibration table was built from. Re-using the final surrogate and error model for it would be in-sample, since both were trained on its label, and would rate it optimistically easy.
+
+The surrogate, densities and error model are saved with joblib (pickle), so only load artifacts from a trusted source. The scikit-learn version is recorded, and loading with another version is refused (refit).
+
+**Differences from UNIQUE.** Some are forced by the black-box setting, the rest are choices:
+- **Errors come from a surrogate.** UNIQUE uses the real model's predictions. Ersilia models are black boxes, so we use a surrogate.
+- **Training errors are all out-of-fold.** UNIQUE trains its error model on in-sample TRAIN errors plus out-of-sample CALIBRATION errors. Here every error is out-of-fold.
+- **Training molecules are left out of their own neighbours and kernel.** UNIQUE counts a training molecule as its own nearest neighbour.
+- **Densities are summed exactly.** They are computed in log space; scikit-learn's `score_samples` approximates densities far in the tails. For large training sets, the bandwidth grid search uses at most 2,000 molecules and the densities are built on at most 5,000.
+- **One feature set.** Only UNIQUE's set (i) is fitted. UNIQUE fits all three and picks the best on a held-out test split, with bootstrap and Wilcoxon tests; we have no such split at inference time, and picking by out-of-fold Spearman proved unreliable (see above).
+- **Output.** We report a percentile combined across columns. UNIQUE reports raw predicted errors for one endpoint.
+- **Not included:**
+  - distances converted to variances and summed (UNIQUE's SumOfVariances), which needs a separate calibration set;
+  - LASSO error models;
+  - L2 and signed errors;
+  - input standardisation, which doesn't matter for random forests.
+- **Random-forest settings differ:** 200 trees and `min_samples_leaf=5`, against 50 trees and `max_depth=10` in UNIQUE's examples.
+
+### Planned
+
+- **Conformal intervals** (needs labelled molecules the model did not train on): coverage-guaranteed error intervals.

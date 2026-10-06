@@ -126,16 +126,30 @@ class Consistency(ScoreComponent):
         shared: SharedFitState | None = None,
         knn: KnnFitState | None = None,
     ) -> Consistency:
-        """Fit on a reference DataFrame.
+        """Fit the per-FP-distance-bin calibration on a reference DataFrame.
 
-        Computes the reference's per-row mean output-space L1 distance to
-        its k FP-selected neighbors, partitions rows into FP-distance
-        quantile bins, and sorts each bin's distances to form the
-        conditional CDF lookup tables.
+        Pass pre-fit ``shared`` / ``knn`` (as :class:`ErsiliaQuality` does), or
+        ``eos_id`` + ``version`` so both states are fitted here.
 
-        Either pass pre-fit ``shared=`` / ``knn=`` (when composed by
-        :class:`ErsiliaQuality`), or pass ``eos_id`` + ``version`` +
-        ``vector_index`` so Consistency can fit both states itself.
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Predictions on the reference library.
+        vector_index : str, pathlib.Path or VectorIndex
+            The reference library's vector index.
+        k : int, optional
+            Fingerprint neighbours.
+        eos_id, version : str, optional
+            Model identifier and version, needed only to fit ``shared`` here.
+        shared : SharedFitState, optional
+            Pre-fit shared state.
+        knn : KnnFitState, optional
+            Pre-fit kNN state (with its fit-time neighbour arrays).
+
+        Returns
+        -------
+        Consistency
+            ``self``, fitted.
         """
         t0 = time.perf_counter()
         shared, knn, vi = _resolve_shared_and_knn(
@@ -147,58 +161,17 @@ class Consistency(ScoreComponent):
             shared=shared,
             knn=knn,
         )
-        if knn.reference_knn_indices is None or knn.mean_fp_distances is None:
-            raise RuntimeError(
-                "Consistency.fit requires a KnnFitState that still carries the "
-                "fit-time reference_knn_indices and mean_fp_distances (i.e., "
-                "produced by fit_knn in this pass)."
-            )
-        if shared.ref_repr is None:
-            raise RuntimeError(
-                "Consistency.fit needs shared.ref_repr to compute the "
-                "reference's own output-space self-distances."
-            )
-
-        # Output-space self-kNN distances — same arithmetic as run() so the
-        # two paths cannot drift.
-        mean_self_output_distances = _mean_over_neighbors(
-            _query_output_distances(
-                shared.ref_repr, shared.ref_repr, knn.reference_knn_indices
-            )
-        )
-        mean_self_fp_distances = knn.mean_fp_distances.astype(np.float64)
-
-        fp_bin_edges = quantile_bin_edges(
-            mean_self_fp_distances,
-            self.N_FP_BINS,
-            min_bin_size=min_bin_size(len(mean_self_fp_distances), self.N_FP_BINS),
-        )
-        sorted_self_distances_per_bin = partition_and_sort(
-            mean_self_output_distances, mean_self_fp_distances, fp_bin_edges
-        )
-
+        edges, per_bin, anchor = _fit_calibration(shared, knn, self.N_FP_BINS)
         self._shared = shared
         self._knn = knn
-        self._fp_bin_edges = fp_bin_edges
-        self._sorted_self_distances_per_bin = sorted_self_distances_per_bin
-        self._reference_consistency = float(
-            np.nanmean(
-                binned_cdf_score(
-                    mean_self_output_distances,
-                    mean_self_fp_distances,
-                    fp_bin_edges,
-                    sorted_self_distances_per_bin,
-                    higher_is_higher=False,
-                )
-            )
-        )
+        self._fp_bin_edges = edges
+        self._sorted_self_distances_per_bin = per_bin
+        self._reference_consistency = anchor
         self._vector_index_cache = vi
         self._finish_fit(t0)
         logger.debug(
-            f"Consistency fit | k={knn.k} | n_ref={len(shared.reference_ids):,}"
-            f" | n_bins={self.n_bins_}"
-            f" | reference_consistency={self._reference_consistency:.4f}"
-            f" | duration={self._fit_duration_seconds:.3f}s"
+            f"Consistency fit | k={knn.k} | n_bins={self.n_bins_} | "
+            f"reference_consistency={anchor:.4f}"
         )
         return self
 
@@ -219,61 +192,43 @@ class Consistency(ScoreComponent):
 
         Parameters
         ----------
-        query:
-            DataFrame with the same numeric columns as the reference plus
-            an ``'input'`` SMILES column for the vector index.
-        query_repr:
-            Optional pre-scaled, feature-selected query array
-            ``(n_query, n_selected)``. If provided, schema validation and
-            the eosframes transform are skipped.
-        query_fp_indices, query_fp_distances:
-            Optional pre-computed FP-selected neighbor indices and Tanimoto
-            distances, each ``(n_query, k)``. The distances route each query
-            into its FP-distance bin. If omitted, both are recomputed from
-            the vector index.
-        query_output_distances:
-            Optional pre-computed output-space L1 distances to those same
-            neighbors ``(n_query, k)``. Only valid together with
-            ``query_fp_indices`` / ``query_fp_distances``.
+        query : pandas.DataFrame
+            The reference's numeric columns plus an ``input`` SMILES column.
+        query_repr : numpy.ndarray, optional
+            Pre-scaled, feature-selected query array; skips validation and scaling.
+        query_fp_indices, query_fp_distances : numpy.ndarray, optional
+            Pre-computed ``(n_query, k)`` FP neighbours and Tanimoto distances;
+            recomputed from the vector index if omitted.
+        query_output_distances : numpy.ndarray, optional
+            Pre-computed ``(n_query, k)`` output-space L1 distances to those
+            neighbours; only valid together with the FP arrays.
+
+        Returns
+        -------
+        ConsistencyRunResult
+            Calibrated score, raw mean output distance and run metadata.
         """
         self._check_fitted()
-        assert self._shared is not None
-        assert self._knn is not None
-        assert self._fp_bin_edges is not None
-        assert self._sorted_self_distances_per_bin is not None
-
+        assert self._shared is not None and self._knn is not None
         if "input" not in query.columns:
             raise ValueError(
                 "Consistency.run requires an 'input' column with SMILES for the vector index."
             )
-        if query_repr is None:
-            validate_against_schema(query, self._shared.schema)
-            query_repr = _make_query_repr(self._shared, query)
-
-        if query_fp_indices is None or query_fp_distances is None:
-            if query_output_distances is not None:
-                raise ValueError(
-                    "query_output_distances must be passed together with the "
-                    "query_fp_indices / query_fp_distances they were computed from."
-                )
-            query_fp_distances, query_fp_indices = _query_fp_distances(
-                query, self._get_vector_index(), self._knn.k
-            )
-        if query_output_distances is None:
-            assert self._shared.ref_repr is not None
-            query_output_distances = _query_output_distances(
-                query_repr, self._shared.ref_repr, query_fp_indices
-            )
-
-        distance_k_mean = _mean_over_neighbors(query_output_distances)
+        fp_distances, output_distances = self._neighbour_distances(
+            query,
+            query_repr,
+            query_fp_indices,
+            query_fp_distances,
+            query_output_distances,
+        )
+        distance_k_mean = _mean_over_neighbors(output_distances)
         score = binned_cdf_score(
             distance_k_mean,
-            query_fp_distances.mean(axis=1).astype(np.float64),
+            fp_distances.mean(axis=1).astype(np.float64),
             self._fp_bin_edges,
             self._sorted_self_distances_per_bin,
             higher_is_higher=False,
         )
-
         idx = list(query.index)
         return ConsistencyRunResult(
             score=pd.Series(score, index=idx, name="consistency"),
@@ -288,6 +243,29 @@ class Consistency(ScoreComponent):
                 "n_fp_bins": self.n_bins_,
             },
         )
+
+    def _neighbour_distances(
+        self, query, query_repr, fp_indices, fp_distances, output_distances
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """FP and output-space distances to the k neighbours, computing what is missing."""
+        if query_repr is None:
+            validate_against_schema(query, self._shared.schema)
+            query_repr = _make_query_repr(self._shared, query)
+        if fp_indices is None or fp_distances is None:
+            if output_distances is not None:
+                raise ValueError(
+                    "query_output_distances must be passed together with the "
+                    "query_fp_indices / query_fp_distances they were computed from."
+                )
+            fp_distances, fp_indices = _query_fp_distances(
+                query, self._get_vector_index(), self._knn.k
+            )
+        if output_distances is None:
+            assert self._shared.ref_repr is not None
+            output_distances = _query_output_distances(
+                query_repr, self._shared.ref_repr, fp_indices, fp_distances
+            )
+        return fp_distances, output_distances
 
     # ------------------------------------------------------------------
     # Save / load
@@ -327,6 +305,12 @@ class Consistency(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._knn is not None
@@ -337,25 +321,48 @@ class Consistency(ScoreComponent):
 
     @property
     def n_bins_(self) -> int:
-        """Number of FP-distance bins in the fitted calibration."""
+        """Number of FP-distance bins in the fitted calibration.
+
+        Returns
+        -------
+        int
+        """
         self._check_fitted()
         assert self._sorted_self_distances_per_bin is not None
         return len(self._sorted_self_distances_per_bin)
 
     @property
     def fp_bin_edges_(self) -> np.ndarray:
+        """FP-distance bin edges (outer ones ``±inf``).
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._fp_bin_edges is not None
         return self._fp_bin_edges
 
     @property
     def sorted_self_distances_per_bin_(self) -> list[np.ndarray]:
+        """Per bin, the sorted reference output distances (the CDF tables).
+
+        Returns
+        -------
+        list of numpy.ndarray
+        """
         self._check_fitted()
         assert self._sorted_self_distances_per_bin is not None
         return self._sorted_self_distances_per_bin
 
     @property
     def reference_consistency_(self) -> float:
+        """Mean calibrated consistency of the reference (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_consistency is not None
         return self._reference_consistency
@@ -370,6 +377,35 @@ class Consistency(ScoreComponent):
 # ---------------------------------------------------------------------------
 # Consistency-specific helpers
 # ---------------------------------------------------------------------------
+
+
+def _fit_calibration(
+    shared: SharedFitState, knn: KnnFitState, n_bins: int
+) -> tuple[np.ndarray, list[np.ndarray], float]:
+    """FP-distance bin edges, per-bin sorted self-distances and the reference anchor.
+
+    Uses the same output-distance arithmetic as :meth:`Consistency.run`, so the
+    fit and run paths cannot drift.
+    """
+    if knn.reference_knn_indices is None or knn.mean_fp_distances is None:
+        raise RuntimeError(
+            "Consistency.fit requires a KnnFitState that still carries the fit-time "
+            "reference_knn_indices and mean_fp_distances (produced by fit_knn)."
+        )
+    if shared.ref_repr is None:
+        raise RuntimeError("Consistency.fit needs shared.ref_repr.")
+    output = _mean_over_neighbors(
+        _query_output_distances(
+            shared.ref_repr, shared.ref_repr, knn.reference_knn_indices
+        )
+    )
+    fp = knn.mean_fp_distances.astype(np.float64)
+    edges = quantile_bin_edges(fp, n_bins, min_bin_size=min_bin_size(len(fp), n_bins))
+    per_bin = partition_and_sort(output, fp, edges)
+    anchor = float(
+        np.nanmean(binned_cdf_score(output, fp, edges, per_bin, higher_is_higher=False))
+    )
+    return edges, per_bin, anchor
 
 
 def _mean_over_neighbors(distances: np.ndarray) -> np.ndarray:

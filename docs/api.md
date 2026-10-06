@@ -13,14 +13,14 @@ ErsiliaQuality(k=5, verbose=False, config=None)
 ```
 
 - `k` is the number of fingerprint neighbours used by support and consistency. It must be at most the index's `max_k` (50 for the canonical library).
-- `verbose=True` turns on DEBUG logging and the diagnostic tables.
+- `verbose=True` turns on the curated step-by-step output (as in the CLI) and DEBUG logging.
 
 ### `fit`
 
 ```python
 eq.fit(
-    reference,                      # DataFrame: key, input (SMILES), numeric outputs
-    eos_id,                         # e.g. "eos4e40"
+    reference=None,                 # DataFrame: key, input (SMILES), numeric outputs
+    eos_id=None,                    # required, e.g. "eos4e40"
     version="v1",
     vector_index=None,              # path to a custom index; None = canonical library
     ignore_size=False,              # skip the 10,000-row minimum (testing only)
@@ -28,13 +28,26 @@ eq.fit(
     max_features=10,                # None disables feature selection
     max_signal_train_samples=1000,  # None/0 = full train slice
     signal_descriptor="physchem",   # or "maccs"
+    training_sets=None,             # folder of <output_column>.csv training sets
+    training_predictions=None,      # model predictions on training molecules (CSV/DataFrame)
 ) -> ErsiliaQuality
 ```
 
-`fit` runs on the reference to be calibrated against.
+`fit` fits the **reference modality** when `reference` is given and the **training modality** when `training_sets` is given. At least one of the two is required. The arguments from `vector_index` to `signal_descriptor` apply to the reference modality only.
 - **SMILES alignment.** When support, consistency or signal is requested, `reference["input"]` must match the vector index's SMILES row for row.
 - **Scores without an index.** Typicality and extremity need no index or `input` column.
 - **Re-fitting.** Calling `fit` again replaces every component, including ones not requested this time.
+- **Training sets.** The folder holds one CSV per output column (`smiles`, optional `y`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
+
+```python
+eq.fit_training(training_sets, training_predictions=None, eos_id=None, version=None)
+ErsiliaQuality.add_training("artifacts/", training_sets, training_predictions=None)
+```
+
+`fit_training` fits (or replaces) only the training modality on an instance. `add_training` adds it to an existing artifacts folder in place:
+- the reference files are left untouched;
+- it refuses if the folder already has a training modality;
+- it refuses if the model id differs.
 
 **Score sets.**
 - `DEFAULT_SCORES = ("typicality", "support", "consistency", "extremity")`
@@ -46,7 +59,7 @@ eq.fit(
 result = eq.run(query)  # -> RunResult
 ```
 
-`query` needs the reference's numeric columns. It also needs an `input` column when support, consistency or signal was fit.
+`query` needs the reference's numeric columns when the reference modality was fit. It needs an `input` column when support, consistency, signal or the training modality was fit. For a training-only artifact, `key` and `input` are enough.
 
 ### `save` / `load`
 
@@ -55,15 +68,18 @@ eq.save("artifacts/")
 eq = ErsiliaQuality.load("artifacts/")
 ```
 
-`load` reconstructs every component whose subfolder is present. It raises the following errors:
+`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). `load` reconstructs whichever modalities are present. It raises the following errors:
 - `ArtifactVersionError`: the artifacts were written in an older on-disk format. Refit them.
 - `IncompatibleArtifactsError`: the artifacts were fit against a different reference library or package major version.
 
-**Post-fit attributes.** `reference_typicality_`, `reference_extremity_`, `reference_support_`, `reference_consistency_`, `reference_signal_`, `schema_`, `metadata_`, `shared_`.
+**Post-fit attributes.**
+- `modalities_`: `["reference"]`, `["training"]` or both.
+- `reference_typicality_`, `reference_extremity_`, `reference_support_`, `reference_consistency_`, `reference_signal_`.
+- `schema_`, `metadata_`, `shared_` (reference modality only).
 
 ## `RunResult`
 
-`RunResult` has two fields, `scores` and `metadata`.
+`RunResult` has three fields: `scores`, `metadata` and `training_details`.
 
 ### `scores`
 
@@ -76,6 +92,9 @@ eq = ErsiliaQuality.load("artifacts/")
 | `support`, `support_raw`, `support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `consistency`, `consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to k neighbours |
 | `signal`, `signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
+| `training_distance`, `training_distance_raw` | (0, 1], [0, 1] | one value for the whole model: the 66th percentile across output columns of the calibrated distance (percentile among the column's leave-one-out values) and of the raw distance (1 − mean Tanimoto to the 5 nearest training molecules) |
+| `training_difficulty` | (0, 1] | one value for the whole model: the 66th percentile across labelled output columns of the error model's predicted error, as a percentile among the training molecules' out-of-fold predicted errors (higher is harder); no raw column |
+| `in_training` | bool | the query is itself a training molecule of some column |
 
 Scores that were not fit are left out. A row with no usable output feature has NaN typicality, extremity and consistency.
 
@@ -87,16 +106,32 @@ Scores that were not fit are left out. A row with no usable output feature has N
 - `consistency_n_fp_bins`
 - `signal_descriptor`
 - `signal_formula_version`
+- `training_distance_n_columns`, `training_distance_columns`, `training_distance_k`
+- `training_difficulty_columns`, `training_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error), `training_difficulty_cv` (per column: `scaffold` or `random` folds), `training_difficulty_n_labelled`
+
+### `training_details`
+
+`training_details` is `None` unless the training modality was fit. Otherwise it is a DataFrame with one row per query:
+
+| column | meaning |
+|---|---|
+| `key` | query key (or index) |
+| `distance`, `distance_raw` | the whole-model `training_distance` and `training_distance_raw` |
+| `difficulty` | the whole-model `training_difficulty` (only when fitted) |
+| `nn1_distance` | 1 − Tanimoto similarity of the nearest training molecule over all columns |
+| `in_training` | the query is a training molecule of some column (its own entry is excluded from the neighbours) |
+| `nn_keys`, `nn_similarities` | the 5 nearest training molecules over all columns, `\|`-separated, closest first, deduplicated |
+| `nn_columns` | the output columns each of those molecules is a training molecule of, `;`-joined within a neighbour, `\|` between neighbours |
 
 ## Per-score components
 
-Every component can also be used on its own. Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
+Every reference component can also be used on its own (`TrainingDistance` and `TrainingDifficulty` need a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
 
 ```python
 from eosquality import Typicality, Extremity, Support, Consistency, Signal
 
 t = Typicality().fit(reference, eos_id="eos4e40", version="v1")
-t.save("art/")             # writes art/shared/ + art/typicality/
+t.save("art/")             # writes art/shared/ + art/typicality/ (one reference_mode/ worth)
 Typicality.load("art/").run(query).score
 ```
 
@@ -106,8 +141,9 @@ Typicality.load("art/").run(query).score
 
 ## Logging
 
-As a library, `eosquality` only prints warnings by default.
-- `eosquality.set_log_level("INFO")` shows progress messages.
-- `eosquality.set_verbosity(True)` shows DEBUG messages and the diagnostic tables.
+As a library, `eosquality` is silent by default; only warnings are printed.
+- `eosquality.set_verbosity(True)`, or `ErsiliaQuality(verbose=True)`, turns on the curated step-by-step output, as the CLI shows it, together with DEBUG messages. `set_verbosity(False)` turns both off again.
+- `eosquality.set_log_level("INFO")` changes only the level of the terminal log sink.
+- `from eosquality.utils.logging import logger` gives `with logger.log_file("run.log"): ...`, which writes every record, DEBUG included, to a file.
 
-Handlers that the host application adds to loguru are left untouched.
+Output goes to stderr, through one shared Rich console. Handlers that the host application adds to loguru are left untouched. The standard-library logger of `eosframes`, which otherwise prints INFO lines on its own, is routed into eosquality's: its messages land in the log file, and reach the screen only as warnings or with verbose output.

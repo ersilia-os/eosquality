@@ -2,28 +2,26 @@
 
 Each subcommand lives in its own module under this package:
 
-- :mod:`eosquality.cli.build` registers ``build``.
-- :mod:`eosquality.cli.download` registers ``download``.
-- :mod:`eosquality.cli.fit` registers ``fit``.
-- :mod:`eosquality.cli.run` registers ``run``.
+- :mod:`eosquality.cli.build` defines ``build``.
+- :mod:`eosquality.cli.setup` defines ``setup``.
+- :mod:`eosquality.cli.fit` defines ``fit``.
+- :mod:`eosquality.cli.run` defines ``run``.
 
-This module is just the dispatcher: it builds the argparse tree by
-calling each submodule's ``register_subparsers``, parses ``sys.argv``,
-and invokes the selected command.
+This module is the Click group that dispatches to them.
 
 End-user workflow
 -----------------
 Each release is pinned to a canonical reference library, resolved locally
 from ``$EOSQUALITY_REFERENCE_LIBRARY_PATH`` → ``./data/indices/<library>/``
 → ``~/.eosquality/indices/<library>/``. Fetch it once with
-``eosquality download``; after that the usual path is fit then run::
+``eosquality setup``; after that the usual path is fit then run::
 
-    eosquality fit --input eos4e40_v1.csv --output artifacts/ [--k 5]
+    eosquality fit --reference eos4e40_v1.csv --output artifacts/ [--training-sets training_eos4e40_v1/]
     eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
 
-Prefetch the library explicitly (useful for CI or airgapped setups)::
+Fetch the library explicitly (useful for CI or airgapped setups)::
 
-    eosquality download [--force]
+    eosquality setup [--force]
 
 For maintainers / advanced use
 ------------------------------
@@ -33,57 +31,99 @@ to produce a new canonical library for the next major release, or to
 build a non-canonical index for internal testing and fit against it::
 
     eosquality build --input library.csv --output /tmp/idx/ [--max-k 50]
-    eosquality fit --input eos4e40_v1.csv --output artifacts/ --vector-index /tmp/idx/
+    eosquality fit --reference eos4e40_v1.csv --output artifacts/ --vector-index /tmp/idx/
 """
 
-import argparse
 import importlib.metadata
-import sys
 
-from eosquality import set_log_level
-from eosquality.cli.build import register_subparsers as _register_build
-from eosquality.cli.download import register_subparsers as _register_download
-from eosquality.cli.fit import register_subparsers as _register_fit
-from eosquality.cli.run import register_subparsers as _register_run
+import click
+
+from eosquality.cli.build import build
+from eosquality.cli.fit import fit
+from eosquality.cli.run import run
+from eosquality.cli.setup import setup
+
+try:
+    _VERSION = importlib.metadata.version("eosquality")
+except importlib.metadata.PackageNotFoundError:
+    _VERSION = "unknown"
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Construct the top-level ``eosquality`` argparse tree."""
-    parser = argparse.ArgumentParser(
-        prog="eosquality",
-        description="Assess the quality of query data against a fitted reference population.",
-    )
-    try:
-        _pkg_version = importlib.metadata.version("eosquality")
-    except importlib.metadata.PackageNotFoundError:
-        _pkg_version = "unknown"
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {_pkg_version}",
-    )
+# Commands for maintainers, listed in their own help block.
+DEVELOPER_COMMANDS = ("build",)
 
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
-    subparsers.required = True
 
-    _register_build(subparsers)
-    _register_download(subparsers)
-    _register_fit(subparsers)
-    _register_run(subparsers)
+class _SectionedGroup(click.Group):
+    """Click group whose help lists user and developer commands separately."""
 
-    return parser
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        """Commands in the order they were added.
+
+        Parameters
+        ----------
+        ctx : click.Context
+            Current context.
+
+        Returns
+        -------
+        list of str
+            Command names.
+        """
+        return list(self.commands)
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        """Write the "Commands" and "Developer commands" help blocks.
+
+        Parameters
+        ----------
+        ctx : click.Context
+            Current context.
+        formatter : click.HelpFormatter
+            Help formatter to write into.
+        """
+        rows = {
+            name: (name, cmd.get_short_help_str(limit=formatter.width))
+            for name, cmd in self.commands.items()
+            if not cmd.hidden
+        }
+        user = [r for n, r in rows.items() if n not in DEVELOPER_COMMANDS]
+        dev = [r for n, r in rows.items() if n in DEVELOPER_COMMANDS]
+        if user:
+            with formatter.section("Commands"):
+                formatter.write_dl(user)
+        if dev:
+            with formatter.section("Developer commands (maintainers only)"):
+                formatter.write_dl(dev)
+
+
+@click.group(
+    cls=_SectionedGroup,
+    help="Assess the quality of Ersilia model predictions.",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(_VERSION, prog_name="eosquality")
+def cli() -> None:
+    """Every subcommand prints curated progress (``-v`` adds DEBUG logs)."""
+
+
+# In workflow order: setup once, then fit per model, then run per query set.
+cli.add_command(setup)
+cli.add_command(fit)
+cli.add_command(run)
+cli.add_command(build)
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse ``argv`` (default ``sys.argv``) and dispatch to the subcommand.
+    """Run the CLI on ``argv`` (default ``sys.argv[1:]``) and exit with its status.
 
-    The CLI shows INFO-level progress by default; ``-v`` adds DEBUG output
-    and the diagnostic tables.
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments, without the program name.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    set_log_level("INFO")
-    sys.exit(args.func(args))
+    cli.main(args=argv, prog_name="eosquality")
 
 
 if __name__ == "__main__":

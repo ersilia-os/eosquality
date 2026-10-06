@@ -18,6 +18,16 @@ def infer_schema(df: pd.DataFrame) -> Schema:
     stripped silently with no warning. Any other non-numeric column raises
     :class:`SchemaError`. Raises :class:`SchemaError` also if the DataFrame
     is empty or contains no numeric columns at all.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Reference predictions.
+
+    Returns
+    -------
+    Schema
+        One numeric column spec per output column.
     """
     if df.empty:
         raise SchemaError("Input DataFrame is empty.")
@@ -60,6 +70,13 @@ def validate_against_schema(df: pd.DataFrame, schema: Schema) -> None:
 
     ``key`` and ``input`` are silently ignored. Raises :class:`SchemaError`
     if a fitted numeric column is missing or is no longer numeric.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Query predictions.
+    schema : Schema
+        The fitted schema.
     """
     missing = [c for c in schema.column_names if c not in df.columns]
     if missing:

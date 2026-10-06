@@ -73,11 +73,31 @@ class PhyschemBackend:
 
     @property
     def n_features(self) -> int:
+        """Number of descriptor features.
+
+        Returns
+        -------
+        int
+        """
         return len(self._scaler_params["descriptor_names"])
 
     def compute_reference_subset(
         self, reference: pd.DataFrame, indices: np.ndarray
     ) -> np.ndarray:
+        """Descriptor rows of the given reference molecules.
+
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Reference predictions (unused by library-backed backends).
+        indices : numpy.ndarray
+            Reference row indices.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(len(indices), n_features)``.
+        """
         if self._ref_matrix is None:
             raise RuntimeError(
                 "PhyschemBackend has no cached reference matrix; "
@@ -86,15 +106,45 @@ class PhyschemBackend:
         return _gather_rows(self._ref_matrix, indices)
 
     def query_matrix(self, smiles_list: list[str]) -> np.ndarray:
+        """Descriptor matrix of query molecules.
+
+        Parameters
+        ----------
+        smiles_list : list of str
+            Query SMILES.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n_query, n_features)``.
+        """
         raw = compute_physchem_raw(smiles_list)
         return apply_scaler(raw, self._scaler_params)
 
     def save_state(self, folder: pathlib.Path) -> None:
+        """Persist the per-fit backend state into the ``signal/`` folder.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The component folder.
+        """
         with open(folder / PHYSCHEM_SCALER_FILE, "w") as f:
             json.dump(self._scaler_params, f)
 
     @classmethod
     def from_library(cls, vi: VectorIndex) -> PhyschemBackend:
+        """Fit-time backend reading the library's precomputed matrix.
+
+        Parameters
+        ----------
+        vi : VectorIndex
+            The reference library's index (its folder holds the matrix).
+
+        Returns
+        -------
+        PhyschemBackend
+        """
         library_dir = vi.index_dir
         scaler_path = library_dir / PHYSCHEM_SCALER_FILE
         matrix_path = library_dir / PHYSCHEM_REF_MATRIX_FILE
@@ -118,6 +168,17 @@ class PhyschemBackend:
 
     @classmethod
     def load_state(cls, folder: pathlib.Path) -> PhyschemBackend:
+        """Run-time backend from a saved ``signal/`` folder.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The component folder.
+
+        Returns
+        -------
+        PhyschemBackend
+        """
         path = folder / PHYSCHEM_SCALER_FILE
         if not path.is_file():
             raise FileNotFoundError(
@@ -145,11 +206,31 @@ class MaccsBackend:
 
     @property
     def n_features(self) -> int:
+        """Number of descriptor features.
+
+        Returns
+        -------
+        int
+        """
         return N_MACCS
 
     def compute_reference_subset(
         self, reference: pd.DataFrame, indices: np.ndarray
     ) -> np.ndarray:
+        """Descriptor rows of the given reference molecules.
+
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Reference predictions (unused by library-backed backends).
+        indices : numpy.ndarray
+            Reference row indices.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(len(indices), n_features)``.
+        """
         if self._ref_matrix is None:
             raise RuntimeError(
                 "MaccsBackend has no reference matrix; construct via "
@@ -158,13 +239,43 @@ class MaccsBackend:
         return _gather_rows(self._ref_matrix, indices)
 
     def query_matrix(self, smiles_list: list[str]) -> np.ndarray:
+        """Descriptor matrix of query molecules.
+
+        Parameters
+        ----------
+        smiles_list : list of str
+            Query SMILES.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(n_query, n_features)``.
+        """
         return compute_maccs(smiles_list)
 
     def save_state(self, folder: pathlib.Path) -> None:
-        return None
+        """Persist the per-fit backend state into the ``signal/`` folder.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The component folder.
+        """
+        del folder  # MACCS has no per-fit state
 
     @classmethod
     def from_library(cls, vi: VectorIndex) -> MaccsBackend:
+        """Fit-time backend reading the library's precomputed matrix.
+
+        Parameters
+        ----------
+        vi : VectorIndex
+            The reference library's index (its folder holds the matrix).
+
+        Returns
+        -------
+        MaccsBackend
+        """
         path = vi.index_dir / MACCS_FILE
         if not path.is_file():
             raise FileNotFoundError(
@@ -181,6 +292,17 @@ class MaccsBackend:
 
     @classmethod
     def load_state(cls, folder: pathlib.Path) -> MaccsBackend:
+        """Run-time backend from a saved ``signal/`` folder.
+
+        Parameters
+        ----------
+        folder : pathlib.Path
+            The component folder.
+
+        Returns
+        -------
+        MaccsBackend
+        """
         del folder
         return cls()
 
@@ -189,7 +311,19 @@ DescriptorBackend = PhyschemBackend | MaccsBackend
 
 
 def make_backend(name: str, vi: VectorIndex) -> DescriptorBackend:
-    """Construct a fit-time descriptor backend from its name."""
+    """Construct a fit-time descriptor backend from its name.
+
+    Parameters
+    ----------
+    name : {"physchem", "maccs"}
+        Descriptor identifier.
+    vi : VectorIndex
+        The reference library's index.
+
+    Returns
+    -------
+    PhyschemBackend or MaccsBackend
+    """
     if name == PHYSCHEM_NAME:
         return PhyschemBackend.from_library(vi)
     if name == MACCS_NAME:
@@ -200,7 +334,19 @@ def make_backend(name: str, vi: VectorIndex) -> DescriptorBackend:
 
 
 def load_backend(name: str, folder: pathlib.Path) -> DescriptorBackend:
-    """Reconstruct a backend from a saved ``signal/`` folder."""
+    """Reconstruct a backend from a saved ``signal/`` folder.
+
+    Parameters
+    ----------
+    name : str
+        Descriptor identifier from ``umbrella.json``.
+    folder : pathlib.Path
+        The ``signal/`` folder.
+
+    Returns
+    -------
+    PhyschemBackend or MaccsBackend
+    """
     if name == PHYSCHEM_NAME:
         return PhyschemBackend.load_state(folder)
     if name == MACCS_NAME:

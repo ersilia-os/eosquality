@@ -28,6 +28,11 @@ def validate_eos_id(eos_id: str) -> None:
 
     Valid format: ``eos`` + 1 digit + 3 alphanumeric characters (7 chars total).
     Examples: ``eos4e40``, ``eos7m30``, ``eos3804``.
+
+    Parameters
+    ----------
+    eos_id : str
+        Candidate identifier.
     """
     if not EOS_ID_RE.match(eos_id):
         raise ValueError(
@@ -41,6 +46,11 @@ def validate_version(version: str) -> None:
 
     Valid format: ``v`` followed by one or more digits.
     Examples: ``v1``, ``v2``, ``v10``.
+
+    Parameters
+    ----------
+    version : str
+        Candidate version string.
     """
     if not VERSION_RE.match(version):
         raise ValueError(
@@ -101,6 +111,16 @@ def extract_from_path(path: str | os.PathLike) -> tuple[str, str]:
 
 
 def find_eos_id(path: str | os.PathLike) -> str | None:
-    """Return the first EOS identifier in a filename, or ``None`` if absent."""
+    """Return the first EOS identifier in a filename, or ``None`` if absent.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        File or folder path; only the name is used.
+
+    Returns
+    -------
+    str or None
+    """
     m = _EOS_ID_ANYWHERE_RE.search(os.path.basename(str(path)))
     return m.group(1) if m else None

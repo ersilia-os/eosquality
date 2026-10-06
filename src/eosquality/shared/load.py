@@ -22,7 +22,17 @@ SUBFOLDER = "shared"
 
 
 def load_shared(root: str | pathlib.Path) -> SharedFitState:
-    """Read the SharedFitState from ``<root>/shared/``."""
+    """Read the SharedFitState from ``<root>/shared/``.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        Folder that contains ``shared/``.
+
+    Returns
+    -------
+    SharedFitState
+    """
     folder = pathlib.Path(root) / SUBFOLDER
     if not folder.is_dir():
         raise FileNotFoundError(

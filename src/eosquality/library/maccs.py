@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit.Chem import MACCSkeys
 from rdkit.DataStructs import ConvertToNumpyArray
 
@@ -28,7 +28,8 @@ def _compute_one(smi: str) -> np.ndarray:
     """166-bit MACCS row for one SMILES; all zeros if it fails to parse."""
     row_full = np.zeros(MACCS_WIDTH_RAW, dtype=np.uint8)
     try:
-        mol = Chem.MolFromSmiles(smi)
+        with rdBase.BlockLogs():
+            mol = Chem.MolFromSmiles(smi)
         if mol is not None:
             ConvertToNumpyArray(MACCSkeys.GenMACCSKeys(mol), row_full)
     except Exception:  # RDKit raises a variety of types on malformed input
@@ -42,7 +43,22 @@ def compute_maccs(
     n_jobs: int | None = None,
     show_progress: bool | None = None,
 ) -> np.ndarray:
-    """Compute the ``(n, 166)`` uint8 MACCS matrix, rows in input order."""
+    """Compute the ``(n, 166)`` uint8 MACCS matrix, rows in input order.
+
+    Parameters
+    ----------
+    smiles : iterable of str
+        Input SMILES.
+    n_jobs : int, optional
+        Worker processes for large inputs (default: every CPU).
+    show_progress : bool, optional
+        Show a progress bar; ``None`` shows it only for parallel runs.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, 166)`` uint8 bits; unparsable SMILES give an all-zero row.
+    """
     smiles_list = list(smiles)
     out = np.empty((len(smiles_list), N_MACCS), dtype=np.uint8)
     return map_rows(

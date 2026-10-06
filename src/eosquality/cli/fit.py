@@ -1,239 +1,369 @@
-"""CLI handler for ``eosquality fit``."""
+"""``eosquality fit`` — fit the reference and/or training modality."""
 
-import argparse
-import os
-import sys
-import traceback
+from __future__ import annotations
 
-import pandas as pd
+import pathlib
+import time
+from typing import TYPE_CHECKING
 
-from eosquality import set_verbosity
-from eosquality.exceptions import SchemaError
-from eosquality.quality import (
+import click
+
+from eosquality._registry import (
     ALL_SCORES,
+    DEFAULT_MAX_FEATURES,
     DEFAULT_SCORES,
     MIN_REFERENCE_SAMPLES,
-    ErsiliaQuality,
 )
-from eosquality.shared.fit import DEFAULT_MAX_FEATURES
+from eosquality.cli._common import (
+    CliError,
+    require_new_path,
+    run_command,
+    staged_log,
+    verbose_option,
+)
+from eosquality.utils import console
 from eosquality.utils.identifiers import extract_from_path, find_eos_id
+from eosquality.utils.logging import logger
+
+if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-up
+    import pandas as pd
+
+LOG_FILE = "eosquality.log"
 
 
-def _parse_scores(s: str) -> list[str]:
-    """Parse a comma-separated --scores arg into a list of score names."""
-    return [tok.strip() for tok in s.split(",") if tok.strip()]
+def model_id_from_name(path: str, fallback_version: str) -> tuple[str, str] | None:
+    """Read ``(eos_id, version)`` from a file or folder name.
 
+    Parameters
+    ----------
+    path : str
+        File or folder path, e.g. ``eos4e40_v1.csv`` or ``training_eos4e40_v1/``.
+    fallback_version : str
+        Version to use when the name carries an EOS id but no version.
 
-def _print_error(message: str, exc: Exception, *, verbose: bool) -> None:
-    """Emit a single-line user-facing error; print full traceback in -v mode."""
-    print(f"error: {message}: {exc}", file=sys.stderr)
-    if verbose:
-        traceback.print_exc(file=sys.stderr)
-
-
-def cmd_fit(args: argparse.Namespace) -> int:
-    """Argparse handler for ``eosquality fit``."""
-    if args.verbose:
-        set_verbosity(True)
-
-    if os.path.exists(args.output):
-        print(
-            f"error: output path '{args.output}' already exists; "
-            "delete or move it before re-running fit.",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Extract eos_id and version from the source filename.
-    # Version falls back to --version flag if not found in the filename.
+    Returns
+    -------
+    tuple of (str, str) or None
+        The model id and version, or ``None`` if the name has no EOS id.
+    """
+    name = pathlib.Path(path).name
     try:
-        eos_id, version = extract_from_path(args.input)
+        return extract_from_path(name)
     except ValueError:
-        eos_id, version = find_eos_id(args.input), args.version
-        if eos_id is None:
-            print(
-                f"error: could not find a valid EOS identifier in filename "
-                f"'{os.path.basename(args.input)}'. "
-                "Rename the file to include the model ID and version "
-                "(e.g. 'eos4e40_v1.csv').",
-                file=sys.stderr,
+        eos_id = find_eos_id(name)
+        return (eos_id, fallback_version) if eos_id else None
+
+
+def _resolve_model_id(reference: str | None, training_sets: str | None, version: str):
+    source = reference if reference is not None else training_sets
+    model_id = model_id_from_name(source, version)
+    if model_id is None:
+        raise CliError(
+            f"could not find a valid EOS identifier in '{pathlib.Path(source).name}'. "
+            "Rename it to include the model ID and version (e.g. 'eos4e40_v1.csv' "
+            "or 'training_eos4e40_v1/')."
+        )
+    if reference is not None and training_sets is not None:
+        training_id = model_id_from_name(training_sets, model_id[1])
+        if training_id is not None and training_id[0] != model_id[0]:
+            raise CliError(
+                f"--training-sets is for {training_id[0]} but --reference is for "
+                f"{model_id[0]}."
             )
-            return 1
+    return model_id
 
-    print(f"→ reading reference CSV: {args.input}", file=sys.stderr)
+
+def _check_inputs(reference, training_sets, output, artifacts) -> None:
+    if reference is None and training_sets is None:
+        raise CliError("give --reference, --training-sets, or both.")
+    if artifacts is not None:
+        if reference is not None or output is not None:
+            raise CliError(
+                "--artifacts adds training sets to an existing artifacts folder; "
+                "it cannot be combined with --reference or --output."
+            )
+        if training_sets is None:
+            raise CliError("--artifacts needs --training-sets.")
+        if not pathlib.Path(artifacts).is_dir():
+            raise CliError(f"artifacts folder '{artifacts}' does not exist.")
+    elif output is None:
+        raise CliError("--output is required (or --artifacts to add training sets).")
+
+
+def _read_reference(path: str | None) -> pd.DataFrame | None:
+    if path is None:
+        return None
+    logger.info(f"fit | reading reference CSV {path}")
+    import pandas as pd
+
     try:
-        reference = pd.read_csv(args.input)
-    except FileNotFoundError as exc:
-        _print_error(
-            f"reference CSV not found at '{args.input}'", exc, verbose=args.verbose
-        )
-        return 1
+        return pd.read_csv(path)
     except Exception as exc:
-        _print_error(
-            f"could not read reference CSV '{args.input}'", exc, verbose=args.verbose
-        )
-        return 1
+        raise CliError(f"could not read reference CSV '{path}': {exc}") from exc
 
-    max_features = args.max_features if args.max_features > 0 else None
-    max_signal_train_samples = (
-        args.max_signal_samples if args.max_signal_samples > 0 else None
+
+def _positive_or_none(value: int) -> int | None:
+    return value if value > 0 else None
+
+
+@click.command(
+    "fit",
+    help=(
+        "Fit quality scores for one model and save the artifacts. Two modalities, "
+        "each fitted when its data is given: --reference (the model's predictions "
+        "on the reference library) and --training-sets (a folder of per-output-column "
+        "training sets). Give either or both; --training-sets with --artifacts adds "
+        "training sets to an existing artifacts folder. The model id is read from "
+        "the --reference file name, else from the --training-sets folder name (e.g. "
+        "eos4e40_v1.csv, training_eos4e40_v1/). The canonical reference library "
+        "is resolved locally; fit never downloads."
+    ),
+    short_help="Fit quality scores and save artifacts.",
+)
+@click.option(
+    "--reference",
+    metavar="CSV",
+    help="Reference modality: predictions on the reference library.",
+)
+@click.option(
+    "--training-sets",
+    metavar="DIR",
+    help=(
+        "Training modality: folder with one <output_column>.csv per column "
+        "('smiles', optional 'y', optional 'key')."
+    ),
+)
+@click.option(
+    "--training-predictions",
+    metavar="CSV",
+    help="The model's own predictions on the training molecules (Ersilia output CSV).",
+)
+@click.option(
+    "--output", "-o", metavar="PATH", help="New artifacts folder (must not exist)."
+)
+@click.option(
+    "--artifacts",
+    "-a",
+    metavar="PATH",
+    help="Existing artifacts folder to add --training-sets to, in place.",
+)
+@click.option(
+    "--vector-index",
+    metavar="PATH",
+    help="Fit the reference modality against a non-canonical vector index folder.",
+)
+@click.option(
+    "--k",
+    default=5,
+    show_default=True,
+    type=click.IntRange(min=1),
+    metavar="K",
+    help="Nearest neighbours.",
+)
+@click.option(
+    "--version",
+    default="v1",
+    show_default=True,
+    metavar="VERSION",
+    help="Dataset version, used only if the file/folder name has none.",
+)
+@click.option(
+    "--ignore-size",
+    is_flag=True,
+    help=f"Skip the {MIN_REFERENCE_SAMPLES:,}-row minimum (testing only).",
+)
+@click.option(
+    "--max-features",
+    default=DEFAULT_MAX_FEATURES,
+    show_default=True,
+    metavar="N",
+    help="Feature-selection cap; 0 or negative disables it.",
+)
+@click.option(
+    "--scores",
+    metavar="LIST",
+    help=(
+        f"Comma-separated reference scores to fit, from: {', '.join(ALL_SCORES)}. "
+        f"Default: {','.join(DEFAULT_SCORES)} ('signal' is opt-in)."
+    ),
+)
+@click.option(
+    "--max-signal-samples",
+    default=1000,
+    show_default=True,
+    metavar="N",
+    help="Signal training rows; 0 or negative uses the full train slice.",
+)
+@click.option(
+    "--signal-descriptor",
+    default="physchem",
+    show_default=True,
+    type=click.Choice(["physchem", "maccs"]),
+    help="Feature backend of the 'signal' score.",
+)
+@verbose_option
+def fit(
+    reference: str | None,
+    training_sets: str | None,
+    training_predictions: str | None,
+    output: str | None,
+    artifacts: str | None,
+    vector_index: str | None,
+    k: int,
+    version: str,
+    ignore_size: bool,
+    max_features: int,
+    scores: str | None,
+    max_signal_samples: int,
+    signal_descriptor: str,
+    verbose: bool,
+) -> None:
+    """Fit the reference and/or training modality and save the artifacts.
+
+    Parameters
+    ----------
+    reference : str or None
+        Reference predictions CSV.
+    training_sets : str or None
+        Training-set folder.
+    training_predictions : str or None
+        Model predictions on the training molecules.
+    output : str or None
+        New artifacts folder.
+    artifacts : str or None
+        Existing artifacts folder to add the training sets to.
+    vector_index : str or None
+        Custom vector index for the reference modality.
+    k : int
+        Nearest neighbours.
+    version : str
+        Fallback dataset version.
+    ignore_size : bool
+        Skip the minimum reference size.
+    max_features : int
+        Feature-selection cap (non-positive disables it).
+    scores : str or None
+        Comma-separated reference scores.
+    max_signal_samples : int
+        Signal training rows (non-positive: all).
+    signal_descriptor : str
+        Signal descriptor backend.
+    verbose : bool
+        Print debug messages and diagnostic tables.
+    """
+
+    options = dict(locals())
+    run_command(lambda: _fit(**options), verbose=verbose, command="fit")
+
+
+def _fit(
+    *,
+    reference,
+    training_sets,
+    training_predictions,
+    output,
+    artifacts,
+    vector_index,
+    k,
+    version,
+    ignore_size,
+    max_features,
+    scores,
+    max_signal_samples,
+    signal_descriptor,
+    verbose,
+) -> None:
+    _check_inputs(reference, training_sets, output, artifacts)
+    started = time.perf_counter()
+    if artifacts is not None:
+        _add_training(artifacts, training_sets, training_predictions, version, started)
+        return
+    require_new_path(output)
+    eos_id, model_version = _resolve_model_id(reference, training_sets, version)
+    score_list = (
+        [t.strip() for t in scores.split(",") if t.strip()]
+        if scores
+        else list(DEFAULT_SCORES)
     )
+    output_path = pathlib.Path(output)
+    console.summary_panel(
+        "eosquality · fit",
+        [
+            ("model", f"{eos_id} {model_version}"),
+            ("reference", console.path(reference) if reference else "—"),
+            ("training sets", console.path(training_sets) if training_sets else "—"),
+            ("scores", ", ".join(score_list) if reference else "—"),
+            ("output", console.path(output_path)),
+        ],
+        icon="◆",
+    )
+    with staged_log(output_path / LOG_FILE) as log_path:
+        logger.info(f"fit | eosquality {eos_id} {model_version} → {output_path}")
+        from eosquality.quality import ErsiliaQuality
 
-    scores = _parse_scores(args.scores) if args.scores else list(DEFAULT_SCORES)
-
-    try:
-        eq = ErsiliaQuality(k=args.k, verbose=args.verbose)
+        eq = ErsiliaQuality(k=k, verbose=verbose)
         eq.fit(
-            reference,
+            _read_reference(reference),
             eos_id=eos_id,
-            version=version,
-            vector_index=args.vector_index,
-            ignore_size=args.ignore_size,
-            scores=scores,
-            max_features=max_features,
-            max_signal_train_samples=max_signal_train_samples,
-            signal_descriptor=args.signal_descriptor,
+            version=model_version,
+            vector_index=vector_index,
+            ignore_size=ignore_size,
+            scores=score_list,
+            max_features=_positive_or_none(max_features),
+            max_signal_train_samples=_positive_or_none(max_signal_samples),
+            signal_descriptor=signal_descriptor,
+            training_sets=training_sets,
+            training_predictions=training_predictions,
         )
-        eq.save(args.output)
-    except SchemaError as exc:
-        _print_error(
-            "reference does not match the expected schema", exc, verbose=args.verbose
-        )
-        return 1
-    except FileNotFoundError as exc:
-        _print_error(
-            "fit failed because a required file is missing (likely the canonical "
-            "library — run 'eosquality download' first)",
-            exc,
-            verbose=args.verbose,
-        )
-        return 1
-    except Exception as exc:
-        _print_error("fit failed", exc, verbose=args.verbose)
-        return 1
-
-    return 0
+        with console.section("Save") as section:
+            eq.save(output_path)
+            section.summary = f"{console.folder_size(output_path)}"
+    _fit_summary(eq, output_path, log_path, started)
 
 
-def register_subparsers(subparsers) -> None:
-    """Attach the ``fit`` subcommand to *subparsers*."""
-    fit_p = subparsers.add_parser(
-        "fit",
-        help="Fit a reference population and save artifacts.",
-        description=(
-            "Fit a reference population from a CSV file and persist the artifacts. "
-            "The canonical reference library is resolved locally (env override "
-            "EOSQUALITY_REFERENCE_LIBRARY_PATH → ./data/indices/<library>/ → "
-            "~/.eosquality/indices/<library>/); fit never downloads — run "
-            "'eosquality download' first if the library isn't cached yet. Use "
-            "--vector-index to fit against a non-canonical index instead."
-        ),
+def _add_training(artifacts, training_sets, training_predictions, version, started):
+    """``fit --artifacts``: add the training modality to existing artifacts."""
+    model_id = model_id_from_name(training_sets, version)
+    folder = pathlib.Path(artifacts)
+    console.summary_panel(
+        "eosquality · fit (add training)",
+        [
+            ("artifacts", console.path(folder)),
+            ("training sets", console.path(training_sets)),
+        ],
+        icon="◆",
     )
-    fit_p.add_argument(
-        "--input",
-        "-i",
-        required=True,
-        metavar="PATH",
-        help="Path to the reference CSV file (must contain 'key', 'input', and numeric feature columns).",
+    with logger.log_file(folder / LOG_FILE) as log_path:
+        logger.info(f"fit | adding training sets {training_sets} → {folder}")
+        from eosquality.quality import ErsiliaQuality
+
+        eq = ErsiliaQuality.add_training(
+            artifacts,
+            training_sets,
+            training_predictions,
+            eos_id=model_id[0] if model_id else None,
+            version=model_id[1] if model_id else None,
+        )
+    _fit_summary(eq, folder, log_path, started)
+
+
+def _fit_summary(eq, folder: pathlib.Path, log_path: pathlib.Path, started) -> None:
+    """Final ``✓ Fit complete`` panel."""
+    eos_id, version = eq._model_id()
+    scores = list(eq._components()) + list(eq._training_components())
+    console.summary_panel(
+        "Fit complete",
+        [
+            ("model", f"{eos_id} {version}"),
+            ("modalities", " + ".join(eq.modalities_)),
+            ("scores", ", ".join(scores)),
+            (
+                "artifacts",
+                f"{console.path(folder)}  [dim]{console.folder_size(folder)}[/]",
+            ),
+            ("log", console.path(log_path)),
+            ("time", console.elapsed(time.perf_counter() - started)),
+        ],
+        color="green",
+        icon="✓",
     )
-    fit_p.add_argument(
-        "--output",
-        "-o",
-        required=True,
-        metavar="PATH",
-        help="Output folder for the saved artifacts (e.g. artifacts/).",
-    )
-    fit_p.add_argument(
-        "--vector-index",
-        default=None,
-        dest="vector_index",
-        metavar="PATH",
-        help=(
-            "Fit against a non-canonical vector index folder built with "
-            "'eosquality build' (default: the canonical reference library). "
-            "The folder's absolute path is recorded in the artifacts and must "
-            "still exist at run time."
-        ),
-    )
-    fit_p.add_argument(
-        "--k",
-        type=int,
-        default=5,
-        metavar="K",
-        help="Number of nearest neighbors (default: 5).",
-    )
-    fit_p.add_argument(
-        "--version",
-        default="v1",
-        metavar="VERSION",
-        help=(
-            "Dataset version (e.g. 'v1'). Used only when the version cannot be "
-            "extracted from the filename. If the filename contains a version "
-            "(e.g. 'eos4e40_v2.csv'), the filename always wins (default: v1)."
-        ),
-    )
-    fit_p.add_argument(
-        "--ignore-size",
-        action="store_true",
-        dest="ignore_size",
-        help=(
-            f"Skip the minimum-row check ({MIN_REFERENCE_SAMPLES:,} rows required). "
-            "For development and testing only."
-        ),
-    )
-    fit_p.add_argument(
-        "--max-features",
-        type=int,
-        default=DEFAULT_MAX_FEATURES,
-        dest="max_features",
-        metavar="N",
-        help=(
-            "Cap on the number of features kept after correlation-cluster "
-            f"medoid reduction (default: {DEFAULT_MAX_FEATURES}). "
-            "Pass 0 or a negative value to disable reduction."
-        ),
-    )
-    fit_p.add_argument(
-        "--scores",
-        default=None,
-        metavar="LIST",
-        help=(
-            "Comma-separated list of scores to fit. Choices: "
-            f"{', '.join(ALL_SCORES)}. "
-            "Example: --scores signal,typicality. "
-            f"Default: {','.join(DEFAULT_SCORES)} ('signal' is opt-in)."
-        ),
-    )
-    fit_p.add_argument(
-        "--max-signal-samples",
-        type=int,
-        default=1000,
-        dest="max_signal_samples",
-        metavar="N",
-        help=(
-            "Cap on the number of training rows the 'signal' XGBoost model is "
-            "fit on (default: 1000, for fast iteration). Pass 0 or a negative "
-            "value to use the full training slice. Calibration always uses the "
-            "full validation slice. Ignored when 'signal' is not in the score set."
-        ),
-    )
-    fit_p.add_argument(
-        "--signal-descriptor",
-        default="physchem",
-        choices=("physchem", "maccs"),
-        dest="signal_descriptor",
-        help=(
-            "Feature backend the 'signal' score uses (default: physchem). "
-            "'physchem' = RDKit physicochemical descriptors; 'maccs' = MACCS "
-            "structural keys. Both are precomputed in the library. The choice "
-            "is recorded in the saved artifact and used by 'eosquality run'. "
-            "Ignored when 'signal' is not in the score set."
-        ),
-    )
-    fit_p.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Print debug messages and diagnostic tables.",
-    )
-    fit_p.set_defaults(func=cmd_fit)

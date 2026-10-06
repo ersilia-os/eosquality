@@ -100,15 +100,30 @@ class Support(ScoreComponent):
         shared: SharedFitState | None = None,
         knn: KnnFitState | None = None,
     ) -> Support:
-        """Fit on a reference DataFrame.
+        """Build the calibration table of nearest-analogue similarities.
 
-        Reads each library molecule's nearest *other* molecule from the
-        precomputed self-kNN (identity already stripped at index build time)
-        and sorts those similarities into the calibration CDF.
+        Pass pre-fit ``shared`` / ``knn`` (as :class:`ErsiliaQuality` does), or
+        ``eos_id`` + ``version`` so both states are fitted here.
 
-        Either pass pre-fit ``shared=`` / ``knn=`` (when composed by
-        :class:`ErsiliaQuality`), or pass ``eos_id`` + ``version`` +
-        ``vector_index`` so Support can fit both states itself.
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Predictions on the reference library.
+        vector_index : str, pathlib.Path or VectorIndex
+            The reference library's vector index.
+        k : int, optional
+            Fingerprint neighbours reported per query.
+        eos_id, version : str, optional
+            Model id and version, needed only to fit ``shared`` here.
+        shared : SharedFitState, optional
+            Pre-fit shared state.
+        knn : KnnFitState, optional
+            Pre-fit kNN state.
+
+        Returns
+        -------
+        Support
+            ``self``, fitted.
         """
         t0 = time.perf_counter()
         shared, knn, vi = _resolve_shared_and_knn(
@@ -149,18 +164,21 @@ class Support(ScoreComponent):
         query_fp_indices: np.ndarray | None = None,
         query_fp_distances: np.ndarray | None = None,
     ) -> SupportRunResult:
-        """Score query samples.
+        """Score query molecules.
 
         Parameters
         ----------
-        query:
-            DataFrame with an ``'input'`` SMILES column for the vector
-            index (other columns are ignored — Support is FP-only).
-        query_fp_indices, query_fp_distances:
-            Optional pre-computed FP-selected neighbor indices and their
-            Tanimoto distances, each ``(n_query, k)``. Must be passed
-            together — used by :class:`ErsiliaQuality` to share the FP
-            query across scores.
+        query : pandas.DataFrame
+            Needs an ``input`` SMILES column; other columns are ignored.
+        query_fp_indices, query_fp_distances : numpy.ndarray, optional
+            Pre-computed ``(n_query, k)`` FP neighbours and Tanimoto distances
+            (pass both or neither); recomputed from the vector index if omitted.
+
+        Returns
+        -------
+        SupportRunResult
+            Calibrated score, nearest-analogue similarity, ``support_log``,
+            neighbour ids and metadata.
         """
         self._check_fitted()
         assert self._shared is not None
@@ -176,6 +194,7 @@ class Support(ScoreComponent):
                 query, self._get_vector_index(), self._knn.k
             )
 
+        # NaN rows (unparsable SMILES) stay NaN through the CDF.
         nearest_similarity = 1.0 - query_fp_distances.min(axis=1)
         support_score = _cdf_score(
             nearest_similarity, self._sorted_self_similarities, higher_is_higher=True
@@ -193,7 +212,8 @@ class Support(ScoreComponent):
                 query_fp_distances.mean(axis=1), index=idx, name="distance_k_mean"
             ),
             nearest_reference_ids=[
-                [reference_ids[j] for j in row] for row in query_fp_indices
+                [reference_ids[j] for j in row] if np.isfinite(dist[0]) else []
+                for row, dist in zip(query_fp_indices, query_fp_distances, strict=True)
             ],
             metadata={
                 "reference_support": self._reference_support,
@@ -226,6 +246,12 @@ class Support(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._knn is not None
@@ -235,12 +261,24 @@ class Support(ScoreComponent):
 
     @property
     def sorted_self_similarities_(self) -> np.ndarray:
+        """Sorted nearest-analogue similarities of the library (the calibration CDF).
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._sorted_self_similarities is not None
         return self._sorted_self_similarities
 
     @property
     def reference_support_(self) -> float:
+        """Mean calibrated support of the reference (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_support is not None
         return self._reference_support

@@ -55,7 +55,9 @@ def test_save_load_roundtrip(fitted, query, tmp_path):
 
 def test_splits_are_not_truncated_by_signal(fitted, reference, tmp_path):
     fitted.save(tmp_path / "art")
-    splits = json.loads((tmp_path / "art/shared/splits.json").read_text())
+    splits = json.loads(
+        (tmp_path / "art/reference_mode/shared/splits.json").read_text()
+    )
     assert splits["n_train"] + splits["n_val"] + splits["n_test"] == len(reference)
     assert splits["n_train"] == round(0.8 * len(reference))
 
@@ -63,11 +65,11 @@ def test_splits_are_not_truncated_by_signal(fitted, reference, tmp_path):
 def test_standalone_component_load(fitted, query, tmp_path):
     fitted.save(tmp_path / "art")
     expected = fitted.run(query).scores
-    support = Support.load(tmp_path / "art").run(query)
+    support = Support.load(tmp_path / "art/reference_mode").run(query)
     np.testing.assert_array_equal(
         support.score.to_numpy(), expected["support"].to_numpy()
     )
-    typicality = Typicality.load(tmp_path / "art").run(query)
+    typicality = Typicality.load(tmp_path / "art/reference_mode").run(query)
     np.testing.assert_array_equal(
         typicality.score.to_numpy(), expected["typicality"].to_numpy()
     )
@@ -104,7 +106,7 @@ def test_support_raw_is_nearest_analogue_similarity(fitted, query):
 
 def test_old_format_is_rejected(fitted, tmp_path):
     fitted.save(tmp_path / "art")
-    meta_path = tmp_path / "art/shared/metadata.json"
+    meta_path = tmp_path / "art/reference_mode/shared/metadata.json"
     meta = json.loads(meta_path.read_text())
     del meta["format_version"]
     meta_path.write_text(json.dumps(meta))
@@ -137,3 +139,10 @@ def test_typicality_only_fit_needs_no_index(reference, query):
         "extremity",
         "extremity_raw",
     ]
+
+
+def test_old_flat_layout_is_rejected(fitted, tmp_path):
+    fitted.save(tmp_path / "art")
+    (tmp_path / "art/reference_mode").rename(tmp_path / "art/shared")
+    with pytest.raises(ArtifactVersionError, match="old flat layout"):
+        ErsiliaQuality.load(tmp_path / "art")

@@ -13,7 +13,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
+from rdkit import Chem, rdBase
 
 from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.knn.fit import fit_knn
@@ -23,6 +23,7 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
+from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
 # ---------------------------------------------------------------------------
@@ -45,11 +46,67 @@ def _nan_aggregate(per_feature: np.ndarray) -> np.ndarray:
     feature is NaN aggregates to NaN. Shared by typicality and extremity so
     both follow the same missing-value policy.
     """
-    if per_feature.shape[1] == 0:
-        return np.full(per_feature.shape[0], np.nan)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN rows
-        return np.nanquantile(per_feature, AGGREGATE_QUANTILE, axis=1)
+    return _row_nanquantile(per_feature, AGGREGATE_QUANTILE)
+
+
+# Rows per block in _row_nanquantile.
+_QUANTILE_CHUNK = 262_144
+
+
+def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
+    """Row-wise ``np.nanquantile(values, q, axis=1)`` (linear method), vectorised.
+
+    numpy's ``nanquantile`` along an axis falls back to a Python loop over
+    rows, about 100 s for the 1.35M-row reference library. Sorting each row
+    (NaN last) and interpolating at ``q * (n_finite - 1)`` gives identical
+    values in well under a second. All-NaN rows (and zero columns) give NaN.
+    It differs from numpy only for infinite values, which numpy turns into
+    NaN when interpolating; no caller produces them.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        ``(n_rows, n_columns)`` array; NaN entries are ignored.
+    q : float
+        Quantile in ``[0, 1]``.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_rows,)`` float64.
+    """
+    values = np.asarray(values)
+    n_rows = values.shape[0]
+    if values.ndim != 2 or values.shape[1] == 0:
+        return np.full(n_rows, np.nan)
+    # Row blocks bound the temporary copies (sorted values, NaN mask) to a few
+    # hundred MB, whatever the number of rows.
+    out = np.empty(n_rows, dtype=np.float64)
+    for start in range(0, n_rows, _QUANTILE_CHUNK):
+        stop = min(start + _QUANTILE_CHUNK, n_rows)
+        out[start:stop] = _row_nanquantile_block(values[start:stop], q)
+    return out
+
+
+def _row_nanquantile_block(values: np.ndarray, q: float) -> np.ndarray:
+    """:func:`_row_nanquantile` for one block of rows."""
+    values = values.astype(np.float64, copy=False)
+    n_rows = values.shape[0]
+    ordered = np.sort(values, axis=1)  # NaN sorts last
+    n_finite = np.count_nonzero(~np.isnan(values), axis=1)
+    has_values = n_finite > 0
+    position = q * np.maximum(n_finite - 1, 0)
+    lower = np.floor(position).astype(np.int64)
+    upper = np.minimum(lower + 1, np.maximum(n_finite - 1, 0))
+    fraction = position - lower
+    rows = np.arange(n_rows)
+    a = ordered[rows, lower]
+    b = ordered[rows, upper]
+    # numpy's _lerp: interpolate from whichever end is closer, for exactness.
+    diff = b - a
+    out = np.where(fraction >= 0.5, b - diff * (1.0 - fraction), a + diff * fraction)
+    out = np.where(fraction == 0, a, out)
+    return np.where(has_values, out, np.nan)
 
 
 def _cdf_score(
@@ -290,6 +347,24 @@ def _canonical(smiles: str) -> str | None:
     return Chem.MolToSmiles(mol) if mol is not None else None
 
 
+def _standardize(smiles: str) -> str | None:
+    """Largest fragment, then RDKit canonical isomeric SMILES; ``None`` if unparsable.
+
+    Used to match training molecules with queries: salt and solvent forms of
+    the same parent molecule map to one standardised SMILES.
+    """
+    if not isinstance(smiles, str) or not smiles:
+        return None
+    with rdBase.BlockLogs():
+        mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    frags = Chem.GetMolFrags(mol, asMols=True)
+    if len(frags) > 1:
+        mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
+    return Chem.MolToSmiles(mol)
+
+
 def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
     if query_smiles == library_smiles:
         return True
@@ -318,8 +393,44 @@ def _query_fp_distances(
     fingerprint) is kept, exactly as in the library's own self-kNN.
 
     Pass ``exclude_self_match=False`` to return the raw top-k.
+
+    Rows whose SMILES is missing or does not parse get NaN distances (and
+    index 0, a placeholder), so structure-based scores are NaN for them
+    instead of the whole batch failing inside FPSim2; a warning names them.
     """
     query_smiles = list(query["input"])
+    valid = np.array([_parses(s) for s in query_smiles], dtype=bool)
+    if valid.all():
+        return _query_fp_distances_valid(query_smiles, vi, k, exclude_self_match)
+    bad = np.flatnonzero(~valid)
+    shown = ", ".join(str(query.index[i]) for i in bad[:5])
+    logger.warning(
+        f"{len(bad):,} query row(s) have a missing or unparsable SMILES "
+        f"(rows {shown}{', …' if len(bad) > 5 else ''}); their structure-based "
+        "scores are NaN."
+    )
+    distances = np.full((len(query_smiles), k), np.nan)
+    indices = np.zeros((len(query_smiles), k), dtype=np.int64)
+    if valid.any():
+        d, i = _query_fp_distances_valid(
+            [query_smiles[j] for j in np.flatnonzero(valid)], vi, k, exclude_self_match
+        )
+        distances[valid], indices[valid] = d, i
+    return distances, indices
+
+
+def _parses(smiles) -> bool:
+    """Whether ``smiles`` is a non-empty string that RDKit can parse."""
+    if not isinstance(smiles, str) or not smiles.strip():
+        return False
+    with rdBase.BlockLogs():
+        return Chem.MolFromSmiles(smiles) is not None
+
+
+def _query_fp_distances_valid(
+    query_smiles: list[str], vi: VectorIndex, k: int, exclude_self_match: bool
+) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`_query_fp_distances` for SMILES that are known to parse."""
     if not exclude_self_match:
         fp_distances, vi_indices = vi.query(query_smiles, k=k)
         return fp_distances.astype(np.float64), vi_indices
@@ -351,7 +462,10 @@ _OUTPUT_DISTANCE_CHUNK = 65_536
 
 
 def _query_output_distances(
-    query_repr: np.ndarray, ref_repr: np.ndarray, indices: np.ndarray
+    query_repr: np.ndarray,
+    ref_repr: np.ndarray,
+    indices: np.ndarray,
+    fp_distances: np.ndarray | None = None,
 ) -> np.ndarray:
     """Mean L1 in output space from ``query_repr`` to ``ref_repr[indices]``.
 
@@ -361,7 +475,9 @@ def _query_output_distances(
     ``indices`` come from :func:`_query_fp_distances` (run time) or the
     precomputed self-kNN (fit time). ``ref_repr`` is the post-reduction
     scaled reference matrix, ``SharedFitState.ref_repr``. Computed in
-    row chunks to keep peak memory flat for reference-sized inputs.
+    row chunks to keep peak memory flat for reference-sized inputs. Pass the
+    matching ``fp_distances`` to get NaN wherever a neighbour is only a
+    placeholder (unparsable query SMILES, see :func:`_query_fp_distances`).
     """
     n_query = query_repr.shape[0]
     out = np.empty(indices.shape, dtype=np.float64)
@@ -372,4 +488,6 @@ def _query_output_distances(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN
             out[start:stop] = np.nanmean(diffs, axis=2)
+    if fp_distances is not None:
+        out[~np.isfinite(fp_distances)] = np.nan  # placeholder neighbours
     return out

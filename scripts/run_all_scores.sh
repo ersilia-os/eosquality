@@ -39,7 +39,7 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
     echo "==> [$EOS] eosquality fit (all scores) → $ARTIFACTS"
     rm -rf "$ARTIFACTS"
     eosquality fit \
-        -i "$FIT_INPUT" \
+        --reference "$FIT_INPUT" \
         -o "$ARTIFACTS" \
         --scores "$ALL_SCORES"
 

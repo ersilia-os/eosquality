@@ -36,3 +36,22 @@ def test_output_distance_uses_finite_features_only():
     ref = np.array([[1.0, 5.0], [np.nan, np.nan]])
     d = _query_output_distances(q, ref, np.array([[0, 1]]))
     assert d[0, 0] == 1.0 and np.isnan(d[0, 1])
+
+
+def test_row_nanquantile_matches_numpy():
+    import warnings
+
+    from eosquality.scores._helpers import _row_nanquantile
+
+    rng = np.random.default_rng(1)
+    for trial in range(100):
+        x = rng.normal(size=(rng.integers(1, 30), rng.integers(1, 8)))
+        if trial % 2:
+            x = np.round(x)  # ties
+        x[rng.random(x.shape) < 0.3] = np.nan
+        x[0] = np.nan  # an all-NaN row
+        q = rng.choice([0.0, 0.34, 0.66, 1.0, rng.random()])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            expected = np.nanquantile(x, q, axis=1)
+        np.testing.assert_array_equal(_row_nanquantile(x, q), expected)

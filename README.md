@@ -2,7 +2,7 @@
 
 # Quality of Ersilia predictions
 
-Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` tries to quantify, via multiple metrics, whether a given run output from Ersilia is "trustworthy". It does **not** estimate the probability that a prediction is correct.
+Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` tries to quantify, via multiple metrics, whether a given run output from Ersilia is "trustworthy". It does **not** estimate the probability that a prediction is correct. Per-column normalisation is done with [`eosframes`](https://github.com/ersilia-os/eosframes).
 
 ## Installation
 
@@ -12,17 +12,17 @@ Install the latest version of `eosquality` directly from GitHub:
 pip install git+https://github.com/ersilia-os/eosquality.git
 ```
 
-The CLI is then available as `eosquality`. You need to start by downloading the reference library and its indices:
+The CLI is then available as `eosquality`. Start by setting it up, which fetches the reference library and its indices:
 
 ```bash
-eosquality download
+eosquality setup
 ```
 
-This will take a while. The downloaded library will be stored under `~/.eosquality/`.
+This will take a while. The library is stored under `~/.eosquality/`.
 
 ## Quick start
 
-The typical workflow is two commands: `fit` once per Ersilia model against its reference predictions, then score any query dataset against the saved artifacts.
+The typical workflow is two commands: `fit` once per Ersilia model, then `run` on any query dataset against the saved artifacts. `fit` takes the model's predictions on the reference library (`--reference`), its per-output-column training sets (`--training-sets`), or both, and fits the matching scores. See the [CLI docs](docs/cli.md).
 
 ### Fitting a reference library
 
@@ -31,7 +31,8 @@ The input CSV must hold the model's predictions on the **exact** molecules of th
 There is one and only one reference library per major version of `eosquality`, so the molecule set is fixed by your install. If the SMILES entries in the input CSV don't match that library, `fit` refuses with an error.
 
 ```bash
-eosquality fit --input reference_eos4e40_v1.csv --output artifacts_eos4e40_v1/
+eosquality fit --reference reference_eos4e40_v1.csv --output artifacts_eos4e40_v1/
+# optionally with training sets: --training-sets training_eos4e40_v1/
 ```
 
 Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
@@ -46,7 +47,7 @@ eosquality run --input query_eos4e40_v1.csv --artifacts artifacts_eos4e40_v1/ --
 
 ## Scores
 
-Each score compares a query against the model's own predictions on the reference library, which is **not** ground truth. It is calibrated so that reference molecules score roughly Uniform(0, 1).
+Reference-modality scores compare a query against the model's own predictions on the reference library, which is **not** ground truth. Each is calibrated so that reference molecules score roughly Uniform(0, 1). Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
 
 | Score | Question |
 |---|---|
@@ -55,6 +56,8 @@ Each score compares a query against the model's own predictions on the reference
 | **Support** | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
+| **Training distance** *(with `--training-sets`)* | How far is the molecule from the model's training molecules, compared with how close they are to each other? One value for the whole model. |
+| **Training difficulty** *(training sets with labels)* | How hard is the molecule to predict, judging by where a learned error model finds the training data hard? One value for the whole model. |
 
 ## Documentation
 
@@ -66,8 +69,6 @@ Each score compares a query against the model's own predictions on the reference
 
 ## About the Ersilia Open Source Initiative
 
-The [Ersilia Open Source Initiative](https://ersilia.io) is a tech-nonprofit fueling sustainable research in the Global South. Ersilia's main asset is the [Ersilia Model Hub](https://github.com/ersilia-os/ersilia), an open-source repository of AI/ML models for drug discovery.
+The [Ersilia Open Source Initiative](https://ersilia.io) is a tech-nonprofit organization fueling sustainable research in the Global South. Ersilia's main asset is the [Ersilia Model Hub](https://github.com/ersilia-os/ersilia), an open-source repository of AI/ML models for antimicrobial drug discovery.
 
-`eosquality` is designed to score predictions produced by [Ersilia Model Hub](https://github.com/ersilia-os/ersilia) models. The library is built on [`eosframes`](https://github.com/ersilia-os/eosframes) as a per-column normalization backend.
-
-![Ersilia Logo](https://raw.githubusercontent.com/ersilia-os/eosquality/main/assets/Ersilia_Brand.png)
+![Ersilia Logo](assets/Ersilia_Brand.png)

@@ -90,14 +90,21 @@ class Extremity(ScoreComponent):
         version: str | None = None,
         shared: SharedFitState | None = None,
     ) -> Extremity:
-        """Fit on a reference DataFrame.
+        """Build the Q66 calibration table of reference extremity.
 
-        Builds the sorted reference Q66 aggregates used as the calibration
-        CDF and records ``reference_extremity_`` as a sanity anchor.
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Predictions on the reference library.
+        eos_id, version : str, optional
+            Model id and version, needed only to fit ``shared`` here.
+        shared : SharedFitState, optional
+            Pre-fit shared state (as passed by :class:`ErsiliaQuality`).
 
-        Either pass a pre-fit ``shared=`` (when composed by ErsiliaQuality),
-        or pass ``eos_id`` + ``version`` so Extremity can fit the shared
-        state itself.
+        Returns
+        -------
+        Extremity
+            ``self``, fitted.
         """
         t0 = time.perf_counter()
         shared = _resolve_shared(
@@ -137,13 +144,16 @@ class Extremity(ScoreComponent):
 
         Parameters
         ----------
-        query:
-            DataFrame with the same numeric columns as the reference.
-        query_repr:
-            Optional pre-scaled, feature-selected query array
-            ``(n_query, n_selected)``. If provided, schema validation and the
-            eosframes transform are skipped — used by ErsiliaQuality to share
-            that work across scores.
+        query : pandas.DataFrame
+            The reference's numeric output columns.
+        query_repr : numpy.ndarray, optional
+            Pre-scaled, feature-selected query array; skips validation and scaling
+            (the orchestrator shares this work across scores).
+
+        Returns
+        -------
+        ExtremityRunResult
+            Calibrated score, Q66 aggregate, per-feature values and metadata.
         """
         self._check_fitted()
         assert self._shared is not None
@@ -192,6 +202,12 @@ class Extremity(ScoreComponent):
 
     @property
     def is_fitted_(self) -> bool:
+        """Whether the component is fitted (or loaded).
+
+        Returns
+        -------
+        bool
+        """
         return (
             self._shared is not None
             and self._sorted_self_aggregates is not None
@@ -200,12 +216,24 @@ class Extremity(ScoreComponent):
 
     @property
     def sorted_self_aggregates_(self) -> np.ndarray:
+        """Sorted reference Q66 aggregates (the calibration CDF).
+
+        Returns
+        -------
+        numpy.ndarray
+        """
         self._check_fitted()
         assert self._sorted_self_aggregates is not None
         return self._sorted_self_aggregates
 
     @property
     def reference_extremity_(self) -> float:
+        """Mean calibrated extremity of the reference (about 0.5).
+
+        Returns
+        -------
+        float
+        """
         self._check_fitted()
         assert self._reference_extremity is not None
         return self._reference_extremity

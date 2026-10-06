@@ -4,40 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eosquality"
-version = "0.1.0"
+version = "0.0.1"
 description = "Assess the quality of query data against a fitted reference population"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
   {name="Ersilia Open Source Initiative", email="hello@ersilia.io"}
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
-  "numpy>=1.21",
-  "pandas>=1.5",
-  "scipy>=1.9",
-  "scikit-learn>=1.1",
-  "loguru>=0.7",
-  "rich>=13.0",
-  "FPSim2>=0.4",
-  "rdkit>=2022.03",
-  "packaging>=21.0",
-  "eosframes>=1.0",
-  "xgboost>=3.0",
-  "tables>=3.8",
+  "click==8.3.2",
+  "eosframes==1.1.0",
+  "FPSim2==0.7.4",
+  "joblib==1.5.3",
+  "loguru==0.7.3",
+  "numpy==2.4.4",
+  "packaging==26.0",
+  "pandas==3.0.2",
+  "psutil==7.2.2",
+  "rdkit==2026.3.1",
+  "rich==15.0.0",
+  "scikit-learn==1.8.0",
+  "scipy==1.17.1",
+  "xgboost==3.2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "black",
-  "pytest>=7",
-  "ruff",
+  "pre-commit==4.3.0",
+  "pytest==9.0.3",
+  "ruff==0.15.11",
 ]
-# Figure scripts under scripts/figures/
+# Figure scripts under scripts/figures/ (stylia brings matplotlib)
 viz = [
-  "matplotlib>=3.7",
-  "stylia>=1.0",
+  "stylia==1.0.1",
 ]
 
 [project.scripts]
@@ -48,18 +49,33 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 88
+indent-width = 4
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]  # line length is black's job
+# Org standard (D101, D102, E4, E9, F, I, W) plus bugbear (B) and pyupgrade (UP).
+select = ["B", "D101", "D102", "E4", "E9", "F", "I", "UP", "W"]
+ignore = ["D104", "D105", "D107"]
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.ruff.lint.isort]
 known-first-party = ["eosquality"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D101", "D102"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = 50
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.black]
-line-length = 88
-target-version = ["py310"]

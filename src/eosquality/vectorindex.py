@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 
 import numpy as np
+import pandas as pd
 from FPSim2 import FPSim2Engine
 from FPSim2.io import create_db_file
 from rdkit import __version__ as _RDKIT_VERSION
@@ -105,227 +106,64 @@ class VectorIndex:
         library_name: str = "",
         max_samples: int | None = None,
     ) -> VectorIndex:
-        """Build a VectorIndex from a list of SMILES and persist to ``output_dir``.
+        """Build a VectorIndex from a list of SMILES and persist it to ``output_dir``.
+
+        An interrupted build resumes, reusing finished steps, but only if the
+        SMILES list and parameters are unchanged.
 
         Parameters
         ----------
-        smiles:
-            Ordered list of SMILES strings (one per reference molecule).
-        output_dir:
-            Folder to write index artifacts to. Created if it does not exist.
-        max_k:
-            Maximum k for self-kNN. Must be < len(smiles). Stored nearest
-            neighbors can be sliced at query time for any k ≤ max_k.
-        radius:
-            Morgan radius (default 2).
-        n_bits:
-            Number of bits in the Morgan vector (default 2048).
-        verbose:
-            If True, print progress tables and timing to stderr.
-        library_name:
-            Name of the reference library (e.g. ``"ersilia_reference_library"``).
-            Stored in metadata and shown in verbose output.
-        max_samples:
-            If set, truncate the input to the first ``max_samples`` molecules
-            before building. Useful for quick tests. Default: None (use all).
+        smiles : list of str
+            Unique SMILES, one per reference molecule, in index order.
+        output_dir : str or pathlib.Path
+            Folder for the index files (created if needed).
+        max_k : int, optional
+            Neighbours precomputed per molecule; must be below ``len(smiles) - 1``.
+        radius, n_bits : int, optional
+            Morgan fingerprint radius and size.
+        verbose : bool, optional
+            Show DEBUG logs and the diagnostic tables.
+        library_name : str, optional
+            Library identifier stored in ``metadata.json``.
+        max_samples : int, optional
+            Truncate the input to its first ``max_samples`` molecules (testing).
 
         Returns
         -------
         VectorIndex
+            The built index, with its FPSim2 engine already loaded.
         """
         if verbose:
             logger.set_verbosity(True)
-
         if max_samples is not None:
             smiles = smiles[:max_samples]
-
-        n = len(smiles)
-        if n < max_k + 2:
-            raise ValueError(
-                f"Need at least max_k + 2 = {max_k + 2} molecules to build "
-                f"self-kNN with max_k={max_k}, got {n}."
-            )
-
-        seen: set[str] = set()
-        duplicates: list[tuple[int, str]] = []
-        for idx, smi in enumerate(smiles):
-            if smi in seen:
-                duplicates.append((idx, smi))
-            else:
-                seen.add(smi)
-        if duplicates:
-            n_shown = min(5, len(duplicates))
-            examples = ", ".join(f"row {i}: {s!r}" for i, s in duplicates[:n_shown])
-            raise ValueError(
-                f"Duplicate SMILES detected: {len(duplicates)} duplicate(s) found. "
-                f"First {n_shown}: [{examples}]. "
-                "The vector index requires a unique molecule per row — "
-                "dedupe the source CSV and rebuild."
-            )
-
+        _check_build_inputs(smiles, max_k)
         output_dir = pathlib.Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        h5_path = output_dir / "vector_index.h5"
-        knn_indices_path = output_dir / "knn_indices.npy"
-        knn_distances_path = output_dir / "knn_distances.npy"
-        config_path = output_dir / "metadata.json"
-
-        # Resume support: an interrupted build leaves ``build_state.json``
-        # behind; a finished one leaves ``metadata.json``. Either way, reuse
-        # partial outputs only if they were produced from exactly this
-        # SMILES list with exactly these parameters.
-        build_state_path = output_dir / "build_state.json"
         fingerprint = {
-            "n_samples": n,
+            "n_samples": len(smiles),
             "smiles_sha256": _smiles_digest(smiles),
             "radius": radius,
             "n_bits": n_bits,
             "max_k": max_k,
         }
-        for prior_path in (config_path, build_state_path):
-            if not prior_path.exists():
-                continue
-            with open(prior_path) as f:
-                prior = json.load(f)
-            mismatched = {
-                key: (prior.get(key), value)
-                for key, value in fingerprint.items()
-                if prior.get(key) != value
-            }
-            if mismatched:
-                details = ", ".join(
-                    f"{key}: on disk={old!r}, requested={new!r}"
-                    for key, (old, new) in mismatched.items()
-                )
-                raise ValueError(
-                    f"Output directory '{output_dir}' contains a (partial) index "
-                    f"built from different inputs ({details}). Delete the folder "
-                    "and rebuild, or match those inputs."
-                )
-        with open(build_state_path, "w") as f:
-            json.dump(fingerprint, f, indent=2)
+        _check_resume(output_dir, fingerprint)
 
-        rdkit_version = _RDKIT_VERSION
-        t_build_start = time.perf_counter()
-
-        logger.rule("VectorIndex · build")
-        logger.index_input_table(n_molecules=n, n_unique=len(set(smiles)))
-        logger.index_config_table(
-            max_k=max_k,
-            radius=radius,
-            n_bits=n_bits,
-            rdkit_version=rdkit_version,
-            output_dir=str(output_dir),
-            library_name=library_name,
-        )
+        t0 = time.perf_counter()
         logger.info(
-            f"Building index | {n:,} molecules | max_k={max_k} "
+            f"Building index | {len(smiles):,} molecules | max_k={max_k} "
             f"| radius={radius} | n_bits={n_bits}"
         )
-
-        # 1. Build FPSim2 database — Morgan vectors computed once here.
-        #    Skipped if vector_index.h5 already exists (resume support).
-        if h5_path.exists():
-            logger.debug("Step 1/3 — vector_index.h5 found, loading (skipped)…")
-            t0 = time.perf_counter()
-            engine = FPSim2Engine(str(h5_path), in_memory_fps=True)
-            t_fpsim2 = time.perf_counter() - t0
-        else:
-            logger.debug("Step 1/3 — Building FPSim2 database (Morgan vectors)…")
-            t0 = time.perf_counter()
-            _build_fpsim2_db(smiles, str(h5_path), radius=radius, n_bits=n_bits)
-            engine = FPSim2Engine(str(h5_path), in_memory_fps=True)
-            t_fpsim2 = time.perf_counter() - t0
-            logger.debug(f"vector_index.h5 written → {h5_path} | {t_fpsim2:.2f}s")
-
-        # 2. Self-kNN: for each molecule, query its own top-(max_k+1) Tanimoto
-        #    neighbors, then strip self. Vectors reused from the .h5 — no
-        #    redundant vector computation.
-        #    Skipped if knn_indices.npy + knn_distances.npy already exist.
-        knn_done = knn_indices_path.exists() and knn_distances_path.exists()
-        if knn_done:
-            logger.debug("Step 2/3 — knn files found, loading (skipped)…")
-            t0 = time.perf_counter()
-            knn_indices = np.load(knn_indices_path)
-            knn_distances = np.load(knn_distances_path)
-            t_knn = time.perf_counter() - t0
-        else:
-            logger.debug(f"Step 2/3 — Self-kNN (FPSim2 Tanimoto, k={max_k})…")
-            t0 = time.perf_counter()
-            t_last_log = t0
-            knn_indices = np.zeros((n, max_k), dtype=np.int32)
-            knn_distances = np.zeros((n, max_k), dtype=np.float32)
-            for i, smi in enumerate(smiles):
-                result = engine.top_k(
-                    smi, k=max_k + 1, threshold=0.0, n_workers=_QUERY_WORKERS
-                )
-                mol_ids = result["mol_id"].astype(np.int32)
-                sims = result["coeff"].astype(np.float32)
-                not_self = mol_ids != i
-                knn_indices[i] = mol_ids[not_self][:max_k]
-                knn_distances[i] = 1.0 - sims[not_self][:max_k]
-                now = time.perf_counter()
-                if now - t_last_log >= 30.0:
-                    elapsed = now - t0
-                    rate = (i + 1) / elapsed
-                    eta = (n - i - 1) / rate
-                    logger.info(
-                        f"  kNN {i + 1:,}/{n:,} ({100 * (i + 1) / n:.0f}%) "
-                        f"| {elapsed:.0f}s elapsed | ETA ~{eta:.0f}s"
-                    )
-                    t_last_log = now
-            t_knn = time.perf_counter() - t0
-            logger.debug(f"Self-kNN done | {t_knn:.2f}s")
-
-        # 3. Persist artifacts (only write files that were (re)computed)
-        logger.debug("Step 3/3 — Saving artifacts to disk…")
-        t0 = time.perf_counter()
-        if not knn_done:
-            np.save(knn_indices_path, knn_indices)
-            np.save(knn_distances_path, knn_distances)
-
-        with open(output_dir / "smiles.csv", "w") as f:
-            f.write("smiles\n")
-            f.writelines(f"{smi}\n" for smi in smiles)
-
-        try:
-            eq_version = importlib.metadata.version("eosquality")
-        except importlib.metadata.PackageNotFoundError:
-            eq_version = "unknown"
-        try:
-            fpsim2_version = importlib.metadata.version("FPSim2")
-        except importlib.metadata.PackageNotFoundError:
-            fpsim2_version = "unknown"
-
-        config = {
-            **fingerprint,
-            "method": "morgan_fpsim2",
-            "rdkit_version": rdkit_version,
-            "fpsim2_version": fpsim2_version,
-            "eosquality_version": eq_version,
-            "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
-            "library_name": library_name,
-        }
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-        build_state_path.unlink(missing_ok=True)
-        t_save = time.perf_counter() - t0
-        logger.debug(f"Artifacts saved → {output_dir} | {t_save:.2f}s")
-
-        t_total = time.perf_counter() - t_build_start
-        logger.timing_table(
-            steps=[
-                ("FPSim2 database (Morgan vectors)", t_fpsim2, False),
-                ("Self-kNN (Tanimoto)", t_knn, False),
-                ("Save artifacts", t_save, False),
-            ],
-            title="Index build timing",
+        h5_path = output_dir / "vector_index.h5"
+        engine = _open_or_build_db(smiles, h5_path, radius, n_bits)
+        knn_indices, knn_distances = _load_or_compute_self_knn(
+            engine, smiles, max_k, output_dir
         )
+        config = _write_index_files(output_dir, smiles, fingerprint, library_name)
         logger.success(
-            f"Vector index built | {n:,} molecules | max_k={max_k} | {t_total:.2f}s"
+            f"Vector index built | {len(smiles):,} molecules | max_k={max_k} | "
+            f"{time.perf_counter() - t0:.2f}s"
         )
-        logger.rule()
 
         instance = cls(
             smiles=smiles,
@@ -334,7 +172,7 @@ class VectorIndex:
             h5_path=h5_path,
             config=config,
         )
-        instance._engine = engine  # reuse already-loaded engine
+        instance._engine = engine  # reuse the already-loaded engine
         return instance
 
     # ------------------------------------------------------------------
@@ -406,22 +244,42 @@ class VectorIndex:
 
     @property
     def library_name(self) -> str:
-        """Library identifier recorded in ``metadata.json`` (``""`` if unset)."""
+        """Library identifier recorded in ``metadata.json`` (``""`` if unset).
+
+        Returns
+        -------
+        str
+        """
         return str(self._config.get("library_name", "") or "")
 
     @property
     def index_dir(self) -> pathlib.Path:
-        """Folder holding this index (and the library's descriptor files)."""
+        """Folder holding this index (and the library's descriptor files).
+
+        Returns
+        -------
+        pathlib.Path
+        """
         return pathlib.Path(self._h5_path).parent
 
     @property
     def n_reference(self) -> int:
-        """Number of molecules in the index."""
+        """Number of molecules in the index.
+
+        Returns
+        -------
+        int
+        """
         return len(self._smiles)
 
     @property
     def smiles(self) -> list[str]:
-        """Reference SMILES, in index row order."""
+        """Reference SMILES, in index row order.
+
+        Returns
+        -------
+        list of str
+        """
         return self._smiles
 
     # ------------------------------------------------------------------
@@ -469,6 +327,11 @@ class VectorIndex:
         ----------
         k:
             Number of neighbors to return. Must be ≤ max_k.
+
+        Returns
+        -------
+        numpy.ndarray
+            int32 neighbour row indices, closest first.
         """
         max_k = self._config["max_k"]
         if k > max_k:
@@ -479,7 +342,18 @@ class VectorIndex:
         return np.ascontiguousarray(self._knn_indices[:, :k])
 
     def self_knn_distances(self, k: int) -> np.ndarray:
-        """Return precomputed self-kNN Tanimoto distances, shape (n_ref, k)."""
+        """Return precomputed self-kNN Tanimoto distances, shape (n_ref, k).
+
+        Parameters
+        ----------
+        k : int
+            Number of neighbours (at most ``max_k``).
+
+        Returns
+        -------
+        numpy.ndarray
+            float32 Tanimoto distances, closest first.
+        """
         max_k = self._config["max_k"]
         if k > max_k:
             raise ValueError(f"Requested k={k} exceeds the pre-computed max_k={max_k}.")
@@ -559,3 +433,136 @@ class VectorIndex:
                 progress.stop()
 
         return all_dists, all_idx
+
+
+# ---------------------------------------------------------------------------
+# Build steps
+# ---------------------------------------------------------------------------
+
+
+def _check_build_inputs(smiles: list[str], max_k: int) -> None:
+    """Require at least ``max_k + 2`` molecules and no duplicate SMILES."""
+    if len(smiles) < max_k + 2:
+        raise ValueError(
+            f"Need at least max_k + 2 = {max_k + 2} molecules to build "
+            f"self-kNN with max_k={max_k}, got {len(smiles)}."
+        )
+    dupes = pd.Series(smiles)[pd.Series(smiles).duplicated()]
+    if len(dupes):
+        shown = ", ".join(f"row {i}: {s!r}" for i, s in list(dupes.items())[:5])
+        raise ValueError(
+            f"Duplicate SMILES detected: {len(dupes)} duplicate rows. First "
+            f"{min(5, len(dupes))}: [{shown}]. The vector index requires a unique "
+            "molecule per row — dedupe the source CSV and rebuild."
+        )
+
+
+def _check_resume(output_dir: pathlib.Path, fingerprint: dict) -> None:
+    """Refuse to reuse partial outputs built from different inputs.
+
+    An interrupted build leaves ``build_state.json``; a finished one leaves
+    ``metadata.json``. Either must match ``fingerprint`` exactly.
+    """
+    for name in ("metadata.json", "build_state.json"):
+        prior_path = output_dir / name
+        if not prior_path.exists():
+            continue
+        with open(prior_path) as f:
+            prior = json.load(f)
+        mismatched = {
+            key: (prior.get(key), value)
+            for key, value in fingerprint.items()
+            if prior.get(key) != value
+        }
+        if mismatched:
+            details = ", ".join(
+                f"{key}: on disk={old!r}, requested={new!r}"
+                for key, (old, new) in mismatched.items()
+            )
+            raise ValueError(
+                f"Output directory '{output_dir}' contains a (partial) index built "
+                f"from different inputs ({details}). Delete the folder and "
+                "rebuild, or match those inputs."
+            )
+    with open(output_dir / "build_state.json", "w") as f:
+        json.dump(fingerprint, f, indent=2)
+
+
+def _open_or_build_db(
+    smiles: list[str], h5_path: pathlib.Path, radius: int, n_bits: int
+) -> FPSim2Engine:
+    """Load ``vector_index.h5`` if present (resume), else build it from ``smiles``."""
+    if not h5_path.exists():
+        logger.debug("Building FPSim2 database (Morgan vectors)…")
+        _build_fpsim2_db(smiles, str(h5_path), radius=radius, n_bits=n_bits)
+    return FPSim2Engine(str(h5_path), in_memory_fps=True)
+
+
+def _load_or_compute_self_knn(
+    engine: FPSim2Engine, smiles: list[str], max_k: int, output_dir: pathlib.Path
+) -> tuple[np.ndarray, np.ndarray]:
+    """Self-kNN (identity stripped), reusing ``knn_*.npy`` from a resumed build."""
+    idx_path = output_dir / "knn_indices.npy"
+    dist_path = output_dir / "knn_distances.npy"
+    if idx_path.exists() and dist_path.exists():
+        logger.debug("Self-kNN files found; reusing them")
+        return np.load(idx_path), np.load(dist_path)
+    knn_indices, knn_distances = _self_knn(engine, smiles, max_k)
+    np.save(idx_path, knn_indices)
+    np.save(dist_path, knn_distances)
+    return knn_indices, knn_distances
+
+
+def _self_knn(
+    engine: FPSim2Engine, smiles: list[str], max_k: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Each molecule's ``max_k`` nearest *other* molecules and their distances."""
+    n = len(smiles)
+    knn_indices = np.zeros((n, max_k), dtype=np.int32)
+    knn_distances = np.zeros((n, max_k), dtype=np.float32)
+    t0 = t_last = time.perf_counter()
+    for i, smi in enumerate(smiles):
+        result = engine.top_k(smi, k=max_k + 1, threshold=0.0, n_workers=_QUERY_WORKERS)
+        mol_ids = result["mol_id"].astype(np.int32)
+        not_self = mol_ids != i
+        knn_indices[i] = mol_ids[not_self][:max_k]
+        knn_distances[i] = 1.0 - result["coeff"].astype(np.float32)[not_self][:max_k]
+        if time.perf_counter() - t_last >= 30.0:
+            t_last = time.perf_counter()
+            eta = (n - i - 1) * (t_last - t0) / (i + 1)
+            logger.info(f"  kNN {i + 1:,}/{n:,} | ETA ~{eta:.0f}s")
+    return knn_indices, knn_distances
+
+
+def _write_index_files(
+    output_dir: pathlib.Path, smiles: list[str], fingerprint: dict, library_name: str
+) -> dict:
+    """Write ``smiles.csv`` and ``metadata.json``; clear the resume marker."""
+    with open(output_dir / "smiles.csv", "w") as f:
+        f.write("smiles\n")
+        f.writelines(f"{smi}\n" for smi in smiles)
+    config = _index_config(fingerprint, library_name)
+    with open(output_dir / "metadata.json", "w") as f:
+        json.dump(config, f, indent=2)
+    (output_dir / "build_state.json").unlink(missing_ok=True)
+    return config
+
+
+def _package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _index_config(fingerprint: dict, library_name: str) -> dict:
+    """Contents of the index's ``metadata.json``."""
+    return {
+        **fingerprint,
+        "method": "morgan_fpsim2",
+        "rdkit_version": _RDKIT_VERSION,
+        "fpsim2_version": _package_version("FPSim2"),
+        "eosquality_version": _package_version("eosquality"),
+        "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "library_name": library_name,
+    }
