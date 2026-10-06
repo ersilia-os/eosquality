@@ -16,8 +16,10 @@ from ``$EOSQUALITY_REFERENCE_LIBRARY_PATH`` → ``./data/indices/<library>/``
 → ``~/.eosquality/indices/<library>/``. Fetch it once with
 ``eosquality setup``; after that the usual path is fit then run::
 
-    eosquality fit --reference eos4e40_v1.csv --output artifacts/ [--training-sets training_eos4e40_v1/]
-    eosquality run --input query.csv --artifacts artifacts/ --output scores.csv
+    eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ [-t training_eos4e40_v1/]
+    eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e40_v1.csv
+
+File and folder names carry the model: ``[prefix_]<eos_id>_<version>``.
 
 Fetch the library explicitly (useful for CI or airgapped setups)::
 
@@ -31,7 +33,7 @@ to produce a new canonical library for the next major release, or to
 build a non-canonical index for internal testing and fit against it::
 
     eosquality build --input library.csv --output /tmp/idx/ [--max-k 50]
-    eosquality fit --reference eos4e40_v1.csv --output artifacts/ --vector-index /tmp/idx/
+    EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/idx/ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
 """
 
 import importlib.metadata

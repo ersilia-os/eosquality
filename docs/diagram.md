@@ -10,7 +10,7 @@ flowchart LR
     end
 
     REF --> SH["<b>shared/</b><br/>schema · eosframes scaler<br/>feature selection (≤10 medoids)<br/>80/10/10 split · scaled ref matrix"]
-    LIB -- "self-kNN, k" --> KNN["<b>knn/</b><br/>k neighbours per ref row<br/>mean FP distance"]
+    LIB -- "self-kNN, k = 5" --> KNN["<b>knn/</b><br/>5 neighbours per ref row<br/>mean FP distance"]
     SH --> KNN
 
     SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>CDF of Q66"]
@@ -18,8 +18,8 @@ flowchart LR
     LIB -- "nearest analogue" --> SUP["<b>Support</b><br/>Tanimoto similarity of<br/>nearest library analogue · CDF"]
     KNN --> CON["<b>Consistency</b><br/>output L1 to FP neighbours<br/>CDF per FP-distance bin"]
     SH --> CON
-    SH --> SIG["<b>Signal</b> (opt-in)<br/>XGBoost descriptor → outputs<br/>CDF of |SHAP| Gini on val"]
-    LIB -- "physchem / MACCS" --> SIG
+    SH --> SIG["<b>Signal</b> (provisional)<br/>XGBoost physchem → outputs<br/>CDF of |SHAP| Gini on val"]
+    LIB -- "physchem" --> SIG
 ```
 
 ## Fit — training modality
@@ -41,11 +41,11 @@ flowchart LR
     LIB[("Reference library")] --> FPQ
     SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
     FPQ --> SUP[Support] & CON
-    Q -- SMILES --> SIG["Signal<br/>descriptor → SHAP → Gini"]
+    Q -- SMILES --> SIG["Signal<br/>physchem → SHAP → Gini"]
     Q -- SMILES --> TDR["Training distance<br/>per column → 66th percentile"]
     Q -- SMILES --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
-    TDR & TDF --> DET["training_details.csv<br/>one row per query · 5 nearest training molecules"]
-    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["scores.csv<br/>score + score_raw per component<br/>(+ support_log)"]
+    TDR & TDF --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
+    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log, trn_in_training)"]
 ```
 
 ## Save layout
@@ -55,26 +55,26 @@ One subfolder per modality; either or both may be present.
 ```
 <artifacts>/
   manifest.json                           # informational: eos_id, version, modalities, scores
-  reference_mode/                         # iff fitted with --reference
+  reference_mode/                         # iff fitted with -r/--reference
     shared/
       schema.json  scaler.json  binary_class_freq.json
       metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
       reference_ids.json  splits.json  selected_columns.json
       reference_repr.npy                  # (n_ref, n_selected) scaled reference
-    knn/state.json                        # {"k": …}; iff support or consistency
+    knn/state.json                        # {"k": 5}; iff support or consistency
     typicality/   state.json  reference_self_aggregates.npy  metadata.json
     extremity/    state.json  reference_self_aggregates.npy  metadata.json
     support/      state.json  reference_nearest_similarities.npy  metadata.json
     consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
     signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
-                  physchem_scaler.json (physchem only)  val_shap_attributions.npy  metadata.json
-  training_mode/                          # iff fitted with --training
+                  physchem_scaler.json  val_shap_attributions.npy  metadata.json
+  training_mode/                          # iff fitted with -t/--training-sets
     training_sets/
       metadata.json                       # training_format_version, eos_id, version, columns
       columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
       indices/c000/ …                     # one VectorIndex per output column
-    training_distance/  state.json  loo_mean_distances.npz  metadata.json
-    training_difficulty/  state.json  metadata.json  # iff some column has ≥ 50 labels
+    training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_distance
+    training_difficulty/  state.json  metadata.json  # trn_difficulty; iff some column has ≥ 50 labels
       c000/ …           surrogate.joblib  density.joblib  error_model.joblib
                         arrays.npz  state.json      # one folder per labelled column
 ```

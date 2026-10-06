@@ -17,6 +17,7 @@ from eosquality.cli._common import (
 )
 from eosquality.exceptions import IncompatibleArtifactsError
 from eosquality.utils import console
+from eosquality.utils.identifiers import model_from_names
 from eosquality.utils.logging import logger
 
 if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-up
@@ -81,11 +82,8 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
 @click.command(
     "run",
     help=(
-        "Score query molecules with every score in the artifacts. The output CSV "
-        "has the query's 'key' and 'input' columns, then each fitted score with "
-        "its '*_raw' companion. If the artifacts hold a training modality, a "
-        "second CSV with one row per query and its nearest training molecules "
-        "is written next to it."
+        "Score query molecules with every score in the artifacts."
+        "\n\nNames must carry the model, e.g. query_eos4e40_v1.csv."
     ),
     short_help="Score query data against fitted artifacts.",
 )
@@ -97,26 +95,16 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
     "-a",
     required=True,
     metavar="PATH",
-    help="Artifacts folder produced by 'eosquality fit'.",
+    help="Artifacts folder from 'fit'.",
 )
 @click.option(
     "--output", "-o", required=True, metavar="PATH", help="Scores CSV to write."
-)
-@click.option(
-    "--training-details",
-    default=None,
-    metavar="PATH",
-    help=(
-        "Per-column training details CSV (default: <output stem>"
-        ".training_details.csv). Only written with a training modality."
-    ),
 )
 @verbose_option
 def run(
     input_path: str,
     artifacts: str,
     output: str,
-    training_details: str | None,
     verbose: bool,
 ) -> None:
     """Score a query CSV and write the scores (and training details) CSVs.
@@ -129,28 +117,32 @@ def run(
         Fitted artifacts folder.
     output : str
         Scores CSV path (must not exist).
-    training_details : str or None
-        Training-details CSV path; defaults next to ``output``.
     verbose : bool
         Print debug messages and diagnostic tables.
     """
 
     run_command(
-        lambda: _run(input_path, artifacts, output, training_details),
+        lambda: _run(input_path, artifacts, output),
         verbose=verbose,
         command="run",
     )
 
 
-def _run(input_path, artifacts, output, training_details) -> None:
+def _run(input_path, artifacts, output) -> None:
     """Body of ``eosquality run`` (see :func:`run`)."""
     import pandas as pd
 
+    try:
+        named = model_from_names(
+            {"--input": input_path, "--artifacts": artifacts, "--output": output}
+        )
+    except ValueError as exc:
+        raise CliError(str(exc)) from exc
     if not pathlib.Path(artifacts).is_dir():
         raise CliError(f"artifacts folder '{artifacts}' does not exist.")
     require_new_path(output)
     started = time.perf_counter()
-    details_path = training_details or default_details_path(output)
+    details_path = default_details_path(output)
     log_path = log_path_for(output)
     with logger.log_file(log_path):
         logger.info(f"run | {input_path} against {artifacts} → {output}")
@@ -161,9 +153,14 @@ def _run(input_path, artifacts, output, training_details) -> None:
         if query.empty:
             raise CliError(f"query CSV '{input_path}' has no rows.")
         eq = _load_artifacts(artifacts)
+        eos_id, version = eq._model_id()
+        if (eos_id, version) != named:
+            raise CliError(
+                f"the names say {named[0]} {named[1]}, but the artifacts in "
+                f"'{artifacts}' were fitted for {eos_id} {version}."
+            )
         if "training" in eq.modalities_:  # fail before the scoring work
             require_new_path(details_path, "training details path")
-        eos_id, version = eq._model_id()
         console.summary_panel(
             "eosquality · run",
             [

@@ -14,8 +14,8 @@ Black boxes (``--black-box``, default ``all``):
 The last two test whether the scores transfer to a model that differs from
 the surrogate, which is the situation of an Ersilia black-box model.
 
-Reported for each training score (training_distance, training_distance_raw,
-training_difficulty) and black box:
+Reported for each training score (trn_distance, trn_distance_raw,
+trn_difficulty) and black box:
 - Spearman(score, |error|) with a 95% bootstrap interval, and the 95th
   percentile of |Spearman| under 1,000 permutations of the score (a value
   below it is indistinguishable from random ranking).
@@ -121,7 +121,7 @@ def bootstrap(fn, *arrays, n=500):
     return np.percentile(stats, [2.5, 97.5])
 
 
-SCORES = ("training_distance", "training_distance_raw", "training_difficulty")
+SCORES = ("trn_distance", "trn_distance_raw", "trn_difficulty")
 
 
 def sparsification_gain(score: np.ndarray, err: np.ndarray) -> float:

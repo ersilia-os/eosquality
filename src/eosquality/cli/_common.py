@@ -114,5 +114,5 @@ verbose_option = click.option(
     "--verbose",
     "-v",
     is_flag=True,
-    help="Also print debug messages and full tracebacks on screen.",
+    help="Show debug messages and tracebacks.",
 )

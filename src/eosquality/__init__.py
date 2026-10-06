@@ -4,7 +4,7 @@ import importlib.metadata as _importlib_metadata
 
 from packaging.version import Version as _Version
 
-from eosquality._registry import ALL_SCORES, DEFAULT_SCORES
+from eosquality._registry import ALL_SCORES
 from eosquality.library.identity import LIBRARY_ID, library_major
 from eosquality.utils.logging import logger as _logger
 
@@ -120,7 +120,6 @@ def set_log_level(level: str) -> None:
 
 __all__ = [
     "ALL_SCORES",
-    "DEFAULT_SCORES",
     "ErsiliaQuality",
     "RunResult",
     "Typicality",

@@ -3,7 +3,8 @@
 Release / maintenance tool. End users do not normally call this; the
 canonical reference library ships with each release. Used to prepare a
 replacement library for the next release, or to build a non-canonical
-index for internal testing (pass the result to ``fit --vector-index``).
+index for internal testing (point ``EOSQUALITY_REFERENCE_LIBRARY_PATH`` at
+the result, or pass it as ``vector_index=`` to ``ErsiliaQuality.fit``).
 Writes the Morgan FP index plus the physchem and MACCS descriptor matrices.
 """
 
@@ -18,12 +19,7 @@ from eosquality.utils import console
 
 @click.command(
     "build",
-    help=(
-        "Build a Morgan-fingerprint kNN index (plus physchem and MACCS matrices) "
-        "for a SMILES library. A release / maintenance tool: use it to prepare "
-        "the next canonical reference library, or a non-canonical index for "
-        "testing (pass the result to 'fit --vector-index')."
-    ),
+    help=("Build a reference-library index from a SMILES CSV (maintainers)."),
     short_help="Build a reference-library vector index from a SMILES CSV.",
 )
 @click.option(

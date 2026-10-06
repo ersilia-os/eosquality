@@ -32,9 +32,9 @@ The training modality is versioned separately: `training_mode/training_sets/meta
 - the library is not this install's canonical library and no custom index path is recorded → `IncompatibleArtifactsError`;
 - the package major version is different → `IncompatibleArtifactsError`.
 
-When an artifact is fit on the canonical library, only its identity is stored, not a path, so the artifact is portable between machines. The library is resolved again at run time (see [cli.md](cli.md#eosquality-fit)).
+When an artifact is fit on the canonical library, only its identity is stored, not a path, so the artifact is portable between machines. The library is resolved again at run time (see [cli.md](cli.md#the-reference-library)).
 
-When an artifact is fit with `--vector-index`, the absolute path of that index is stored, and the folder must still exist when `run` is called.
+When an artifact is fit against a custom index (`vector_index=` in the Python API), the absolute path of that index is stored, and the folder must still exist when `run` is called.
 
 ## Library folder contents
 

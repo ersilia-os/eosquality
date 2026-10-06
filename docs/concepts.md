@@ -43,7 +43,7 @@ The same rule applies to every score:
 | Extremity | output | Q66 over features of `min(\|scaled\|, 1)` | outputs sit far from the column centres |
 | Support | fingerprint | Tanimoto similarity of the nearest library molecule | the library contains a close analogue of the molecule |
 | Consistency | output, FP-conditioned | mean output L1 distance to the k FP neighbours | the outputs agree with those of chemically similar molecules |
-| Signal *(opt-in)* | descriptor | Gini of per-feature \|SHAP\| | the model's output is driven by a few descriptors |
+| Signal *(provisional)* | descriptor | Gini of per-feature \|SHAP\| | the model's output is driven by a few descriptors |
 
 ### Typicality (density)
 
@@ -55,7 +55,7 @@ Per-feature extremity is `min(|scaled|, 1)`: 0 at the column centre, 1 at the ra
 
 ### Support (closest library analogue)
 
-Support asks whether the library contains a close analogue of the query. The raw value (`support_raw`) is the Tanimoto similarity of the query's **nearest library molecule**, using Morgan fingerprints (radius 2, 2048 bits) queried with FPSim2. It is calibrated through the library's own nearest-analogue similarities, i.e. each library molecule against its closest *other* molecule.
+Support asks whether the library contains a close analogue of the query. The raw value (`ref_support_raw`) is the Tanimoto similarity of the query's **nearest library molecule**, using Morgan fingerprints (radius 2, 2048 bits) queried with FPSim2. It is calibrated through the library's own nearest-analogue similarities, i.e. each library molecule against its closest *other* molecule.
 
 The raw similarity reads directly in chemists' terms. Here is the share of each example set with no library analogue at a given threshold:
 
@@ -73,7 +73,7 @@ The raw similarity reads directly in chemists' terms. Here is the share of each 
 - 2 means a more distant nearest analogue than 99% of library molecules have;
 - 3 means more distant than 99.9%.
 
-On the 0–1 scale, molecules far outside the library are all squeezed into 0–0.01; `support_log` keeps them apart.
+On the 0–1 scale, molecules far outside the library are all squeezed into 0–0.01; `ref_support_log` keeps them apart.
 
 **Size.** Tanimoto similarity is lower for small molecules (few set bits), so small fragments look somewhat more novel. This is not corrected for.
 
@@ -98,9 +98,9 @@ A plain CDF of this distance would mostly re-measure support, because distant ne
 
 The question consistency answers is: are this prediction's neighbours unusually noisy *for how far away they are*?
 
-### Signal (attribution focus) — provisional, opt-in
+### Signal (attribution focus) — provisional
 
-At fit time, one XGBoost regressor is trained from a chemical descriptor to the scaled, selected model outputs. The descriptor is either RDKit physchem descriptors (`physchem`, the default) or MACCS keys (`maccs`). Training uses at most `max_signal_train_samples` rows of the train slice (default 1000). Early stopping is evaluated on 5,000 val rows.
+At fit time, one XGBoost regressor is trained from a chemical descriptor to the scaled, selected model outputs. The descriptor is the set of RDKit physchem descriptors. Training uses 1,000 rows of the train slice. Early stopping is evaluated on 5,000 val rows.
 
 For each query, the per-feature `|SHAP|` attributions are reduced to a Gini coefficient: about 1 when one descriptor carries all the attribution, about 0 when attribution is spread evenly. The Gini is then calibrated against the full val slice. The `|SHAP|` matrix of the val slice is saved as `signal/val_shap_attributions.npy` so other reductions can be tried offline.
 
@@ -115,13 +115,13 @@ Training distance asks how far the query is from the molecules the model was tra
 The value is built from each output column's own training set; the sets are **not pooled**:
 - **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**. A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value.
 - **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules. About 0.5 means as close as a typical training molecule; near 1 means farther than almost all of them.
-- **Whole model:** `training_distance` (calibrated) and `training_distance_raw` are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
+- **Whole model:** `trn_distance` (calibrated) and `trn_distance_raw` are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
 
 Why not pool the training sets into one? Pooled, a large training set could hide that the query is far from a small one. Each calibrated per-column value is a percentile of that column's own training set, so columns of very different sizes and densities combine fairly.
 
 How to read the two values: higher is farther for both. The raw value means the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry. The calibrated value is relative to how dense the training sets are, so a diverse training set makes the same raw distance look more typical. Read them together.
 
-`in_training` flags a query that is a training molecule of any column. `training_details` lists, per query, the 5 nearest training molecules over all columns (keys, similarities, and the columns each belongs to).
+`trn_in_training` flags a query that is a training molecule of any column. `training_details` lists, per query, the 5 nearest training molecules over all columns (keys, similarities, and the columns each belongs to).
 
 ### Training difficulty
 
@@ -145,14 +145,14 @@ It is an **error model**, following the error models of Novartis's UNIQUE (adapt
 - **Choosing the set per column by out-of-fold Spearman was harmful.** It mostly picked the transformed set, whose neighbour-based inputs look predictive out-of-fold but not on new scaffolds. A training molecule's neighbours usually share its scaffold, hence its fold and its fold model's errors; a new-scaffold query's neighbours do not.
 - **MACCS beat Morgan bits** as data features: 0.36 against 0.33.
 
-For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `training_difficulty` is the **66th percentile** across labelled columns, as for distance.
+For a query, the error model predicts its error, calibrated as the percentile among the training molecules' out-of-fold predicted errors: about 0.5 is as hard as a typical training molecule, near 1 is among the hardest. `trn_difficulty` is the **66th percentile** across labelled columns, as for distance.
 
 How to read it:
 - It is a **rank, not an error estimate**. Predicted errors are in each column's own units (log-units, probabilities…), so there is no raw column: only percentiles can be combined across columns.
 - It measures how hard the **endpoint** is around the query, for a random forest. It is not the deployed model's error. That part of the error comes mostly from the data (noise, cliffs, sparsity), which is why it transfers, but not entirely.
-- Check the per-column Spearman values in the run metadata (`training_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: when the surrogate is right, the error `|y − p|` is almost a fixed function of its confidence, which is an input (`probability_top1`). On BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
+- Check the per-column Spearman values in the run metadata (`trn_difficulty_spearman`) and in the fit log before trusting it. For feature set (i), the out-of-fold Spearman was close to the held-out one in the benchmark (e.g. 0.41 against 0.42 for ESOL). For binary labels it reads high: when the surrogate is right, the error `|y − p|` is almost a fixed function of its confidence, which is an input (`probability_top1`). On BBBP it was 0.86 against 0.79 held out, and on an easy synthetic label it is close to 1. `scripts/evaluate_training.py` measures how well each training score ranks held-out errors on a scaffold split.
 
-Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `training_difficulty`.
+Columns without labels, or with fewer than 50, get no error model. A model with no such column has no `trn_difficulty`.
 
 A query that is itself a training molecule gets its own out-of-fold predicted error, the value the calibration table was built from. Re-using the final surrogate and error model for it would be in-sample, since both were trained on its label, and would rate it optimistically easy.
 

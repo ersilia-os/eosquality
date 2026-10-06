@@ -1,19 +1,11 @@
-"""Feature backends for the :class:`Signal` score.
+"""Feature backend for the :class:`Signal` score.
 
-Two interchangeable descriptor backends drive the same SHAP-Gini score:
-
-- :class:`PhyschemBackend` — RDKit physicochemical descriptors, scaled
-  with the scaler that ``eosquality build`` fits on the library.
-  Reference rows come from the library's ``physchem_scaled.npy``; query
-  rows are computed on demand with the saved scaler params.
-- :class:`MaccsBackend` — 166-bit RDKit MACCS keys. Reference rows come
-  from the library's ``maccs.npy``; query rows are computed on demand with
-  the same function the library build used.
-
-Both backends expose the same interface so :class:`signal.Signal` can
-plug in either one. The choice is decided at fit time and baked into
-the saved artifact (``umbrella.json``'s ``descriptor`` field) — runs
-load the recorded descriptor; there is no run-time override.
+:class:`PhyschemBackend`: RDKit physicochemical descriptors, scaled with the
+scaler that ``eosquality build`` fits on the library. Reference rows come
+from the library's ``physchem_scaled.npy``; query rows are computed on
+demand with the saved scaler params. The descriptor is recorded in the
+saved artifact (``umbrella.json``'s ``descriptor`` field); artifacts with
+any other descriptor are rejected on load.
 """
 
 from __future__ import annotations
@@ -25,7 +17,6 @@ import numpy as np
 import pandas as pd
 
 from eosquality.exceptions import ArtifactVersionError
-from eosquality.library.maccs import MACCS_FILE, N_MACCS, compute_maccs
 from eosquality.library.physchem import (
     apply_scaler,
     check_descriptor_names,
@@ -34,8 +25,7 @@ from eosquality.library.physchem import (
 from eosquality.vectorindex import VectorIndex
 
 PHYSCHEM_NAME = "physchem"
-MACCS_NAME = "maccs"
-DESCRIPTOR_NAMES: tuple[str, ...] = (PHYSCHEM_NAME, MACCS_NAME)
+DESCRIPTOR_NAMES: tuple[str, ...] = (PHYSCHEM_NAME,)
 DEFAULT_DESCRIPTOR: str = PHYSCHEM_NAME
 
 PHYSCHEM_SCALER_FILE = "physchem_scaler.json"
@@ -189,125 +179,7 @@ class PhyschemBackend:
             return cls(scaler_params=json.load(f))
 
 
-class MaccsBackend:
-    """166-bit RDKit MACCS keys.
-
-    Reference rows are gathered from the library's memory-mapped
-    ``maccs.npy``; query rows are computed with
-    :func:`eosquality.library.maccs.compute_maccs`, the same function the
-    library build used, so both sides share one bit layout. No per-fit
-    state is persisted.
-    """
-
-    name: str = MACCS_NAME
-
-    def __init__(self, *, reference_matrix: np.ndarray | None = None) -> None:
-        self._ref_matrix = reference_matrix
-
-    @property
-    def n_features(self) -> int:
-        """Number of descriptor features.
-
-        Returns
-        -------
-        int
-        """
-        return N_MACCS
-
-    def compute_reference_subset(
-        self, reference: pd.DataFrame, indices: np.ndarray
-    ) -> np.ndarray:
-        """Descriptor rows of the given reference molecules.
-
-        Parameters
-        ----------
-        reference : pandas.DataFrame
-            Reference predictions (unused by library-backed backends).
-        indices : numpy.ndarray
-            Reference row indices.
-
-        Returns
-        -------
-        numpy.ndarray
-            ``(len(indices), n_features)``.
-        """
-        if self._ref_matrix is None:
-            raise RuntimeError(
-                "MaccsBackend has no reference matrix; construct via "
-                "MaccsBackend.from_library(vi)."
-            )
-        return _gather_rows(self._ref_matrix, indices)
-
-    def query_matrix(self, smiles_list: list[str]) -> np.ndarray:
-        """Descriptor matrix of query molecules.
-
-        Parameters
-        ----------
-        smiles_list : list of str
-            Query SMILES.
-
-        Returns
-        -------
-        numpy.ndarray
-            ``(n_query, n_features)``.
-        """
-        return compute_maccs(smiles_list)
-
-    def save_state(self, folder: pathlib.Path) -> None:
-        """Persist the per-fit backend state into the ``signal/`` folder.
-
-        Parameters
-        ----------
-        folder : pathlib.Path
-            The component folder.
-        """
-        del folder  # MACCS has no per-fit state
-
-    @classmethod
-    def from_library(cls, vi: VectorIndex) -> MaccsBackend:
-        """Fit-time backend reading the library's precomputed matrix.
-
-        Parameters
-        ----------
-        vi : VectorIndex
-            The reference library's index (its folder holds the matrix).
-
-        Returns
-        -------
-        MaccsBackend
-        """
-        path = vi.index_dir / MACCS_FILE
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"Reference MACCS matrix not found at {path}. "
-                "Re-build the library (eosquality build)."
-            )
-        matrix = np.load(path, mmap_mode="r")
-        if matrix.shape != (vi.n_reference, N_MACCS):
-            raise ValueError(
-                f"{path} has shape {matrix.shape}; expected "
-                f"({vi.n_reference}, {N_MACCS}). Re-build the library."
-            )
-        return cls(reference_matrix=matrix)
-
-    @classmethod
-    def load_state(cls, folder: pathlib.Path) -> MaccsBackend:
-        """Run-time backend from a saved ``signal/`` folder.
-
-        Parameters
-        ----------
-        folder : pathlib.Path
-            The component folder.
-
-        Returns
-        -------
-        MaccsBackend
-        """
-        del folder
-        return cls()
-
-
-DescriptorBackend = PhyschemBackend | MaccsBackend
+DescriptorBackend = PhyschemBackend
 
 
 def make_backend(name: str, vi: VectorIndex) -> DescriptorBackend:
@@ -315,19 +187,17 @@ def make_backend(name: str, vi: VectorIndex) -> DescriptorBackend:
 
     Parameters
     ----------
-    name : {"physchem", "maccs"}
+    name : {"physchem"}
         Descriptor identifier.
     vi : VectorIndex
         The reference library's index.
 
     Returns
     -------
-    PhyschemBackend or MaccsBackend
+    PhyschemBackend
     """
     if name == PHYSCHEM_NAME:
         return PhyschemBackend.from_library(vi)
-    if name == MACCS_NAME:
-        return MaccsBackend.from_library(vi)
     raise ValueError(
         f"Unknown signal descriptor {name!r}; expected one of {DESCRIPTOR_NAMES}."
     )
@@ -345,14 +215,11 @@ def load_backend(name: str, folder: pathlib.Path) -> DescriptorBackend:
 
     Returns
     -------
-    PhyschemBackend or MaccsBackend
+    PhyschemBackend
     """
     if name == PHYSCHEM_NAME:
         return PhyschemBackend.load_state(folder)
-    if name == MACCS_NAME:
-        return MaccsBackend.load_state(folder)
     raise ArtifactVersionError(
-        f"signal artifact at {folder} declares descriptor={name!r}, which is "
-        f"not a recognized descriptor in this eosquality install "
-        f"(known: {DESCRIPTOR_NAMES}). Refit with a supported descriptor."
+        f"signal artifact at {folder} declares descriptor={name!r}; this "
+        f"eosquality install only supports {DESCRIPTOR_NAMES}. Refit."
     )

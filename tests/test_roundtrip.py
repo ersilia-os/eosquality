@@ -4,42 +4,39 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eosquality import ALL_SCORES, ErsiliaQuality, Support, Typicality
+from eosquality import ErsiliaQuality, Support, Typicality
 from eosquality.exceptions import ArtifactVersionError
 
+REFERENCE = ["typicality", "extremity", "support", "consistency", "signal"]
 
-@pytest.fixture(scope="module", params=["physchem", "maccs"])
-def fitted(request, reference, library):
-    eq = ErsiliaQuality(k=5).fit(
-        reference,
-        eos_id="eos0aaa",
-        vector_index=library,
-        ignore_size=True,
-        scores=ALL_SCORES,
-        max_features=4,
-        signal_descriptor=request.param,
+
+@pytest.fixture(scope="module")
+def fitted(reference, library):
+    return ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", vector_index=library, max_features=4
     )
-    return eq
 
 
 def test_run_columns_and_ranges(fitted, query):
     scores = fitted.run(query).scores
     expected = [
-        "typicality",
-        "typicality_raw",
-        "extremity",
-        "extremity_raw",
-        "support",
-        "support_raw",
-        "support_log",
-        "consistency",
-        "consistency_raw",
-        "signal",
-        "signal_raw",
+        "ref_typicality",
+        "ref_typicality_raw",
+        "ref_extremity",
+        "ref_extremity_raw",
+        "ref_support",
+        "ref_support_raw",
+        "ref_support_log",
+        "ref_consistency",
+        "ref_consistency_raw",
+        "ref_signal",
+        "ref_signal_raw",
     ]
     assert list(scores.columns) == expected
-    np.testing.assert_allclose(scores["support_log"], -np.log10(scores["support"]))
-    calibrated = scores[["typicality", "extremity", "support", "consistency", "signal"]]
+    np.testing.assert_allclose(
+        scores["ref_support_log"], -np.log10(scores["ref_support"])
+    )
+    calibrated = scores[[f"ref_{name}" for name in REFERENCE]]
     finite = calibrated.to_numpy()[np.isfinite(calibrated.to_numpy())]
     assert (finite > 0).all() and (finite <= 1).all()
 
@@ -67,11 +64,11 @@ def test_standalone_component_load(fitted, query, tmp_path):
     expected = fitted.run(query).scores
     support = Support.load(tmp_path / "art/reference_mode").run(query)
     np.testing.assert_array_equal(
-        support.score.to_numpy(), expected["support"].to_numpy()
+        support.score.to_numpy(), expected["ref_support"].to_numpy()
     )
     typicality = Typicality.load(tmp_path / "art/reference_mode").run(query)
     np.testing.assert_array_equal(
-        typicality.score.to_numpy(), expected["typicality"].to_numpy()
+        typicality.score.to_numpy(), expected["ref_typicality"].to_numpy()
     )
 
 
@@ -91,7 +88,7 @@ def test_in_library_queries_do_not_match_themselves(fitted, query, library):
     # exactly the nearest-*other*-molecule similarity the library records.
     from eosquality.vectorindex import VectorIndex
 
-    nearest = fitted.run(query).scores["support_raw"].to_numpy()[-40:]
+    nearest = fitted.run(query).scores["ref_support_raw"].to_numpy()[-40:]
     expected = 1.0 - VectorIndex.load(library).self_knn_distances(1)[:40, 0]
     np.testing.assert_allclose(nearest, expected, atol=1e-6)
 
@@ -115,30 +112,56 @@ def test_old_format_is_rejected(fitted, tmp_path):
 
 
 def test_refit_replaces_all_components(reference, library):
+    only = ["ref_typicality", "ref_support"]
     eq = ErsiliaQuality().fit(
         reference,
         eos_id="eos0aaa",
         vector_index=library,
-        ignore_size=True,
-        scores=["typicality", "support"],
+        exclude=[f"ref_{n}" for n in REFERENCE if f"ref_{n}" not in only],
     )
-    eq.fit(reference, eos_id="eos0aaa", ignore_size=True, scores=["extremity"])
+    eq.fit(
+        reference,
+        eos_id="eos0aaa",
+        vector_index=library,
+        exclude=[f"ref_{n}" for n in REFERENCE if n != "extremity"],
+    )
     assert eq.typicality is None and eq.support is None and eq.extremity is not None
 
 
-def test_typicality_only_fit_needs_no_index(reference, query):
+def test_output_scores_run_without_smiles(reference, library, query):
     eq = ErsiliaQuality().fit(
-        reference.drop(columns=["input"]),
+        reference,
         eos_id="eos0aaa",
-        ignore_size=True,
-        scores=["typicality", "extremity"],
+        vector_index=library,
+        exclude=["ref_support", "ref_consistency", "ref_signal"],
     )
     assert list(eq.run(query.drop(columns=["input"])).scores.columns) == [
-        "typicality",
-        "typicality_raw",
-        "extremity",
-        "extremity_raw",
+        "ref_typicality",
+        "ref_typicality_raw",
+        "ref_extremity",
+        "ref_extremity_raw",
     ]
+
+
+def test_reference_must_match_the_library(reference, library):
+    with pytest.raises(ValueError, match="SMILES"):
+        ErsiliaQuality().fit(
+            reference.iloc[::-1], eos_id="eos0aaa", vector_index=library
+        )
+
+
+def test_excluding_everything_is_an_error(reference, library):
+    with pytest.raises(ValueError, match="nothing to fit"):
+        ErsiliaQuality().fit(
+            reference,
+            eos_id="eos0aaa",
+            vector_index=library,
+            exclude=[f"ref_{n}" for n in REFERENCE],
+        )
+    with pytest.raises(ValueError, match="Unknown score"):
+        ErsiliaQuality().fit(
+            reference, eos_id="eos0aaa", vector_index=library, exclude=["support"]
+        )
 
 
 def test_old_flat_layout_is_rejected(fitted, tmp_path):

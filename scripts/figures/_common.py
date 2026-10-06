@@ -91,6 +91,9 @@ def load_scores(scores_dir: pathlib.Path) -> pd.DataFrame:
         if not m:
             continue
         df = pd.read_csv(csv)
+        # Reference scores are prefixed "ref_" since the CLI redesign; the
+        # figures use the short names, so CSVs of either vintage work.
+        df = df.rename(columns=lambda c: c[4:] if c.startswith("ref_") else c)
         df["query_set"], df["model"] = m.group(1), m.group(2)
         frames.append(df)
     if not frames:

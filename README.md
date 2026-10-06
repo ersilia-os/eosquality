@@ -22,42 +22,43 @@ This will take a while. The library is stored under `~/.eosquality/`.
 
 ## Quick start
 
-The typical workflow is two commands: `fit` once per Ersilia model, then `run` on any query dataset against the saved artifacts. `fit` takes the model's predictions on the reference library (`--reference`), its per-output-column training sets (`--training-sets`), or both, and fits the matching scores. See the [CLI docs](docs/cli.md).
+The typical workflow is two commands: `fit` once per Ersilia model, then `run` on any query dataset against the saved artifacts. `fit` takes the model's predictions on the reference library (`-r`), its per-output-column training sets (`-t`), or both, and fits the matching scores. File and folder names carry the model id and version (`[prefix_]<eos_id>_<version>`, e.g. `reference_eos4e40_v1.csv`); a name without them is an error. See the [CLI docs](docs/cli.md).
 
 ### Fitting a reference library
 
-The input CSV must hold the model's predictions on the **exact** molecules of the canonical Ersilia reference library for your installed `eosquality` version, in library order. It needs a `key` column, an `input` (SMILES) column, and one numeric column per model output. The filename encodes the model and version (e.g. `eos4e40_v1.csv`). The output folder stores the fitted artifacts.
+The input CSV must hold the model's predictions on the **exact** molecules of the canonical Ersilia reference library for your installed `eosquality` version, in library order. It needs a `key` column, an `input` (SMILES) column, and one numeric column per model output. The artifacts folder (`-a`) stores the fitted scores.
 
 There is one and only one reference library per major version of `eosquality`, so the molecule set is fixed by your install. If the SMILES entries in the input CSV don't match that library, `fit` refuses with an error.
 
 ```bash
-eosquality fit --reference reference_eos4e40_v1.csv --output artifacts_eos4e40_v1/
-# optionally with training sets: --training-sets training_eos4e40_v1/
+eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
+# optionally with training sets: -t training_eos4e40_v1/
+# skip a score: --exclude ref_signal
 ```
 
 Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
 
 ### Running against new samples
 
-At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. The output CSV has `key`, `input`, and, for each score, a calibrated column in `(0, 1]` plus its `*_raw` value.
+At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. The output CSV has `key`, `input`, and, for each score, a calibrated column in `(0, 1]` plus its `*_raw` value, named `ref_<score>` for the reference scores and `trn_<score>` for the training scores.
 
 ```bash
-eosquality run --input query_eos4e40_v1.csv --artifacts artifacts_eos4e40_v1/ --output quality_eos4e40_v1.csv
+eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e40_v1.csv
 ```
 
 ## Scores
 
 Reference-modality scores compare a query against the model's own predictions on the reference library, which is **not** ground truth. Each is calibrated so that reference molecules score roughly Uniform(0, 1). Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
 
-| Score | Question |
+| Score (column) | Question |
 |---|---|
-| **Typicality** | Are the predicted values ones the model commonly produces? |
-| **Extremity** | Are the predicted values far from the centre of the model's output range? |
-| **Support** | Does the reference library contain a close analogue of the molecule? |
-| **Consistency** | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
-| **Signal** *(opt-in)* | Is the prediction driven by a few chemical descriptors? |
-| **Training distance** *(with `--training-sets`)* | How far is the molecule from the model's training molecules, compared with how close they are to each other? One value for the whole model. |
-| **Training difficulty** *(training sets with labels)* | How hard is the molecule to predict, judging by where a learned error model finds the training data hard? One value for the whole model. |
+| **Typicality** (`ref_typicality`) | Are the predicted values ones the model commonly produces? |
+| **Extremity** (`ref_extremity`) | Are the predicted values far from the centre of the model's output range? |
+| **Support** (`ref_support`) | Does the reference library contain a close analogue of the molecule? |
+| **Consistency** (`ref_consistency`) | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
+| **Signal** (`ref_signal`, provisional) | Is the prediction driven by a few chemical descriptors? |
+| **Training distance** (`trn_distance`) | How far is the molecule from the model's training molecules, compared with how close they are to each other? One value for the whole model. |
+| **Training difficulty** (`trn_difficulty`, needs labels) | How hard is the molecule to predict, judging by where a learned error model finds the training data hard? One value for the whole model. |
 
 ## Documentation
 
