@@ -102,3 +102,27 @@ def test_save_load_rebuilds_the_percentile_tables(fitted, query, tmp_path):
     before, after = fitted.run(query), loaded.run(query)
     pd.testing.assert_frame_equal(before.scores, after.scores)
     pd.testing.assert_frame_equal(before.reference_details, after.reference_details)
+
+
+def test_a_component_can_be_fitted_saved_and_loaded_on_its_own(
+    reference, query, tmp_path
+):
+    """The documented standalone use: shared state is fitted, then saved alongside."""
+    from eosquality import Typicality
+
+    alone = Typicality().fit(reference, eos_id="eos0aaa", version="v1")
+    alone.save(tmp_path / "art")
+    assert (tmp_path / "art" / "shared" / "schema.json").is_file()
+    assert (tmp_path / "art" / "typicality" / "count_luts.npy").is_file()
+    loaded = Typicality.load(tmp_path / "art")
+    pd.testing.assert_frame_equal(
+        alone.run(query).per_feature_pct, loaded.run(query).per_feature_pct
+    )
+    assert loaded.anchor_ == alone.anchor_
+
+
+def test_loading_a_component_that_was_not_saved_is_a_clear_error(tmp_path):
+    from eosquality import Typicality
+
+    with pytest.raises(FileNotFoundError, match="typicality artifacts"):
+        Typicality.load(tmp_path)

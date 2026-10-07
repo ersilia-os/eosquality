@@ -25,54 +25,23 @@ if TYPE_CHECKING:  # heavy imports happen inside the command, not at CLI start-u
     from eosquality.quality import ErsiliaQuality
 
 
-def default_details_path(output: str) -> str:
-    """Path of the training-details CSV next to the scores CSV.
+def sibling_path(output: str, suffix: str) -> pathlib.Path:
+    """A file next to the scores CSV, named after its stem.
 
     Parameters
     ----------
     output : str
         The scores CSV path, e.g. ``scores.csv``.
-
-    Returns
-    -------
-    str
-        ``scores.training_details.csv`` next to it.
-    """
-    p = pathlib.Path(output)
-    return str(p.with_name(f"{p.stem}.training_details.csv"))
-
-
-def reference_details_path(output: str) -> str:
-    """Path of the reference-details CSV next to the scores CSV.
-
-    Parameters
-    ----------
-    output : str
-        The scores CSV path, e.g. ``scores.csv``.
-
-    Returns
-    -------
-    str
-        ``scores.reference_details.csv`` next to it.
-    """
-    p = pathlib.Path(output)
-    return str(p.with_name(f"{p.stem}.reference_details.csv"))
-
-
-def log_path_for(output: str) -> pathlib.Path:
-    """Log file of ``run``: ``scores.csv`` → ``scores.log``.
-
-    Parameters
-    ----------
-    output : str
-        The scores CSV path.
+    suffix : str
+        What follows the stem, e.g. ``.training_details.csv``.
 
     Returns
     -------
     pathlib.Path
-        ``<output stem>.log``.
+        ``scores.training_details.csv`` next to ``scores.csv``.
     """
-    return pathlib.Path(output).with_suffix(".log")
+    path = pathlib.Path(output)
+    return path.with_name(path.stem + suffix)
 
 
 def _load_artifacts(path: str) -> ErsiliaQuality:
@@ -163,9 +132,9 @@ def _run(input_path, artifacts, output) -> None:
         raise CliError(f"artifacts folder '{artifacts}' does not exist.")
     require_new_path(output)
     started = time.perf_counter()
-    details_path = default_details_path(output)
-    reference_details = reference_details_path(output)
-    log_path = log_path_for(output)
+    details_path = sibling_path(output, ".training_details.csv")
+    reference_details = sibling_path(output, ".reference_details.csv")
+    log_path = sibling_path(output, ".log")
     with logger.log_file(log_path):
         logger.info(f"run | {input_path} against {artifacts} → {output}")
         try:

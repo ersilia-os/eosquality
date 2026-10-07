@@ -5,7 +5,7 @@ import pytest
 import eosquality
 from eosquality import ErsiliaQuality
 from eosquality.cli import main
-from eosquality.cli.run import log_path_for
+from eosquality.cli.run import sibling_path
 from eosquality.utils import console
 from eosquality.utils.logging import logger
 
@@ -38,7 +38,7 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
 
 
 def test_log_path_sits_next_to_the_output():
-    assert str(log_path_for("out/scores.csv")) == "out/scores.log"
+    assert str(sibling_path("out/scores.csv", ".log")) == "out/scores.log"
 
 
 @pytest.mark.parametrize(
