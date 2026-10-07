@@ -107,7 +107,7 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
         raise AssertionError("process pool started without n_jobs")
 
     monkeypatch.setattr(parallel.mp, "Pool", no_pool)
-    smiles = ["CCO"] * (parallel.PARALLEL_MIN_ITEMS + 1)
+    smiles = ["CCO"] * 300
     assert len(compute_physchem_raw(smiles)) == len(smiles)
     assert np.array_equal(
         compute_physchem_raw(smiles[:3], n_jobs=1)[0],
