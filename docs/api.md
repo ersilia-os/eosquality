@@ -131,7 +131,8 @@ Typicality.load("art/").run(query).score
 ```
 
 - **Names.** Components keep their short names (`eq.match`, `ReferenceMatch`, the `match/` artifacts folder); the `ref_` / `trn_` prefixes belong to the orchestrator's output columns, metadata keys and `exclude`.
-- **ReferenceMatch** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `library=` (a `ReferenceLibrary`).
+- **ReferenceMatch** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `library=` (`eosquality.library.reference.ReferenceLibrary`).
+- **Anchors.** `Typicality` and `Extremity` expose `anchor_`, their mean over the reference (about 0.5); the orchestrator's `reference_typicality_` and `reference_extremity_` return them.
 - **Run results.** Typicality and extremity results have `score`, `score_raw`, `per_feature`, `per_feature_pct` and `metadata`; the match result has `match`, `scaffold` and `metadata`. The Series carry the public column names (`ref_typicality_pct`, `ref_match`), the same as the orchestrator's output columns.
 
 ## Logging
