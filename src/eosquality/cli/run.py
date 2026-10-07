@@ -41,6 +41,23 @@ def default_details_path(output: str) -> str:
     return str(p.with_name(f"{p.stem}.training_details.csv"))
 
 
+def reference_details_path(output: str) -> str:
+    """Path of the reference-details CSV next to the scores CSV.
+
+    Parameters
+    ----------
+    output : str
+        The scores CSV path, e.g. ``scores.csv``.
+
+    Returns
+    -------
+    str
+        ``scores.reference_details.csv`` next to it.
+    """
+    p = pathlib.Path(output)
+    return str(p.with_name(f"{p.stem}.reference_details.csv"))
+
+
 def log_path_for(output: str) -> pathlib.Path:
     """Log file of ``run``: ``scores.csv`` → ``scores.log``.
 
@@ -141,6 +158,7 @@ def _run(input_path, artifacts, output) -> None:
     require_new_path(output)
     started = time.perf_counter()
     details_path = default_details_path(output)
+    reference_details = reference_details_path(output)
     log_path = log_path_for(output)
     with logger.log_file(log_path):
         logger.info(f"run | {input_path} against {artifacts} → {output}")
@@ -159,6 +177,8 @@ def _run(input_path, artifacts, output) -> None:
             )
         if "training" in eq.modalities_:  # fail before the scoring work
             require_new_path(details_path, "training details path")
+        if eq.extremity is not None:
+            require_new_path(reference_details, "reference details path")
         console.summary_panel(
             "eosquality · run",
             [
@@ -171,10 +191,12 @@ def _run(input_path, artifacts, output) -> None:
             icon="◆",
         )
         result = eq.run(query)
-        _write_outputs(query, result, output, details_path)
+        _write_outputs(query, result, output, details_path, reference_details)
     rows = [("queries", f"{len(query):,}"), ("scores", console.path(output))]
     if result.training_details is not None:
         rows.append(("training details", console.path(details_path)))
+    if result.reference_details is not None:
+        rows.append(("reference details", console.path(reference_details)))
     rows += [
         ("log", console.path(log_path)),
         ("time", console.elapsed(time.perf_counter() - started)),
@@ -182,8 +204,8 @@ def _run(input_path, artifacts, output) -> None:
     console.summary_panel("Run complete", rows, color="green", icon="✓")
 
 
-def _write_outputs(query, result, output, details_path) -> None:
-    """Write the scores CSV (with ``key``/``input``) and the training details."""
+def _write_outputs(query, result, output, details_path, reference_details) -> None:
+    """Write the scores CSV (with ``key``/``input``) and the details CSVs."""
     import pandas as pd
 
     with console.section("Write outputs") as section:
@@ -199,4 +221,7 @@ def _write_outputs(query, result, output, details_path) -> None:
         if result.training_details is not None:
             result.training_details.to_csv(details_path, index=False)
             console.success(f"training details → {console.path(details_path)}")
+        if result.reference_details is not None:
+            result.reference_details.to_csv(reference_details, index=False)
+            console.success(f"reference details → {console.path(reference_details)}")
         section.summary = f"{len(result.scores.columns)} column(s)"

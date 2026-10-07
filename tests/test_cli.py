@@ -69,6 +69,11 @@ def test_fit_with_training_and_details(files, query, training_dir):
     ]  # the error model is off by default
     details = pd.read_csv(files["tmp"] / "quality_eos0aaa_v1.training_details.csv")
     assert len(details) == len(query)  # one row per query, not per column
+    reference_details = pd.read_csv(
+        files["tmp"] / "quality_eos0aaa_v1.reference_details.csv"
+    )
+    assert len(reference_details) == len(query)
+    assert any(c.endswith("_extremity_pct") for c in reference_details.columns)
 
 
 def test_training_only_and_no_adding_later(files, training_dir, capsys):

@@ -179,7 +179,7 @@ def run_reference(
     components: dict[str, Any],
     columns: dict[str, pd.Series],
     metadata: dict[str, Any],
-) -> None:
+) -> pd.DataFrame | None:
     """Run the reference-modality components, filling ``columns``/``metadata``.
 
     Parameters
@@ -194,8 +194,15 @@ def run_reference(
         Output score columns; filled in place.
     metadata : dict
         Run metadata; filled in place.
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        The reference details table (per-column extremity, one row per query),
+        or None when extremity is not fitted.
     """
     assert eq._shared is not None
+    details = None
     needs_knn = eq.support is not None or eq.consistency is not None
     steps = console.Steps(1 + needs_knn + len(components))
     with console.section("Reference modality") as section:
@@ -212,8 +219,10 @@ def run_reference(
                 result = _run_component(name, component, query, query_repr, neighbours)
                 st.summary = console.median_summary(result.score)
             column = score_name(name)
-            columns[column] = result.score
-            columns[f"{column}_raw"] = result.score_raw
+            columns[result.score.name] = result.score
+            columns[result.score_raw.name] = result.score_raw
+            if name == "extremity":
+                details = _extremity_details(query, result)
             if hasattr(result, "score_log"):
                 columns[f"{column}_log"] = result.score_log
             metadata.update({f"{column}_{k}": v for k, v in result.metadata.items()})
@@ -222,6 +231,23 @@ def run_reference(
                 f"raw mean={float(result.score_raw.mean()):.4f}"
             )
         section.summary = f"{len(components)} score(s)"
+    return details
+
+
+def _extremity_details(query: pd.DataFrame, result) -> pd.DataFrame:
+    """Per-column extremity of each query: ``<column>_extremity_raw`` / ``_pct``."""
+    keys = (
+        query["key"].astype(str).tolist()
+        if "key" in query.columns
+        else [str(i) for i in query.index]
+    )
+    parts = {"key": keys}
+    if "input" in query.columns:
+        parts["input"] = query["input"].tolist()
+    for name in result.per_feature.columns:
+        parts[f"{name}_extremity_raw"] = result.per_feature[name].to_numpy()
+        parts[f"{name}_extremity_pct"] = result.per_feature_pct[name].to_numpy()
+    return pd.DataFrame(parts)
 
 
 def _run_component(name, component, query, query_repr, neighbours):

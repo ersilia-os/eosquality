@@ -115,7 +115,9 @@ The output CSV contains:
 - for each fitted reference score, a calibrated column and a `*_raw` column (plus `ref_support_log`);
 - for the training modality, `trn_tanimoto_pct`, `trn_tanimoto_raw`, `trn_physchem_pct`, `trn_physchem_raw` (a similarity, 1 = identical, 0 = no closer than a random library pair), `trn_match` and `trn_scaffold` (see [api.md](api.md#runresult)). `trn_match` and `trn_scaffold` are 1 / 0, and `trn_scaffold` is empty for a query with no scaffold.
 
-If the artifacts hold training scores, a second CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
+If extremity is fitted, `<output stem>.reference_details.csv` is written next to the scores CSV: one row per query with `<column>_extremity_raw` and `<column>_extremity_pct` for every selected output column (see [api.md](api.md#reference_details)).
+
+If the artifacts hold training scores, a further CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
 
 For a training-only artifact, the query only needs SMILES, in an `input` or `smiles` column (`key` is optional).
 
@@ -123,7 +125,7 @@ For a training-only artifact, the query only needs SMILES, in an `input` or `smi
 |---|---|---|
 | `--input`, `-i PATH` | required | query CSV |
 | `--artifacts`, `-a PATH` | required | folder written by `fit` |
-| `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its training-details CSV) |
+| `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its details CSVs) |
 | `--verbose`, `-v` | off | |
 
 Artifacts written by an older eosquality format fail with a "refit" message.
