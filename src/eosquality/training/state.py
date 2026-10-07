@@ -55,7 +55,10 @@ SUBFOLDER = "training_sets"
 #    published as trn_tanimoto.
 # 9: training_physchem scales with the reference library's shipped scaler,
 #    clipped to +/-10, instead of the training set's own statistics.
-TRAINING_FORMAT_VERSION = 9
+# 10: the physchem leave-one-out table drops each molecule's own row by
+#    position; the earlier distance test missed it for most molecules, which
+#    biased the table low.
+TRAINING_FORMAT_VERSION = 10
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

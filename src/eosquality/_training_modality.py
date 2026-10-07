@@ -51,6 +51,14 @@ _DETAILS_ORDER = (
 )
 
 
+# The scores fitted the same way: from the training state alone, in run order.
+_PLAIN_SCORES = {
+    "training_distance": TrainingDistance,
+    "training_physchem": TrainingPhyschem,
+    "training_match": TrainingMatch,
+}
+
+
 def load_training_sets(training_sets, output_columns=None) -> dict:
     """Load the training sets, in their own console section.
 
@@ -179,13 +187,9 @@ def fit_training_modality(
         If nothing is left to fit (distance excluded and no labelled column
         for difficulty).
     """
-    want_distance = "training_distance" not in skip
-    want_physchem = "training_physchem" not in skip
-    want_match = "training_match" not in skip
+    scores = {name: cls for name, cls in _PLAIN_SCORES.items() if name not in skip}
     want_difficulty = "training_difficulty" not in skip
-    steps = console.Steps(
-        1 + want_distance + want_physchem + want_match + want_difficulty
-    )
+    steps = console.Steps(1 + len(scores) + want_difficulty)
     with console.section("Training modality") as section:
         if n_loaded is not None and n_loaded > len(columns):
             console.detail(
@@ -199,48 +203,17 @@ def fit_training_modality(
         with steps("Build one Morgan index per column") as st:
             eq._training = fit_training(columns, eos_id=eos_id, version=version)
             st.summary = f"{len(columns)} index(es)"
-        eq.training_distance = None
-        if want_distance:
-            with steps(f"Score: {score_name('training_distance')}") as st:
-                eq.training_distance = TrainingDistance().fit(
-                    training=eq._training, shared=eq._shared
-                )
-                st.summary = "leave-one-out tables for 5-NN distances"
-        eq.training_physchem = None
-        if want_physchem:
-            with steps(f"Score: {score_name('training_physchem')}") as st:
-                eq.training_physchem = TrainingPhyschem().fit(
-                    training=eq._training, shared=eq._shared
-                )
-                sizes = {d.n_train for d in eq.training_physchem.domains_.values()}
-                st.summary = (
-                    f"{len(eq.training_physchem.domains_)} physchem domain(s) · "
-                    f"{min(sizes):,}-{max(sizes):,} molecules"
-                    if len(sizes) > 1
-                    else f"physchem domain on {sizes.pop():,} molecules"
-                )
-        eq.training_match = None
-        if want_match:
-            with steps(f"Score: {score_name('training_match')}") as st:
-                eq.training_match = TrainingMatch().fit(
-                    training=eq._training, shared=eq._shared
-                )
-                st.summary = (
-                    f"{len(eq.training_match._molecules):,} structures · "
-                    f"{len(eq.training_match._scaffolds):,} scaffolds"
-                )
+        for name in _PLAIN_SCORES:
+            setattr(eq, name, None)
+        for name, cls in scores.items():
+            with steps(f"Score: {score_name(name)}") as st:
+                component = cls().fit(training=eq._training, shared=eq._shared)
+                setattr(eq, name, component)
+                st.summary = component.fit_summary
         eq.training_difficulty = None
         if want_difficulty:
             _fit_difficulty(eq, steps)
-        if not any(
-            getattr(eq, name) is not None
-            for name in (
-                "training_distance",
-                "training_physchem",
-                "training_match",
-                "training_difficulty",
-            )
-        ):
+        if all(getattr(eq, name) is None for name in TRAINING_ORDER):
             raise ValueError(
                 "Nothing to fit for the training sets: every training score is "
                 f"excluded or off (trn_difficulty also needs >= {MIN_LABELLED} labels)."
@@ -334,8 +307,8 @@ def run_training(
     ``columns`` receives ``trn_tanimoto_pct`` / ``_raw``, ``trn_physchem_pct`` /
     ``_raw``, ``trn_match``, ``trn_scaffold`` and (when fitted)
     ``trn_difficulty``. The returned details table repeats them, and adds
-    ``trn_physchem_dist``, the nearest training molecules, ``trn_in_training`` and the error model's
-    inputs.
+    ``trn_physchem_dist``, the nearest training molecules, ``trn_in_training``
+    and the error model's inputs.
 
     Parameters
     ----------

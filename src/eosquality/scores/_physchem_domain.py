@@ -70,8 +70,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Neighbours averaged per molecule, matching K_NEIGHBORS in training_distance.
-K_NEIGHBORS = 5
+from eosquality.scores._base import require_file
+from eosquality.scores._training_helpers import K_NEIGHBORS
+
 # Median Euclidean distance between two random reference-library molecules in this
 # scaled, clipped space: 1,000,000 random pairs, seed 0, canonical library v0
 # (18.701; seed 7 gives 18.700)
@@ -79,9 +80,6 @@ K_NEIGHBORS = 5
 PAIR_MEDIAN = 18.70
 # Scaled descriptor values are clipped to [-CLIP, CLIP] (see the module docstring).
 CLIP = 10.0
-# A neighbour at or below this distance is the molecule itself: standardisation
-# is deterministic, so a training molecule reproduces its stored row exactly.
-_SELF_MATCH_DISTANCE = 1e-9
 STATE_FILE = "physchem_domain.json"
 ARRAYS_FILE = "physchem_domain.npz"
 
@@ -167,7 +165,7 @@ class PhyschemDomain:
         )
         # Leave-one-out: each training molecule against its k nearest *other*
         # training molecules, so the calibration is what a query would see.
-        loo = domain._mean_distance(train)
+        loo = domain._mean_distance(train, np.arange(len(train)))
         domain.sorted_distances = np.sort(loo[np.isfinite(loo)])
         return domain
 
@@ -189,13 +187,20 @@ class PhyschemDomain:
         """
         return 1.0 - np.asarray(distance, dtype=np.float64) / self.pair_median
 
-    def measure(self, raw: np.ndarray) -> np.ndarray:
+    def measure(
+        self, raw: np.ndarray, self_rows: np.ndarray | None = None
+    ) -> np.ndarray:
         """Mean distance to the ``k`` nearest training molecules.
 
         Parameters
         ----------
         raw : numpy.ndarray
             ``(n, p)`` raw descriptors, non-finite cells allowed.
+        self_rows : numpy.ndarray, optional
+            ``(n,)`` position of each query in the training set, ``-1`` for a
+            query that is not a training molecule. That neighbour is left
+            out, so a training molecule is scored against its ``k`` nearest
+            *others*. Default: no query is a training molecule.
 
         Returns
         -------
@@ -206,16 +211,23 @@ class PhyschemDomain:
         if not len(x):
             return np.zeros(0)
         return self._mean_distance(
-            _standardise(_fill(x, self.median), self.mean, self.scale, self.clip)
+            _standardise(_fill(x, self.median), self.mean, self.scale, self.clip),
+            self_rows,
         )
 
-    def _mean_distance(self, z: np.ndarray) -> np.ndarray:
-        """Mean distance to the k nearest training rows, excluding any self match.
+    def _mean_distance(
+        self, z: np.ndarray, self_rows: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Mean distance to the k nearest training rows, leaving the query out.
 
-        ``k + 1`` neighbours are fetched and the zero-distance one dropped when
-        present, so a molecule that is itself in the training set is scored
-        against its k nearest *others* - the same rule
-        ``_helpers._query_fp_distances`` applies on the fingerprint side. Rows
+        ``k + 1`` neighbours are fetched and the query's own row dropped when it
+        is among them, so a molecule that is itself in the training set is
+        scored against its k nearest *others*, the rule
+        ``_helpers._query_fp_distances`` applies on the fingerprint side. The
+        row is identified by position, never by a distance close to zero: the
+        distance of a molecule to itself is float noise (about 1e-7 here, not
+        0), and a different molecule with the same descriptors, such as an
+        enantiomer, is a genuine neighbour at distance 0 and stays. Rows
         without a self match drop their furthest neighbour instead, so every
         row averages exactly k.
         """
@@ -223,12 +235,16 @@ class PhyschemDomain:
 
         wanted = min(self.k + 1, self.n_train)
         nn = NearestNeighbors(n_neighbors=wanted).fit(self.train)
-        distances, _ = nn.kneighbors(z)
+        distances, rows = nn.kneighbors(z)
         if wanted == 1:
             return distances[:, 0]
-        is_self = distances[:, 0] <= _SELF_MATCH_DISTANCE
-        kept = np.where(is_self[:, None], distances[:, 1:], distances[:, :-1])
-        return kept.mean(axis=1)
+        drop = np.full(len(z), wanted - 1)
+        if self_rows is not None:
+            is_self = rows == np.asarray(self_rows)[:, None]
+            found = is_self.any(axis=1)
+            drop[found] = is_self[found].argmax(axis=1)
+        keep = np.arange(wanted)[None, :] != drop[:, None]
+        return distances[keep].reshape(len(z), wanted - 1).mean(axis=1)
 
     def save(self, folder: pathlib.Path) -> None:
         """Write the arrays and a small JSON header into ``folder``.
@@ -272,9 +288,9 @@ class PhyschemDomain:
         -------
         PhyschemDomain
         """
-        with open(folder / STATE_FILE) as f:
+        with open(require_file(folder / STATE_FILE, "training_physchem")) as f:
             state = json.load(f)
-        with np.load(folder / ARRAYS_FILE) as arrays:
+        with np.load(require_file(folder / ARRAYS_FILE, "training_physchem")) as arrays:
             return cls(
                 median=arrays["median"],
                 mean=arrays["mean"],

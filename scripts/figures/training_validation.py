@@ -1,6 +1,6 @@
 """Do the training scores rank a model's held-out errors? (Protocol B)
 
-Reads the CSV written by ``scripts/evaluate_training_sets.py``. Left panel:
+Reads the CSV written by ``scripts/evaluate_training.py``. Left panel:
 Spearman(score, |held-out error|) per endpoint, averaged over the three
 stand-in models, with the two training scores side by side. Right panel: the
 same split by black box, to separate the circular case (``rf_morgan``, the
@@ -31,29 +31,8 @@ BOX_LABELS = {
 }
 
 
-def main():
-    """Command-line entry point (see the module docstring for usage)."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--results", type=pathlib.Path, default=REPO / "output/training_validation.csv"
-    )
-    parser.add_argument(
-        "--out-dir", type=pathlib.Path, default=REPO / "docs" / "figures"
-    )
-    parser.add_argument("--suffix", default="")
-    args = parser.parse_args()
-    if not args.results.exists():
-        raise SystemExit(
-            f"{args.results} not found; run scripts/evaluate_training_sets.py first"
-        )
-    df = pd.read_csv(args.results)
-    df = df[df["score"].isin(SCORES)]
-    colors = stylia.CategoricalPalette("ersilia").get(len(SCORES))
-
-    fig, axs = stylia.create_figure(1, 2, height=0.45)
-
-    # Left: per endpoint, averaged over black boxes, continuous first.
-    ax = axs.next()
+def _panel_per_endpoint(ax, df, colors):
+    """Left panel: Spearman per endpoint, averaged over black boxes."""
     per_endpoint = df.pivot_table(
         index=["binary", "endpoint"], columns="score", values="spearman"
     ).reset_index()
@@ -87,8 +66,9 @@ def main():
         title="Per endpoint (mean over black boxes)",
     )
 
-    # Right: by black box and label kind.
-    ax = axs.next()
+
+def _panel_by_box(ax, df, colors):
+    """Right panel: Spearman by stand-in model and label kind."""
     grouped = df.groupby(["black_box", "binary", "score"])["spearman"].mean()
     boxes = [b for b in BOX_LABELS if b in df["black_box"].unique()]
     labels, positions = [], []
@@ -110,6 +90,31 @@ def main():
         ylabel="Spearman (mean over endpoints)",
         title="By stand-in model",
     )
+
+
+def main():
+    """Command-line entry point (see the module docstring for usage)."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--results", type=pathlib.Path, default=REPO / "output/training_validation.csv"
+    )
+    parser.add_argument(
+        "--out-dir", type=pathlib.Path, default=REPO / "docs" / "figures"
+    )
+    parser.add_argument("--suffix", default="")
+    args = parser.parse_args()
+    if not args.results.exists():
+        raise SystemExit(
+            f"{args.results} not found; run scripts/evaluate_training_sets.py first"
+        )
+    df = pd.read_csv(args.results)
+    df = df[df["score"].isin(SCORES)]
+    colors = stylia.CategoricalPalette("ersilia").get(len(SCORES))
+
+    fig, axs = stylia.create_figure(1, 2, height=0.45)
+
+    _panel_per_endpoint(axs.next(), df, colors)
+    _panel_by_box(axs.next(), df, colors)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stylia.save_figure(str(args.out_dir / f"training_validation{args.suffix}.png"))

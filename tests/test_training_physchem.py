@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -17,7 +19,6 @@ def test_domain_is_fitted_per_column(fitted):
     for d in domains.values():
         assert d.k == 5
         assert d.n_train == len(d.sorted_distances)
-        assert (d.sorted_distances > 0).all()  # the self match is excluded
         assert d.train.shape[1] == len(d.mean) == len(d.scale) == len(d.median)
 
 
@@ -33,7 +34,9 @@ def test_calibration_puts_training_molecules_near_a_half(fitted):
     column = fitted._training.columns["mw"]
     domain = fitted.training_physchem.domains_["mw"]
     calibrated = _cdf_score(
-        domain.measure(compute_physchem_raw(column.smiles)),
+        domain.measure(
+            compute_physchem_raw(column.smiles), column.rows_of(column.smiles)
+        ),
         domain.sorted_distances,
         higher_is_higher=True,
     )
@@ -41,18 +44,48 @@ def test_calibration_puts_training_molecules_near_a_half(fitted):
     assert ((calibrated > 0) & (calibrated <= 1)).all()
 
 
-def test_self_match_is_excluded_from_the_calibration(fitted):
-    """A training molecule's own zero distance must not enter its own table.
+def _domain_on_random_descriptors(n=40, k=3, seed=0):
+    from eosquality.library.physchem import canonical_scaler
 
-    Including it would halve every training molecule's apparent distance and
-    make queries look far more novel than they are.
-    """
-    from eosquality.library.physchem import compute_physchem_raw
+    scaler = canonical_scaler()
+    rng = np.random.default_rng(seed)
+    mean, scale = np.asarray(scaler["mean"]), np.asarray(scaler["scale"])
+    raw = mean + scale * rng.normal(size=(n, len(mean)))
+    return raw, PhyschemDomain.fit(raw, scaler, k=k)
 
-    domain = fitted.training_physchem.domains_["mw"]
+
+def test_leave_one_out_is_the_mean_distance_to_the_k_nearest_others():
+    """Checked against brute force; the self distance is float noise, not 0."""
+    raw, domain = _domain_on_random_descriptors()
+    z = domain.train.astype(np.float64)
+    pairwise = np.linalg.norm(z[:, None] - z[None], axis=2)
+    np.fill_diagonal(pairwise, np.inf)
+    expected = np.sort(pairwise, axis=1)[:, : domain.k].mean(axis=1)
+    measured = domain.measure(raw, np.arange(len(raw)))
+    np.testing.assert_allclose(measured, expected, rtol=1e-4)
+    np.testing.assert_allclose(domain.sorted_distances, np.sort(expected), rtol=1e-4)
+
+
+def test_only_the_query_itself_is_left_out():
+    """A twin with identical descriptors (an enantiomer, say) is a neighbour."""
+    raw, domain = _domain_on_random_descriptors()
+    twinned = np.vstack([raw, raw[:1]])  # row 40 duplicates row 0
+    from eosquality.library.physchem import canonical_scaler
+
+    domain = PhyschemDomain.fit(twinned, canonical_scaler(), k=3)
+    not_a_member = domain.measure(raw[:1])  # kept: both zero-distance rows count
+    member = domain.measure(raw[:1], np.array([0]))  # drops only itself
+    assert member[0] > not_a_member[0]
+    z = domain.train.astype(np.float64)
+    others = np.sort(np.linalg.norm(z - z[0], axis=1))[1:]  # [twin 0, then rest]
+    assert others[0] < 1e-3
+    np.testing.assert_allclose(member[0], others[:3].mean(), rtol=1e-4)
+
+
+def test_rows_of_finds_training_molecules(fitted):
     column = fitted._training.columns["mw"]
-    measured = domain.measure(compute_physchem_raw(column.smiles[:20]))
-    assert (measured > 0).all()
+    rows = column.rows_of([column.smiles[3], "not in the training set"])
+    assert rows.tolist() == [3, -1]
 
 
 def test_an_extreme_molecule_is_far_out(fitted):
@@ -87,7 +120,8 @@ def test_roundtrip(fitted, query, tmp_path):
 def _scaler(raw):
     """Library-style scaler parameters fitted on a synthetic matrix."""
     finite = np.where(np.isfinite(raw), raw, np.nan)
-    with np.errstate(all="ignore"):
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN columns
         median = np.nan_to_num(np.nanmedian(finite, axis=0))
         mean = np.nan_to_num(np.nanmean(finite, axis=0))
         scale = np.nan_to_num(np.nanstd(finite, axis=0))

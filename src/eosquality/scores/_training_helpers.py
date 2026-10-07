@@ -15,6 +15,9 @@ from eosquality.vectorindex import VectorIndex
 # Quantile across output columns for the whole-model value (the column
 # analogue of the Q66 aggregate typicality and extremity use over features).
 SUMMARY_QUANTILE = 0.66
+# Nearest training neighbours averaged per (molecule, column), for the Morgan
+# and the physchem distance alike. Capped by the column's size.
+K_NEIGHBORS = 5
 # A progress bar is drawn for query descriptor passes of at least this many molecules.
 PROGRESS_MIN_MOLECULES = 500
 
@@ -28,9 +31,9 @@ class TrainingQuery:
     """Query features computed once per run and shared by the training scores.
 
     Standardising SMILES, physchem descriptors, Morgan bits and each
-    column's nearest-neighbour search are the costly steps of scoring; training
-    distance and every error model of training difficulty need the same
-    ones, so they are computed on first use and cached here.
+    column's nearest-neighbour search are the costly steps of scoring; the
+    training scores need the same ones, so they are computed on first use and
+    cached here.
 
     Parameters
     ----------
@@ -51,7 +54,6 @@ class TrainingQuery:
         self.smiles = list(smiles)
         self.rows = np.arange(len(self.smiles)) if rows is None else rows
         self.n_rows = len(self.smiles) if n_rows is None else n_rows
-        self._maccs: np.ndarray | None = None
         self._morgan: np.ndarray | None = None
         self._physchem: np.ndarray | None = None
         self._nearest: dict[str, tuple[int, tuple]] = {}
@@ -74,20 +76,6 @@ class TrainingQuery:
         std = [_standardize(s) for s in query["input"]]
         rows = np.flatnonzero([s is not None for s in std])
         return cls([std[i] for i in rows], rows, len(query))
-
-    @property
-    def maccs(self) -> np.ndarray:
-        """``(n, 166)`` MACCS keys.
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        if self._maccs is None:
-            from eosquality.library.maccs import compute_maccs
-
-            self._maccs = compute_maccs(self.smiles, show_progress=False)
-        return self._maccs
 
     @property
     def morgan(self) -> np.ndarray:

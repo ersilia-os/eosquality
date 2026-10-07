@@ -188,8 +188,8 @@ class TrainingMatch(ScoreComponent):
             match=match,
             scaffold=scaffold,
             metadata={
-                "n_molecules": len(self._molecules),
-                "n_scaffolds": len(self._scaffolds),
+                "n_molecules": self.n_molecules,
+                "n_scaffolds": self.n_scaffolds,
             },
         )
 
@@ -214,3 +214,37 @@ class TrainingMatch(ScoreComponent):
         bool
         """
         return self._molecules is not None and self._scaffolds is not None
+
+    @property
+    def n_molecules(self) -> int:
+        """Number of distinct training connectivity layers.
+
+        Returns
+        -------
+        int
+        """
+        self._check_fitted()
+        assert self._molecules is not None
+        return len(self._molecules)
+
+    @property
+    def n_scaffolds(self) -> int:
+        """Number of distinct training scaffold connectivity layers.
+
+        Returns
+        -------
+        int
+        """
+        self._check_fitted()
+        assert self._scaffolds is not None
+        return len(self._scaffolds)
+
+    @property
+    def fit_summary(self) -> str:
+        """One line for the fit log.
+
+        Returns
+        -------
+        str
+        """
+        return f"{self.n_molecules:,} structures · {self.n_scaffolds:,} scaffolds"

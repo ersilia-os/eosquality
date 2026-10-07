@@ -147,6 +147,7 @@ def sparsification_gain(score: np.ndarray, err: np.ndarray) -> float:
     """
 
     def curve(order: np.ndarray) -> np.ndarray:
+        """MAE of the molecules kept when the rows ``order`` are dropped first."""
         kept = err[order][::-1]  # ascending score: the kept part is a prefix
         return np.cumsum(kept)[::-1] / np.arange(len(err), 0, -1)
 

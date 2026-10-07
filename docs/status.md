@@ -124,24 +124,28 @@ reference scores use only the columns that have a training set.
 ![Training-score distributions](figures/training_scores.png)
 
 Read that figure critically: against every example query set, including a
-sample of the reference library itself, `trn_distance` sits well above 0.5
-and often saturates near 1. That is honest — the training sets hold a few
+sample of the reference library itself, the distance percentile (now published
+as the similarity `trn_tanimoto_pct`, one minus it) sits far from the training
+set's own typical value and often saturates. That is honest — the training sets hold a few
 thousand molecules against a 1.35M-molecule library, so almost any query is
 farther from them than their molecules are from each other — but it leaves
 the calibrated score with little resolution once everything is "far", which
-is why `trn_distance_raw` is reported alongside it (the same trade-off as
-`ref_support_log`). `trn_difficulty` stays spread over its whole range.
+is why `trn_tanimoto_raw` is reported alongside it (the same trade-off as
+`ref_support_log`). The figure predates the physchem and match scores and shows the old column names.
 Drugs are the closest set for eos4e40 (E. coli), whose training data is a
 drug-like screen; the synthetic set is the farthest for every model.
 
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
 | 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
-| 2 | `trn_distance`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, raw and calibrated on each column's leave-one-out values (no cutoff) + nearest training molecules | SMILES | done |
-| 3 | `trn_difficulty`: learned error model per labelled column, following UNIQUE's feature set (i) (surrogate RF with scaffold CV; inputs: MACCS keys, kNN distance, 3 KDEs, ensemble variance, top-1 probability, prediction), calibrated rank, Q66 → one value | y | done (validated on 19 real endpoints, below) |
+| 2 | `trn_tanimoto`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, published as similarities (`_raw`, and `_pct` calibrated on each column's leave-one-out values; no cutoff) + nearest training molecules | SMILES | done |
+| 2b | `trn_physchem` (the same in library-scaled physchem space), `trn_match` and `trn_scaffold` (connectivity-layer lookups) | SMILES | done |
+| 3 | `trn_difficulty`: learned error model per labelled column (surrogate RF with scaffold CV; four scalar inputs), calibrated rank, Q66 → one value | y | built, **parked** (off by default); the validation below used the earlier MACCS + KDE inputs |
 | 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
 
 ### Validation on the Ersilia example training sets
+
+These numbers are for the error model `trn_difficulty`, which is parked, with the inputs it had then (MACCS keys and three KDEs, since replaced by four scalars); they have not been re-measured.
 
 The headline evidence, on the example models' own training data.
 
@@ -222,7 +226,7 @@ Read this critically:
   Useful for triage, far from a decision rule.
 - **Calibration holds on real artifacts.** 400 training molecules of
   eos4e40 scored against their own fitted artifacts average 0.492
-  (`trn_distance`) and 0.503 (`trn_difficulty`), and all 400 are flagged
+  (the Morgan distance percentile) and 0.503 (`trn_difficulty`), and all 400 are flagged
   `trn_in_training` — the leave-one-out and out-of-fold construction does
   what it claims.
 - **The per-column values are not redundant.** On eos7m30's 10 selected
@@ -270,8 +274,8 @@ molecules) that cap took the error models from 6m 15s to 1m 51s and the whole
 fit from 9m 03s to 4m 27s, while the out-of-fold Spearman moved by at most
 0.02 (0.924 → 0.922, 0.959 → 0.943, 0.878 → 0.861); the saved artifacts went
 from 646 MB to 361 MB. Scoring 1,000 queries against 10 columns takes about
-8 s: the query's SMILES, MACCS keys, Morgan bits and per-column neighbour
-searches are computed once and shared by both training scores
+8 s: the query's SMILES, Morgan bits and per-column neighbour
+searches are computed once and shared by the training scores
 (`TrainingQuery`), which halved it.
 
 The surrogate considers every fingerprint bit at each split (`max_features=1.0`). Restricting it to a third of the bits, or to their square root, is up to 15 times faster, but it ranked held-out errors less well on the two largest continuous sets: lipophilicity 0.31 and 0.30 instead of 0.32, BACE pIC50 0.28 and 0.24 instead of 0.30. So the slower setting stays.

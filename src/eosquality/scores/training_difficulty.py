@@ -6,9 +6,8 @@ model. For each output column with at least ``MIN_LABELLED`` labels, an
 predict, following UNIQUE's error models (see
 :mod:`eosquality.scores._error_model`): a surrogate random forest fitted
 with scaffold-grouped CV gives out-of-fold residuals, and a second random
-forest predicts them from UNIQUE's feature set (i): MACCS keys, base UQ
-signals (nearest-neighbour similarities, ensemble variance) and the
-surrogate's own score.
+forest predicts them from four scalars: the nearest-neighbour similarities,
+the surrogate's ensemble variance and the surrogate's own score.
 
 The query's predicted error is calibrated as its percentile among the
 training molecules' out-of-fold predicted errors: ~0.5 is as hard as a
@@ -44,11 +43,11 @@ from eosquality.scores._error_model import (
 )
 from eosquality.scores._helpers import _cdf_score
 from eosquality.scores._training_helpers import (
+    K_NEIGHBORS,
     SUMMARY_QUANTILE,
     TrainingQuery,
     _columns_summary,
 )
-from eosquality.scores.training_distance import K_NEIGHBORS
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
 from eosquality.utils.logging import logger

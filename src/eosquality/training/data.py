@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 import pandas as pd
@@ -56,6 +57,27 @@ class TrainingColumn:
         int
         """
         return len(self.smiles)
+
+    @cached_property
+    def _position(self) -> dict[str, int]:
+        return {s: i for i, s in enumerate(self.smiles)}
+
+    def rows_of(self, smiles: list[str]) -> np.ndarray:
+        """Position of each standardised SMILES in the training set.
+
+        Parameters
+        ----------
+        smiles : list of str
+            Standardised SMILES.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(len(smiles),)`` int, ``-1`` for a molecule that is not a
+            training molecule of this column.
+        """
+        get = self._position.get
+        return np.array([get(s, -1) for s in smiles], dtype=np.int64)
 
     @property
     def has_y(self) -> bool:
