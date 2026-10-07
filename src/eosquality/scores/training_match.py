@@ -31,6 +31,7 @@ from eosquality.scores._base import ScoreComponent, require_file
 from eosquality.scores._training_helpers import TrainingQuery
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
+from eosquality.utils import console
 
 SUBFOLDER = "training_match"
 KEYS_FILE = "connectivity_keys.npz"
@@ -73,8 +74,17 @@ def connectivity_layer(smiles: str) -> str:
     return key[:CONNECTIVITY_LENGTH]
 
 
-def _layers(smiles: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def _layers(
+    smiles: list[str], label: str = "InChIKey layers"
+) -> tuple[np.ndarray, np.ndarray]:
     """Connectivity layers of the molecules and of their Murcko scaffolds.
+
+    Parameters
+    ----------
+    smiles : list of str
+        Standardised SMILES.
+    label : str, optional
+        Progress-bar title.
 
     Returns
     -------
@@ -84,10 +94,14 @@ def _layers(smiles: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """
     from eosquality.training.folds import _scaffold
 
-    molecules = np.array([connectivity_layer(s) for s in smiles], dtype=object)
-    scaffolds = np.array(
-        [connectivity_layer(_scaffold(s)) for s in smiles], dtype=object
-    )
+    molecules = np.empty(len(smiles), dtype=object)
+    scaffolds = np.empty(len(smiles), dtype=object)
+    with console.progress(label) as bar:
+        task = bar.add_task(label, total=len(smiles))
+        for i, s in enumerate(smiles):
+            molecules[i] = connectivity_layer(s)
+            scaffolds[i] = connectivity_layer(_scaffold(s))
+            bar.advance(task)
     return molecules, scaffolds
 
 
@@ -161,7 +175,7 @@ class TrainingMatch(ScoreComponent):
         assert self._molecules is not None and self._scaffolds is not None
         if features is None:
             features = TrainingQuery.from_frame(query)
-        molecules, scaffolds = _layers(features.smiles)
+        molecules, scaffolds = _layers(features.smiles, "query InChIKey layers")
         idx = list(query.index)
         match = pd.Series(pd.NA, index=range(len(idx)), dtype="Int64")
         scaffold = match.copy()

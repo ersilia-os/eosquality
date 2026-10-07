@@ -27,8 +27,8 @@ stylia.set_format("slide")
 stylia.set_style("ersilia")
 
 PANELS = [
-    ("trn_tanimoto_pct", "Distance (calibrated)", (0.0, 1.0)),
-    ("trn_tanimoto_raw", "Distance (raw, 1 − Tanimoto)", (0.0, 1.0)),
+    ("trn_tanimoto_pct", "Similarity (percentile)", (0.0, 1.0)),
+    ("trn_tanimoto_raw", "Similarity (raw, mean Tanimoto)", (0.0, 1.0)),
     ("trn_difficulty", "Difficulty (calibrated)", (0.0, 1.0)),
 ]
 

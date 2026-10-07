@@ -121,6 +121,8 @@ def bootstrap(fn, *arrays, n=500):
 
 
 SCORES = ("trn_tanimoto_pct", "trn_tanimoto_raw", "trn_difficulty")
+# Similarities: negated so every score is read as higher = harder to predict.
+HIGHER_IS_CLOSER = {"trn_tanimoto_pct", "trn_tanimoto_raw"}
 
 
 def sparsification_gain(score: np.ndarray, err: np.ndarray) -> float:
@@ -408,6 +410,8 @@ def evaluate(df: pd.DataFrame, name: str = "column", black_boxes=BLACK_BOXES) ->
             if c not in scores:
                 continue
             values = scores[c].to_numpy()
+            if c in HIGHER_IS_CLOSER:  # score against the error as a distance
+                values = -values
             entry = metrics(values, err)
             entry["permutation_95"] = permutation_threshold(values, err)
             entry["shifts"] = shift_spearman(values, err, shifts)

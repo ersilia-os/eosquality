@@ -291,9 +291,9 @@ Carried over from the previous README TODO list:
 
 Training modality:
 
-- [ ] `trn_distance` saturates near 1 against query sets that are all far from
-      the training sets, so its calibrated form loses resolution exactly where
-      a user most wants it. Consider a log companion (`trn_distance_log`), as
+- [ ] `trn_tanimoto_pct` saturates near 0 against query sets that are all far
+      from the training sets, so its calibrated form loses resolution exactly
+      where a user most wants it. Consider a log companion, as
       `ref_support_log` does for support.
 - [ ] `trn_difficulty` is near random on noisy, diverse endpoints
       (`solubility_aqsoldb`, `dili`). The fit warns below Spearman 0.2, but a

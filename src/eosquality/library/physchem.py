@@ -99,6 +99,7 @@ def compute_physchem_raw(
     *,
     n_jobs: int | None = None,
     show_progress: bool | None = None,
+    label: str = "physchem descriptors",
 ) -> np.ndarray:
     """Compute the ``(n, N_DESCRIPTORS)`` raw float32 descriptor matrix.
 
@@ -113,6 +114,8 @@ def compute_physchem_raw(
         Worker processes (default: in-process; ``-1``: every CPU).
     show_progress : bool, optional
         Show a progress bar; ``None`` shows it only for parallel runs.
+    label : str, optional
+        Progress-bar title.
 
     Returns
     -------
@@ -125,7 +128,7 @@ def compute_physchem_raw(
         _compute_one,
         smiles_list,
         out,
-        label="physchem",
+        label=label,
         n_jobs=n_jobs,
         chunksize=256,
         show_progress=show_progress,

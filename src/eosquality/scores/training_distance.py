@@ -12,14 +12,18 @@ from the output columns' training sets without pooling them:
   column's own leave-one-out raw values (each training molecule vs its k
   nearest *other* training molecules): ~0.5 for a query as close as a typical
   training molecule, near 1 when farther than almost all of them.
-- **Whole model.** ``trn_tanimoto_pct`` and ``trn_tanimoto_raw`` are
-  the 66th percentile across columns of the calibrated and the raw values:
-  at least two-thirds of the columns are this close or closer. Calibrated
+- **Whole model.** Both published columns are similarities, higher is closer.
+  ``trn_tanimoto_pct`` is 1 − the 66th percentile across columns of the
+  calibrated distance (the similarity percentile: ~0.5 for a query as close as
+  a typical training molecule, near 0 when farther than almost all of them),
+  and ``trn_tanimoto_raw`` is the mean Tanimoto similarity at the same point
+  (1 − the 66th percentile of the raw distances): at least two-thirds of the
+  columns are this close or closer. Calibrated
   values are percentiles of each column's own training set, so columns of
   very different sizes and densities combine fairly; a large training set
   cannot hide that the query is far from a small one.
 
-Higher is farther; there is no in/out cutoff. ``trn_in_training`` flags queries
+Higher is closer; there is no in/out cutoff. ``trn_in_training`` flags queries
 that are a training molecule of any column. The details table has one row
 per query with the 5 nearest training molecules over all columns (keys,
 similarities, the columns each belongs to).
@@ -76,8 +80,8 @@ DETAIL_COLUMNS = [
 class TrainingDistanceRunResult:
     """Result returned by :meth:`TrainingDistance.run`."""
 
-    score: pd.Series  # (n_query,) calibrated summary across columns, in (0, 1]
-    score_raw: pd.Series  # (n_query,) raw mean-k distance summary, in [0, 1]
+    score: pd.Series  # (n_query,) similarity percentile across columns, in (0, 1)
+    score_raw: pd.Series  # (n_query,) mean Tanimoto similarity to the k nearest, [0, 1]
     in_training: pd.Series  # (n_query,) query is a training molecule of a column
     details: pd.DataFrame  # one row per query (DETAIL_COLUMNS)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -164,8 +168,12 @@ class TrainingDistance(ScoreComponent):
         raw[rows], calibrated[rows], in_train[rows], neighbours = self._per_column(
             features
         )
-        score = _columns_summary(calibrated)
-        score_raw = _columns_summary(raw)
+        # Per-column calibration is a distance percentile (higher = farther); the
+        # published score is its similarity: 1 minus the Q66 is the Q34 of
+        # the similarity percentiles, i.e. at least two-thirds of the columns
+        # are this close or closer.
+        score = 1.0 - _columns_summary(calibrated)
+        score_raw = 1.0 - _columns_summary(raw)  # mean Tanimoto similarity
         details = pd.DataFrame(
             {
                 "key": keys,

@@ -156,8 +156,8 @@ def test_details_keep_unparsable_queries(both):
 def test_unrelated_molecule_is_far(both):
     q = pd.DataFrame({"key": ["far"], "input": ["[Fe+2].[Cl-].[Cl-]"]})
     res = both.training_distance.run(q)
-    assert res.score.iloc[0] > 0.95
-    assert res.score_raw.iloc[0] > 0.9
+    assert res.score.iloc[0] < 0.05  # similarity percentile: far is near 0
+    assert res.score_raw.iloc[0] < 0.1  # a similarity: nothing like the training set
     assert not res.in_training.iloc[0]
 
 
@@ -166,10 +166,10 @@ def test_whole_model_value_is_q66_of_columns(both, query):
     raw, calibrated, _, _ = distance._per_column(list(query.input))
     res = both.run(query)
     np.testing.assert_allclose(
-        res.scores["trn_tanimoto_pct"], np.quantile(calibrated, 0.66, axis=1)
+        res.scores["trn_tanimoto_pct"], 1 - np.quantile(calibrated, 0.66, axis=1)
     )
     np.testing.assert_allclose(
-        res.scores["trn_tanimoto_raw"], np.quantile(raw, 0.66, axis=1)
+        res.scores["trn_tanimoto_raw"], 1 - np.quantile(raw, 0.66, axis=1)
     )
 
 

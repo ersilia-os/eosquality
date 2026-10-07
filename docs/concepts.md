@@ -113,13 +113,13 @@ Each output column of a model may have its own training set: SMILES, plus option
 Training distance asks how far the query is from the molecules the model was trained on. It gives **one value per molecule for the whole model**. It is the classic kNN applicability domain: the mean similarity to the 5 nearest training molecules is among the best structural predictors of prediction error (Sheridan et al., *J. Chem. Inf. Comput. Sci.* 2004). Following the kNN domain of Tropsha and the OECD principle that a domain is judged against the training set itself, the query is compared with how close training molecules are to each other. There is no in/out cutoff: both a raw distance and a calibrated percentile are reported.
 
 The value is built from each output column's own training set; the sets are **not pooled**:
-- **Raw, per column:** `1 − mean Tanimoto similarity` (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**. A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value.
-- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules. About 0.5 means as close as a typical training molecule; near 1 means farther than almost all of them.
-- **Whole model:** `trn_tanimoto_pct` and `trn_tanimoto_raw` are the **66th percentile** of the per-column values: at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
+- **Raw, per column:** the mean Tanimoto similarity (Morgan, radius 2, 2048 bits) between the query and its **5 nearest training molecules**; internally the distance `1 −` that similarity is calibrated. A query that is itself a training molecule (same standardised SMILES) drops its own entry, so it gets its leave-one-out value.
+- **Calibrated, per column:** the mid-rank percentile of the raw value among the column's **leave-one-out** raw values, where each training molecule is compared with its 5 nearest *other* training molecules. This is a distance percentile, higher is farther; the published column is its similarity (1 minus it).
+- **Whole model:** `trn_tanimoto_pct` is 1 − the **66th percentile** of the per-column calibrated distances, so higher is closer: about 0.5 means as close as a typical training molecule, and near 0 means farther than almost all of them. `trn_tanimoto_raw` is the similarity at the same point (1 − the 66th percentile of the per-column distances): at least two-thirds of the columns are this close or closer. A single distant column doesn't dominate, but several do.
 
 Why not pool the training sets into one? Pooled, a large training set could hide that the query is far from a small one. Each calibrated per-column value is a percentile of that column's own training set, so columns of very different sizes and densities combine fairly.
 
-How to read the two values: higher is farther for both. The raw value means the same thing across models: as a rough guide, 0.6 or more (mean similarity ≤ 0.4) means no related training chemistry. The calibrated value is relative to how dense the training sets are, so a diverse training set makes the same raw distance look more typical. Read them together.
+How to read the two values: both are similarities, higher is closer. The raw value means the same thing across models: as a rough guide, 0.4 or less (a mean Tanimoto similarity that low) means no related training chemistry. The calibrated value is relative to how dense the training sets are, so a diverse training set makes the same raw distance look more typical. Read them together.
 
 `trn_in_training` (details file) flags a query that is a training molecule of any column. `training_details` lists, per query, the 5 nearest training molecules over all columns (keys, similarities, and the columns each belongs to).
 
@@ -147,9 +147,10 @@ with molecule size and reached z = 2.7×10²⁶ on eos4e40, and a single
 occurrence of a rare fragment count such as `fr_isothiocyan` gives z ≈ 100.
 The **mean Euclidean distance to the 5 nearest training molecules** is
 `trn_physchem_dist` (details file). Two scores come from it. `trn_physchem_pct`
-is its mid-rank percentile among the training molecules' own leave-one-out
-distances, so ~0.5 means "as ordinary as a typical training molecule" and near
-1 means "further out than almost all of them". `trn_physchem_raw` is a
+is the similarity percentile: 1 − the mid-rank percentile of the distance among
+the training molecules' own leave-one-out distances, so ~0.5 means "as ordinary
+as a typical training molecule" and near 0 means "further out than almost all
+of them". `trn_physchem_raw` is a
 **similarity**, `1 − d / 18.70`, where 18.70 is the median distance between two
 random reference-library molecules in this space (1,000,000 random pairs; recomputed
 by `scripts/physchem_pair_median.py`). It is 1 for an identical molecule, 0 for one

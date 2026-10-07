@@ -22,11 +22,13 @@ class RunResult:
     fit are absent.
 
     Training-modality columns (when training sets were fit) follow:
-    ``trn_tanimoto_pct``, ``trn_tanimoto_raw`` (one whole-model value: Q66
-    across output columns of the mean distance to the 5 nearest training
-    molecules, and its percentile among the training set's own
-    leave-one-out values), ``trn_physchem_pct`` (the same
-    percentile in physchem space), ``trn_physchem_raw`` (a similarity,
+    ``trn_tanimoto_pct`` (one whole-model value: the similarity percentile of
+    the mean Tanimoto distance to the 5 nearest training molecules among the
+    training set's own leave-one-out values, taken at the 66th percentile
+    across output columns; higher is closer), ``trn_tanimoto_raw`` (the mean
+    Tanimoto similarity at the same point, higher is closer),
+    ``trn_physchem_pct`` (the same percentile in physchem space, higher is
+    closer), ``trn_physchem_raw`` (a similarity,
     ``1 - d / 18.70``: 1 is identical, 0 no closer than a random library
     pair, unclipped; the distance is in ``training_details``), ``trn_match`` and ``trn_scaffold``
     (1 / 0: the InChIKey connectivity layer of the molecule, or of its Murcko

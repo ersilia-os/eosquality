@@ -10,6 +10,7 @@ import click
 
 from eosquality._registry import (
     ALL_SCORES,
+    ALSO_EMITS,
     DEFAULT_OFF,
     REFERENCE_SCORES,
     SCORE_NAMES,
@@ -177,7 +178,7 @@ def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
             ("model", f"{eos_id} {version}"),
             ("reference", console.path(reference) if reference else "—"),
             ("training sets", console.path(training_sets) if training_sets else "—"),
-            ("scores", ", ".join(fitted) or "—"),
+            ("scores", _score_list(fitted)),
             ("artifacts", console.path(folder)),
         ],
         icon="◆",
@@ -199,6 +200,14 @@ def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
     _fit_summary(eq, folder, log_path, started)
 
 
+def _score_list(names) -> str:
+    """Comma-separated score names, with the extra column a score also writes."""
+    shown = []
+    for name in names:
+        shown += [name, *ALSO_EMITS.get(name, ())]
+    return ", ".join(shown) or "—"
+
+
 def _fit_summary(eq, folder: pathlib.Path, log_path: pathlib.Path, started) -> None:
     """Final ``✓ Fit complete`` panel."""
     eos_id, version = eq._model_id()
@@ -208,7 +217,7 @@ def _fit_summary(eq, folder: pathlib.Path, log_path: pathlib.Path, started) -> N
         [
             ("model", f"{eos_id} {version}"),
             ("modalities", " + ".join(eq.modalities_)),
-            ("scores", ", ".join(SCORE_NAMES[s] for s in scores)),
+            ("scores", _score_list(SCORE_NAMES[s] for s in scores)),
             (
                 "artifacts",
                 f"{console.path(folder)}  [dim]{console.folder_size(folder)}[/]",

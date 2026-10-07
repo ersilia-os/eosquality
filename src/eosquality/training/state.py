@@ -27,6 +27,7 @@ import numpy as np
 
 from eosquality.exceptions import ArtifactVersionError
 from eosquality.training.data import TrainingColumn
+from eosquality.utils import console
 from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
@@ -99,7 +100,8 @@ def fit_training(
     """
     workdir = tempfile.TemporaryDirectory(prefix="eosquality_training_")
     indices: dict[str, VectorIndex] = {}
-    for i, (name, column) in enumerate(columns.items()):
+    for i, name in enumerate(console.track(list(columns), "Morgan index, columns")):
+        column = columns[name]
         t0 = time.perf_counter()
         indices[name] = VectorIndex.build(
             column.smiles,

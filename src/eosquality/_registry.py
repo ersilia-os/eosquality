@@ -48,6 +48,9 @@ SCORE_NAMES: dict[str, str] = {
 # Scores that are not fitted unless asked for (``fit(include=...)``): the error
 # model is parked for now; its code and artifacts format stay in place.
 DEFAULT_OFF: tuple[str, ...] = ("trn_difficulty",)
+# Scores that emit a second output column of their own, for display: trn_match
+# also writes trn_scaffold.
+ALSO_EMITS: dict[str, tuple[str, ...]] = {"trn_match": ("trn_scaffold",)}
 COMPONENTS: dict[str, str] = {score: comp for comp, score in SCORE_NAMES.items()}
 REFERENCE_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in SCORE_ORDER)
 TRAINING_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in TRAINING_ORDER)

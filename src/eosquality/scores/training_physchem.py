@@ -3,10 +3,14 @@
 Training modality, X only. Per output column, the mean Euclidean distance
 from the query to its 5 nearest training molecules over RDKit physchem
 descriptors scaled with the reference library's scaler (clipped to ±10;
-:mod:`eosquality.scores._physchem_domain`), calibrated as the mid-rank percentile among the training molecules' own leave-one-out
-distances. ~0.5 means "as ordinary as a typical training molecule", near 1
-means "further out than almost all of them". The whole-model value is the
-66th percentile across columns, as for training distance.
+:mod:`eosquality.scores._physchem_domain`). Two columns come from it, both
+higher-is-closer: ``trn_physchem_pct``, 1 − the mid-rank percentile of the
+distance among the training molecules' own leave-one-out distances (~0.5 for
+"as ordinary as a typical training molecule", near 0 for "further out than
+almost all of them", summarised across columns at the 66th percentile of the
+distance, as for training similarity), and ``trn_physchem_raw``, the similarity
+``1 - d / PAIR_MEDIAN`` (0 for a random library pair, unclipped). The distance
+itself is ``trn_physchem_dist``, in the details file.
 
 Deliberately the same method as ``trn_tanimoto``, in a different space.
 ``trn_tanimoto`` asks whether the query resembles a *specific* training
@@ -18,7 +22,7 @@ physicochemical and response space of the model" (ENV/JM/MONO(2007)2 §3.1
 with one another" (¶128).
 
 They are related but not redundant: on eos4e40 the two correlate at about
--0.5, so a molecule can be structurally novel while physicochemically
++0.5, so a molecule can be structurally novel while physicochemically
 ordinary, or the reverse.
 
 Reported for inspection; not an input to the error model.
@@ -45,6 +49,7 @@ from eosquality.scores._training_helpers import (
 )
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
+from eosquality.utils import console
 from eosquality.utils.logging import logger
 
 SUBFOLDER = "training_physchem"
@@ -55,7 +60,7 @@ STATE_FILE = "state.json"
 class TrainingPhyschemRunResult:
     """Result returned by :meth:`TrainingPhyschem.run`."""
 
-    score: pd.Series  # (n_query,) calibrated distance across columns, in (0, 1]
+    score: pd.Series  # (n_query,) similarity percentile across columns, in (0, 1)
     score_raw: pd.Series  # (n_query,) similarity 1 - d / pair median, unclipped
     distance: pd.Series  # (n_query,) mean distance to the k nearest, library SD units
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -98,9 +103,15 @@ class TrainingPhyschem(ScoreComponent):
         t0 = time.perf_counter()
         self._training = training
         self._domains = {}
-        for name in training.column_names:
+        names = training.column_names
+        # One live bar at a time: per molecule for a single column, else per column.
+        for name in console.track(names, "physchem, columns"):
             column = training.columns[name]
-            raw = compute_physchem_raw(column.smiles, show_progress=False)
+            raw = compute_physchem_raw(
+                column.smiles,
+                show_progress=len(names) == 1,
+                label="physchem descriptors",
+            )
             self._domains[name] = PhyschemDomain.fit(raw, scaler)
             logger.debug(
                 f"physchem domain | column {name!r}: {column.n:,} molecules, "
@@ -147,7 +158,9 @@ class TrainingPhyschem(ScoreComponent):
         summary_distance = _columns_summary(raw)
         return TrainingPhyschemRunResult(
             score=pd.Series(
-                _columns_summary(calibrated), index=idx, name="trn_physchem_pct"
+                1.0 - _columns_summary(calibrated),
+                index=idx,
+                name="trn_physchem_pct",
             ),
             score_raw=pd.Series(
                 next(iter(self._domains.values())).similarity(summary_distance),

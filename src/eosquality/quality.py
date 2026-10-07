@@ -502,7 +502,9 @@ def _score_table(scores: pd.DataFrame) -> None:
     names = [
         c
         for c in scores.columns
-        if pd.api.types.is_float_dtype(scores[c]) and not c.endswith(("_raw", "_log"))
+        if pd.api.types.is_numeric_dtype(scores[c])
+        and not pd.api.types.is_bool_dtype(scores[c])
+        and not c.endswith(("_raw", "_log"))
     ]
     console.table(
         ("score", "mean", "median", "min", "max"),
@@ -510,7 +512,7 @@ def _score_table(scores: pd.DataFrame) -> None:
             (
                 c,
                 *(
-                    f"{getattr(scores[c], f)():.3f}"
+                    f"{getattr(scores[c].astype(float), f)():.3f}"
                     for f in ("mean", "median", "min", "max")
                 ),
             )

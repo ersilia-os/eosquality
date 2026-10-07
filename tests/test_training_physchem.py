@@ -58,7 +58,8 @@ def test_self_match_is_excluded_from_the_calibration(fitted):
 def test_an_extreme_molecule_is_far_out(fitted):
     """A tiny inorganic salt sits outside drug-like physchem space."""
     q = pd.DataFrame({"key": ["far"], "input": ["[Fe+2].[Cl-].[Cl-]"]})
-    assert fitted.training_physchem.run(q).score.iloc[0] > 0.9
+    # Similarity percentile: far from the training set is near 0.
+    assert fitted.training_physchem.run(q).score.iloc[0] < 0.1
 
 
 def test_unparsable_smiles_give_nan(fitted):

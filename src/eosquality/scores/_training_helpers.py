@@ -15,6 +15,8 @@ from eosquality.vectorindex import VectorIndex
 # Quantile across output columns for the whole-model value (the column
 # analogue of the Q66 aggregate typicality and extremity use over features).
 SUMMARY_QUANTILE = 0.66
+# A progress bar is drawn for query descriptor passes of at least this many molecules.
+PROGRESS_MIN_MOLECULES = 500
 
 
 def _columns_summary(values: np.ndarray) -> np.ndarray:
@@ -112,7 +114,11 @@ class TrainingQuery:
         if self._physchem is None:
             from eosquality.library.physchem import compute_physchem_raw
 
-            self._physchem = compute_physchem_raw(self.smiles, show_progress=False)
+            self._physchem = compute_physchem_raw(
+                self.smiles,
+                show_progress=len(self.smiles) >= PROGRESS_MIN_MOLECULES,
+                label="query physchem descriptors",
+            )
         return self._physchem
 
     def nearest(self, vi: VectorIndex, k: int):
