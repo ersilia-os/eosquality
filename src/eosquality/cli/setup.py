@@ -76,7 +76,7 @@ def setup(force: bool, verbose: bool) -> None:
                         force=force,
                     )
                     st.summary = console.path(csv_path)
-                with steps("Vector index and descriptors") as st:
+                with steps("Library folder (SMILES and match keys)") as st:
                     index_path = ensure_library_downloaded(
                         base_url=reference_base_url(),
                         dirname=library_dirname(),
@@ -92,7 +92,7 @@ def setup(force: bool, verbose: bool) -> None:
             "Setup complete",
             [
                 ("library CSV", console.path(csv_path)),
-                ("library index", console.path(index_path)),
+                ("library folder", console.path(index_path)),
                 ("time", console.elapsed(time.perf_counter() - started)),
             ],
             color="green",

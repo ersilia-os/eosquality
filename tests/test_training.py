@@ -21,12 +21,7 @@ DEFAULT_COLUMNS = [
 ]
 
 # Exclude every reference score but typicality (fast reference fits).
-ONLY_TYPICALITY = [
-    "ref_extremity",
-    "ref_support",
-    "ref_consistency",
-    "ref_signal",
-]
+ONLY_TYPICALITY = ["ref_extremity", "ref_match"]
 
 COLUMNS = ["mw", "logp", "tpsa", "aromatic", "hbd", "noisy"]
 
@@ -80,8 +75,7 @@ def both(reference, library, training_dir):
         reference,
         training_dir,
         eos_id="eos0aaa",
-        vector_index=library,
-        exclude=["ref_signal"],
+        library=library,
     )
 
 
@@ -160,7 +154,7 @@ def test_run_columns_and_details(both, query):
     for c in DEFAULT_COLUMNS:
         assert c in result.scores.columns
     assert "trn_in_training" in result.training_details.columns
-    assert "ref_support" in result.scores.columns  # reference modality still there
+    assert "ref_match" in result.scores.columns  # reference modality still there
     det = result.training_details
     assert len(det) == len(query) and det.key.tolist() == query.key.tolist()
     assert det.input.tolist() == query.input.tolist()
@@ -206,7 +200,7 @@ def test_reference_is_restricted_to_training_columns(both, reference, library):
     assert set(both.shared_.selected_columns) <= set(trained)
     # Without training sets, the reference keeps every output column.
     alone = ErsiliaQuality().fit(
-        reference, eos_id="eos0aaa", vector_index=library, exclude=ONLY_TYPICALITY
+        reference, eos_id="eos0aaa", library=library, exclude=ONLY_TYPICALITY
     )
     assert alone.shared_.schema.column_names == COLUMNS
 
@@ -216,7 +210,7 @@ def test_max_features_selects_within_training_columns(reference, library, traini
         reference,
         training_dir,
         eos_id="eos0aaa",
-        vector_index=library,
+        library=library,
         exclude=ONLY_TYPICALITY,
         max_features=2,
     )
@@ -277,7 +271,7 @@ def test_training_files_named_after_ersilia_columns(
         ref,
         folder,
         eos_id="eos42ez",
-        vector_index=library,
+        library=library,
         exclude=ONLY_TYPICALITY,
     )
     assert eq.training_distance.training_.column_names == columns
@@ -294,7 +288,7 @@ def test_training_files_named_after_ersilia_columns(
             ref,
             folder,
             eos_id="eos42ez",
-            vector_index=library,
+            library=library,
             exclude=ONLY_TYPICALITY,
         )
 

@@ -39,18 +39,12 @@ from rich.progress import (
 )
 
 # Files that make up a complete reference library folder. Must stay in sync
-# with what ``eosquality build`` emits — the FP index (``VectorIndex.build``)
-# plus the descriptor matrices (``BasicDescriptors``). The physchem files
-# and ``maccs.npy`` are read by the Signal score's two descriptor backends.
+# with what ``eosquality build`` emits: the library SMILES, its identity and
+# the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
 _LIBRARY_FILES: tuple[str, ...] = (
-    "vector_index.h5",
-    "knn_distances.npy",
-    "knn_indices.npy",
     "smiles.csv",
     "metadata.json",
-    "physchem_scaler.json",
-    "physchem_scaled.npy",
-    "maccs.npy",
+    "connectivity_keys.npz",
 )
 
 # Chunk size for streamed copy. 256 KB is the sweet spot for progress

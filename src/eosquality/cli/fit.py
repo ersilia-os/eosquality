@@ -128,7 +128,7 @@ def _read_reference(path: str | None) -> pd.DataFrame | None:
     "--exclude",
     multiple=True,
     metavar="SCORES",
-    help=("Scores not to fit, comma-separated, e.g. ref_signal."),
+    help=("Scores not to fit, comma-separated, e.g. ref_match."),
 )
 @verbose_option
 def fit(

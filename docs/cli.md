@@ -18,14 +18,14 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 
 | `fit` gets | Scores |
 |---|---|
-| `-r/--reference` (predictions on the reference library) | `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal` |
+| `-r/--reference` (predictions on the reference library) | `ref_typicality`, `ref_extremity`, `ref_match` and `ref_scaffold` |
 | `-t/--training-sets` (per-output-column training sets) | `trn_tanimoto`, `trn_physchem`, `trn_match` and `trn_scaffold` |
 | both | both, on the same columns (below) |
 
 ```bash
 eosquality fit -r reference_eos4e40_v1.csv -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/  # both
 eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                              # training only
-eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_signal     # skip a score
+eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_match      # skip a score
 ```
 
 **Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file.
@@ -46,13 +46,13 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
   Variable values are never written into tracebacks, so SMILES don't leak into logs.
 - **Exit status.** Errors print as `✖ error: …` and exit with status 1; success exits with 0.
-- **Invalid molecules.** Query rows whose `input` SMILES is missing or does not parse are not an error. Their structure-based scores (`ref_support`, `ref_consistency`, `ref_signal` and the `trn_` scores) are NaN, and a warning names the rows. The output-based scores, `ref_typicality` and `ref_extremity`, are still computed.
+- **Invalid molecules.** Query rows whose `input` SMILES is missing or does not parse are not an error. Their structure-based scores (`ref_match`, `ref_scaffold` and the `trn_` scores) are NaN, and a warning names the rows. The output-based scores, `ref_typicality` and `ref_extremity`, are still computed.
 - `fit` and `run` refuse to overwrite an existing output path.
 
 ## `eosquality setup`
 
 Sets eosquality up: fetches the canonical reference library from the public S3 bucket into the user cache:
-- the index folder → `~/.eosquality/indices/<library>/`
+- the library folder (SMILES, metadata, match keys) → `~/.eosquality/indices/<library>/`
 - the source CSV → `~/.eosquality/libraries/<library>.csv`
 
 This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
@@ -82,24 +82,24 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 
 **Artifacts folder** (`-a`). Always a new folder; it gets `reference_mode/` and/or `training_mode/`. An existing folder is refused.
 
-**Excluding scores** (`--exclude`). Takes score names, comma-separated or repeated: `--exclude ref_signal`, `--exclude ref_signal,trn_physchem`. An unknown name is an error. Naming a score of a modality you did not give is ignored. Excluding every score of a given input is an error (nothing to fit).
+**Excluding scores** (`--exclude`). Takes score names, comma-separated or repeated: `--exclude ref_match`, `--exclude ref_match,trn_physchem`. An unknown name is an error. Naming a score of a modality you did not give is ignored. Excluding every score of a given input is an error (nothing to fit).
 
 | flag | default | |
 |---|---|---|
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
 | `--artifacts`, `-a DIR` | required | new artifacts folder |
-| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match` |
+| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_match`, `trn_tanimoto`, `trn_physchem`, `trn_match` |
 | `--verbose`, `-v` | off | |
 
 At least one of `-r` and `-t` is required.
 
-**Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and trains on 1,000 rows. Feature selection keeps at most 10 output columns. With a reference, it clusters them on the correlation of their predictions; with `-t` alone, it clusters them on how many training molecules they share (columns from one screening panel group together) and keeps the largest set of each cluster. The Python API exposes `max_features` (see [api.md](api.md#fit)).
+**Fixed settings.** Feature selection keeps at most 10 output columns. With a reference, it clusters them on the correlation of their predictions; with `-t` alone, it clusters them on how many training molecules they share (columns from one screening panel group together) and keeps the largest set of each cluster. The Python API exposes `max_features` (see [api.md](api.md#fit)).
 
 ### The reference library
 
 `fit -r` looks up the canonical library locally, in this order:
-1. `$EOSQUALITY_REFERENCE_LIBRARY_PATH` (an index folder, used as is)
+1. `$EOSQUALITY_REFERENCE_LIBRARY_PATH` (a library folder, used as is)
 2. `./data/indices/<library>/`
 3. `~/.eosquality/indices/<library>/`
 
@@ -113,7 +113,7 @@ The artifacts folder and the output must be named for the same model, which must
 
 The output CSV contains:
 - the query's `key` and `input` (or `smiles`) columns, if present;
-- for each fitted reference score, a calibrated column and a `*_raw` column (plus `ref_support_log`);
+- for typicality and extremity, a `_pct` column and a `_raw` column; for `ref_match`, the `ref_match` and `ref_scaffold` flags (1 / 0, `ref_scaffold` empty for a query with no scaffold);
 - for the training modality, `trn_tanimoto_pct`, `trn_tanimoto_raw`, `trn_physchem_pct`, `trn_physchem_raw` (a similarity, 1 = identical, 0 = no closer than a random library pair), `trn_match` and `trn_scaffold` (see [api.md](api.md#runresult)). `trn_match` and `trn_scaffold` are 1 / 0, and `trn_scaffold` is empty for a query with no scaffold.
 
 If typicality or extremity is fitted, `<output stem>.reference_details.csv` is written next to the scores CSV: one row per query with `<column>_typicality_raw` / `_pct` and `<column>_extremity_raw` / `_pct` for every selected output column (see [api.md](api.md#reference_details)).
@@ -133,26 +133,21 @@ Artifacts written by an older eosquality format fail with a "refit" message.
 
 ## `eosquality build` (maintainers)
 
-Builds a vector index and the descriptor matrices from a SMILES CSV that has a `smiles` column. It writes:
-- `vector_index.h5`
-- `knn_indices.npy` and `knn_distances.npy`
+Builds a reference-library folder from a SMILES CSV that has a `smiles` column. Each SMILES is standardised (largest fragment, canonical isomeric), and the connectivity layers of the molecules and of their Murcko scaffolds are written once, so `ref_match` and `ref_scaffold` are exact lookups. The folder holds:
 - `smiles.csv`
-- `metadata.json`
-- `physchem_scaled.npy` and `physchem_scaler.json`
-- `maccs.npy`
+- `metadata.json` (the library's identity, `library_name`)
+- `connectivity_keys.npz` (the sorted unique connectivity layers of the molecules and of their scaffolds)
 
-An interrupted build resumes, but only if the SMILES list and the parameters are unchanged. See [reference-library.md](reference-library.md).
+The output folder must not exist (an existing one is refused, as for `fit` and `run`). The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes tens of minutes for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
 
 | flag | default | |
 |---|---|---|
 | `--input`, `-i PATH` | required | library CSV |
-| `--output`, `-o PATH` | required | index folder |
-| `--max-k K` | 50 | neighbours precomputed per molecule |
-| `--radius R` | 2 | Morgan radius |
-| `--n-bits N` | 2048 | Morgan bits |
+| `--output`, `-o PATH` | required | new library folder |
+| `--name NAME` | CSV file stem | library identity (`library_name`) |
 | `--max-samples N` | all | truncate the input (testing) |
 | `--verbose`, `-v` | off | |
 
 ## Reproducing the example results
 
-`scripts/run_all_scores.sh` fits all five reference scores for every `data/fit_examples/emh_paper_<eos>_v1.csv`. It then scores every matching `data/run_examples/*_1000_<eos>_v1.csv` query set, writing artifacts and scores to `output/` (override with `OUT_DIR=`). The figure scripts in `scripts/figures/` read those CSVs (see [status.md](status.md)).
+`scripts/run_all_scores.sh` fits every reference score for every `data/fit_examples/emh_paper_<eos>_v1.csv`. It then scores every matching `data/run_examples/*_1000_<eos>_v1.csv` query set, writing artifacts and scores to `output/` (override with `OUT_DIR=`). The figure scripts in `scripts/figures/` read those CSVs (see [status.md](status.md)).

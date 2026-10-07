@@ -12,7 +12,7 @@ Install the latest version of `eosquality` directly from GitHub:
 pip install git+https://github.com/ersilia-os/eosquality.git
 ```
 
-The CLI is then available as `eosquality`. Start by setting it up, which fetches the reference library and its indices:
+The CLI is then available as `eosquality`. Start by setting it up, which fetches the reference library:
 
 ```bash
 eosquality setup
@@ -33,7 +33,7 @@ There is one and only one reference library per major version of `eosquality`, s
 ```bash
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
 # optionally with training sets: -t training_eos4e40_v1/
-# skip a score: --exclude ref_signal
+# skip a score: --exclude ref_match
 ```
 
 Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of pre-calculations across Ersilia models.
@@ -58,15 +58,13 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 
 ## Scores
 
-Reference-modality scores compare a query against the model's own predictions on the reference library, which is **not** ground truth. Each is calibrated so that reference molecules score roughly Uniform(0, 1). Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
+Typicality and extremity compare a query against the model's own predictions on the reference library, which is **not** ground truth; each is calibrated so that reference molecules score roughly Uniform(0, 1). The match flags are exact lookups against the library's molecules. Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
 
 | Score (column) | Question |
 |---|---|
-| **Typicality** (`ref_typicality`) | Are the predicted values ones the model commonly produces? |
-| **Extremity** (`ref_extremity`) | Are the predicted values far from the centre of the model's output range? |
-| **Support** (`ref_support`) | Does the reference library contain a close analogue of the molecule? |
-| **Consistency** (`ref_consistency`) | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
-| **Signal** (`ref_signal`, provisional) | Is the prediction driven by a few chemical descriptors? |
+| **Typicality** (`ref_typicality_pct`, `_raw`) | Are the predicted values ones the model commonly produces? |
+| **Extremity** (`ref_extremity_pct`, `_raw`) | Are the predicted values far from the centre of the model's output range? |
+| **Reference match** (`ref_match`, `ref_scaffold`) | Is the same structure, or the same Murcko scaffold, in the reference library? 1 or 0. |
 | **Training similarity** (`trn_tanimoto`) | How far is the molecule from the model's training molecules, compared with how close they are to each other? Raw and as a percentile of the training set's own distances. |
 | **Training physchem** (`trn_physchem`) | The same question in physicochemical descriptor space. |
 | **Training match** (`trn_match`, `trn_scaffold`) | Is the same structure, or the same Murcko scaffold, in a training set? 1 or 0. |

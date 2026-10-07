@@ -23,16 +23,15 @@ eq.fit(
     *,
     eos_id,              # required, e.g. "eos4e40"
     version="v1",
-    exclude=(),          # score names not to fit, e.g. ["ref_signal"]
+    exclude=(),          # score names not to fit, e.g. ["ref_match"]
     max_features=10,     # cap on output columns, both modalities; None disables it
-    vector_index=None,   # custom index folder (programmatic use and tests)
+    library=None,        # custom reference-library folder (programmatic use and tests)
 ) -> ErsiliaQuality
 ```
 
 `fit` fits the **reference modality** when `reference` is given and the **training modality** when `training_sets` is given. At least one of the two is required. Every score of each given modality is fitted unless it is named in `exclude`.
-- **Score names.** `exclude` takes the public, modality-prefixed names in `ALL_SCORES`: `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match`. An unknown name raises `ValueError`, and so does excluding every score of a given input.
-- **The reference library.** `reference["input"]` must match the library's SMILES row for row, which also fixes its size. The canonical library is resolved locally (see [cli.md](cli.md#the-reference-library)). `vector_index` points at a custom index instead; its absolute path is stored in the artifacts.
-- **Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and 1,000 training rows.
+- **Score names.** `exclude` takes the public, modality-prefixed names in `ALL_SCORES`: `ref_typicality`, `ref_extremity`, `ref_match`, `trn_tanimoto`, `trn_physchem`, `trn_match`. (`ref_match` also writes `ref_scaffold`, and `trn_match` also writes `trn_scaffold`.) An unknown name raises `ValueError`, and so does excluding every score of a given input.
+- **The reference library.** `reference["input"]` must match the library's SMILES row for row, which also fixes its size. The canonical library is resolved locally (see [cli.md](cli.md#the-reference-library)). `library` points at a custom library folder instead; its absolute path is stored in the artifacts. The folder holds `smiles.csv`, `metadata.json` and `connectivity_keys.npz`.
 - **Re-fitting.** Calling `fit` again replaces every component, including ones excluded this time.
 - **Training sets.** The folder holds one CSV per output column (`smiles`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 - **Both inputs.** The training sets are loaded first. The reference modality is then fitted only on the output columns that have a usable training set (at least 20 valid molecules), and `max_features` selects among those; the training modality is then fitted on the selected columns only, so both modalities cover the same columns. A training-only fit applies `max_features` too, keeping the largest training set of each cluster on `1 − Jaccard` overlap of the training molecules. There is no way to add training sets to a fitted instance or to saved artifacts: fit both together.
@@ -45,7 +44,7 @@ eq.fit(
 result = eq.run(query)  # -> RunResult
 ```
 
-`query` needs the reference's numeric columns when the reference modality was fit. It needs an `input` column (or `smiles`) when support, consistency, signal or the training modality was fit. For a training-only artifact, SMILES alone are enough (`key` is optional).
+`query` needs the reference's numeric columns when the reference modality was fit. It needs an `input` column (or `smiles`) when `ref_match` or the training modality was fit. For a training-only artifact, SMILES alone are enough (`key` is optional).
 
 ### `save` / `load`
 
@@ -60,7 +59,7 @@ eq = ErsiliaQuality.load("artifacts/")
 
 **Post-fit attributes.**
 - `modalities_`: `["reference"]`, `["training"]` or both.
-- `reference_typicality_`, `reference_extremity_`, `reference_support_`, `reference_consistency_`, `reference_signal_`.
+- `reference_typicality_`, `reference_extremity_`.
 - `schema_`, `metadata_`, `shared_` (reference modality only).
 
 ## `RunResult`
@@ -69,30 +68,27 @@ eq = ErsiliaQuality.load("artifacts/")
 
 ### `scores`
 
-`scores` is a DataFrame indexed like the query. It has two columns per fitted score (three for support), in this order:
+`scores` is a DataFrame indexed like the query. It has two columns per fitted score, in this order:
 
 | column | range | meaning |
 |---|---|---|
 | `ref_typicality_pct`, `ref_typicality_raw` | (0, 1], [0, 1] | `_raw`: Q66 over the output columns of the density of the value (`count / max count` of its int8 level in the reference; 1 = the most common level); `_pct`: each column's density is first placed on that column's own reference distribution, the per-column percentiles are combined at Q66, and the result is its percentile among the reference library's own values of that statistic; ~0.5 for a typical reference molecule, higher = more typical |
 | `ref_extremity_pct`, `ref_extremity_raw` | (0, 1], [0, 1] | `_raw`: Q66 over the output columns of `min(\|scaled\|, 1)` (0 = all at the centre, 1 = at least a third at the rails); `_pct`: each column's value is first placed on that column's own reference distribution, the per-column percentiles are combined at Q66, and the result is its percentile among the reference library's own values of that statistic; ~0.5 for a typical reference molecule |
-| `ref_support`, `ref_support_raw`, `ref_support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
-| `ref_consistency`, `ref_consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to the 5 FP neighbours |
-| `ref_signal`, `ref_signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
+| `ref_match` | 1 / 0 | 1 if the query's InChIKey connectivity layer (first 14 characters) equals that of a molecule of the reference library, so the same structure ignoring stereochemistry, isotopes and charge; empty if the SMILES does not parse |
+| `ref_scaffold` | 1 / 0 | 1 if the connectivity layer of the query's Murcko scaffold equals that of a library molecule's scaffold; empty (`NA`) if the query has no scaffold, e.g. an acyclic molecule, or does not parse |
 | `trn_tanimoto_pct`, `trn_tanimoto_raw` | (0, 1], [0, 1] | structural applicability domain, one value for the whole model. `_raw` is the **mean Tanimoto similarity** (Morgan) to the 5 nearest training molecules, higher is closer, taken at the point where at least two-thirds of the output columns are this close or closer (1 − the 66th percentile of the per-column distances). `_pct` is the similarity percentile: 1 − the percentile of the matching distance among the column's training molecules' own leave-one-out distances, so higher is closer, ~0.5 for a query as close as a typical training molecule and near 0 for one farther than almost all of them |
 | `trn_physchem_pct` | (0, 1) | physicochemical applicability domain, the similarity percentile: 1 − the percentile of the mean Euclidean distance to the 5 nearest training molecules (over RDKit physchem descriptors scaled with the reference library's scaler, clipped to ±10) among the training molecules' own leave-one-out distances, combined across columns at the 66th percentile of the distance; higher is closer |
 | `trn_physchem_raw` | ≤ 1 | physchem similarity, `1 − d / 18.70` with d the mean distance above and 18.70 the median distance between two random reference-library molecules in the same space; 1 is identical, 0 is no closer than a random pair, and it is not clipped, so it can be negative |
 | `trn_match` | 1 / 0 | 1 if the query's InChIKey connectivity layer (first 14 characters) equals that of a training molecule of any column, so the same structure ignoring stereochemistry, isotopes and charge; empty if the SMILES does not parse |
 | `trn_scaffold` | 1 / 0 | 1 if the connectivity layer of the query's Murcko scaffold equals that of a training molecule's scaffold; empty (`NA`) if the query has no scaffold, e.g. an acyclic molecule, or does not parse |
 
-The `ref_` columns come from the reference modality and the `trn_` columns from the training modality. Scores that were not fit are left out. A row with no usable output feature has NaN typicality, extremity and consistency.
+The `ref_` columns come from the reference modality and the `trn_` columns from the training modality. Scores that were not fit are left out. A row with no usable output feature has NaN typicality and extremity.
 
 ### `metadata`
 
 `metadata` is a dict. It holds `n_reference` (the size of the reference library) plus each score's own run metadata, with keys prefixed by the score name:
-- `ref_<score>_anchor`: the score's mean over the reference library (about 0.5 by construction, the calibration check)
-- `ref_support_k`, `ref_consistency_k`: fingerprint neighbours
-- `ref_consistency_n_fp_bins`
-- `ref_signal_descriptor`, `ref_signal_formula_version`, `ref_signal_anchor_raw`
+- `ref_typicality_anchor`, `ref_extremity_anchor`: the score's mean over the reference library (about 0.5 by construction, the calibration check)
+- `ref_match_n_molecules`, `ref_match_n_scaffolds` (distinct connectivity layers held by the library)
 - `trn_tanimoto_n_columns`, `trn_tanimoto_columns`, `trn_tanimoto_k`
 - `trn_physchem_columns`, `trn_physchem_k` (neighbours averaged per column)
 - `trn_match_n_molecules`, `trn_match_n_scaffolds` (distinct connectivity layers held)
@@ -127,17 +123,16 @@ does not parse keep their `key` and `input`, with empty neighbour fields.
 Every reference component can also be used on its own (the training scores need a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
 
 ```python
-from eosquality import Typicality, Extremity, Support, Consistency, Signal
+from eosquality import Typicality, Extremity, ReferenceMatch
 
 t = Typicality().fit(reference, eos_id="eos4e40", version="v1")
 t.save("art/")             # writes art/shared/ + art/typicality/ (one reference_mode/ worth)
 Typicality.load("art/").run(query).score
 ```
 
-- **Support and Consistency** take `vector_index=` when fitting (and `k=`, 5 by default, as the orchestrator uses).
-- **Names.** Components keep their short names (`eq.support`, `Support`, the `support/` artifacts folder); the `ref_` / `trn_` prefixes belong to the orchestrator's output columns, metadata keys and `exclude`.
-- **Signal** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `vector_index=`.
-- **Run results.** Each component's run result has `score`, `score_raw` and `metadata`. The Series carry the public score names (`ref_support`, `trn_tanimoto_pct`), the same as the orchestrator's output columns. Typicality and extremity also expose `per_feature` and `per_feature_pct`. Support also exposes `score_log`, `distance_k_mean` (mean Tanimoto distance to the k neighbours) and `nearest_reference_ids` (closest first).
+- **Names.** Components keep their short names (`eq.match`, `ReferenceMatch`, the `match/` artifacts folder); the `ref_` / `trn_` prefixes belong to the orchestrator's output columns, metadata keys and `exclude`.
+- **ReferenceMatch** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `library=` (a `ReferenceLibrary`).
+- **Run results.** Typicality and extremity results have `score`, `score_raw`, `per_feature`, `per_feature_pct` and `metadata`; the match result has `match`, `scaffold` and `metadata`. The Series carry the public column names (`ref_typicality_pct`, `ref_match`), the same as the orchestrator's output columns.
 
 ## Logging
 

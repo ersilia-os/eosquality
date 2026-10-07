@@ -23,9 +23,7 @@ def _run(argv):
 
 @pytest.fixture(scope="module")
 def fitted(reference, library):
-    return ErsiliaQuality().fit(
-        reference, eos_id="eos0aaa", vector_index=library, exclude=["ref_signal"]
-    )
+    return ErsiliaQuality().fit(reference, eos_id="eos0aaa", library=library)
 
 
 def test_unparsable_smiles_score_nan_without_failing(fitted, query):
@@ -33,12 +31,10 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
     q.loc[q.index[1], "input"] = "not_a_smiles"
     q.loc[q.index[3], "input"] = None
     scores = fitted.run(q).scores
-    for name in ("ref_support", "ref_consistency"):
+    for name in ("ref_match", "ref_scaffold"):
         assert scores[name].iloc[[1, 3]].isna().all()
-        assert scores[name].drop(index=q.index[[1, 3]]).notna().all()
+    assert scores["ref_match"].drop(index=q.index[[1, 3]]).notna().all()
     assert scores["ref_typicality_pct"].notna().all()  # output-based, needs no SMILES
-    support = fitted.support.run(q)
-    assert support.nearest_reference_ids[1] == []
 
 
 def test_log_path_sits_next_to_the_output():
@@ -90,7 +86,7 @@ def test_empty_query_is_a_clear_error(tmp_path, fitted, capsys):
 
 
 def test_dir_lists_lazy_names():
-    assert {"ErsiliaQuality", "Support", "RunResult"} <= set(dir(eosquality))
+    assert {"ErsiliaQuality", "ReferenceMatch", "RunResult"} <= set(dir(eosquality))
 
 
 def test_set_verbosity_false_silences_the_console():
@@ -104,7 +100,7 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
     """A pool started from a user's unguarded script re-runs it in every worker."""
     import numpy as np
 
-    from eosquality.library.maccs import compute_maccs
+    from eosquality.library.physchem import compute_physchem_raw
     from eosquality.utils import parallel
 
     def no_pool(*args, **kwargs):
@@ -112,9 +108,11 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
 
     monkeypatch.setattr(parallel.mp, "Pool", no_pool)
     smiles = ["CCO"] * (parallel.PARALLEL_MIN_ITEMS + 1)
-    assert compute_maccs(smiles).shape == (len(smiles), 166)
+    assert len(compute_physchem_raw(smiles)) == len(smiles)
     assert np.array_equal(
-        compute_maccs(smiles[:3], n_jobs=1)[0], compute_maccs(["CCO"])[0]
+        compute_physchem_raw(smiles[:3], n_jobs=1)[0],
+        compute_physchem_raw(["CCO"])[0],
+        equal_nan=True,
     )
 
 

@@ -17,7 +17,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SCORES_DIR = REPO / "output"
 DEFAULT_OUT_DIR = REPO / "docs" / "figures"
 
-SCORES = ["typicality", "extremity", "support", "consistency", "signal"]
+SCORES = ["typicality", "extremity"]
 QUERY_SETS = ["molecules", "drugs", "np_large", "synthetic", "inert"]
 QUERY_SET_LABELS = {
     "molecules": "Library sample",

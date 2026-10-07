@@ -11,7 +11,6 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import infer_schema
 from eosquality.shared.feature_selection import select_features_by_correlation
 from eosquality.shared.metadata import compute_metadata
-from eosquality.shared.splitter import Splitter
 from eosquality.shared.state import SharedFitState
 from eosquality.utils.logging import logger
 
@@ -22,7 +21,7 @@ def fit_shared(
     version: str,
     *,
     library_id: str = "",
-    vector_index_path: str = "",
+    library_path: str = "",
     max_features: int | None = DEFAULT_MAX_FEATURES,
 ) -> SharedFitState:
     """Compute the shared fit state from a raw reference DataFrame.
@@ -34,9 +33,10 @@ def fit_shared(
     eos_id, version : str
         Model identifier and dataset version.
     library_id : str, optional
-        Identifier of the vector index the reference is aligned with.
-    vector_index_path : str, optional
-        Absolute path of a non-canonical index (``""`` for the canonical one).
+        Identity of the reference library the reference is aligned with.
+    library_path : str, optional
+        Absolute path of a non-canonical library folder (``""`` for the
+        canonical one).
     max_features : int, optional
         Cap on columns kept by correlation-cluster medoid selection; ``None``
         disables it.
@@ -44,14 +44,14 @@ def fit_shared(
     Returns
     -------
     SharedFitState
-        Schema, scaler, metadata, splits, selected columns and ``ref_repr``
+        Schema, scaler, metadata, selected columns and ``ref_repr``
         (the scaled reference projected onto the selected columns).
     """
     t0 = time.perf_counter()
     schema = infer_schema(reference)
     metadata = compute_metadata(reference, eos_id=eos_id, version=version)
     metadata.library_id = library_id
-    metadata.vector_index_path = vector_index_path
+    metadata.library_path = library_path
     logger.debug(
         f"shared | reference {len(reference):,} rows · {len(schema.columns)} "
         f"columns: {', '.join(schema.column_names[:8])}"
@@ -80,7 +80,6 @@ def fit_shared(
         binary_class_freq=pipeline_state["binary_class_freq"],
         metadata=metadata,
         reference_ids=list(reference.index),
-        splits=Splitter().split(len(reference)),
         ref_repr=ref_repr,
         selected_columns=selected_columns,
     )

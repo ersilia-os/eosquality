@@ -15,7 +15,7 @@ the content identity written into each library's ``metadata.json``
 folder, and the S3 path segment.
 
 A new reference library — adding or removing molecules, rebuilding the
-vector index with different Morgan parameters, or correcting SMILES in
+connectivity keys, or correcting SMILES in
 place — changes scores and therefore requires a major version bump of
 the package. Metadata-only edits (description, citation) do not bump.
 
@@ -49,6 +49,21 @@ _LIBRARY_ID_RE = re.compile(r"^ersilia_reference_library_v(\d+)$")
 DEFAULT_REFERENCE_BASE_URL: str = (
     "https://eosvc-public.s3.amazonaws.com/eosquality/indices/"
 )
+
+
+def is_library_id(name: str) -> bool:
+    """Whether ``name`` has the form of a library id, ``ersilia_reference_library_vN``.
+
+    Parameters
+    ----------
+    name : str
+        A candidate library name.
+
+    Returns
+    -------
+    bool
+    """
+    return _LIBRARY_ID_RE.match(name) is not None
 
 
 def library_major() -> int:

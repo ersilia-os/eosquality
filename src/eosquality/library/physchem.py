@@ -1,21 +1,16 @@
-"""Physchem descriptor matrix for the reference library.
+"""RDKit physicochemical descriptors and the library's shipped scaler.
 
-At library-build time, compute the full set of RDKit physicochemical
-descriptors (``rdkit.Chem.Descriptors._descList``, ~200 descriptors)
-for every molecule and persist two artifacts alongside the Morgan
-fingerprint files:
+The full set of RDKit descriptors (``rdkit.Chem.Descriptors._descList``,
+~200) is computed for a molecule by :func:`compute_physchem_raw`, and put on
+the reference library's scale by :func:`apply_scaler`.
 
-- ``physchem_scaled.npy`` — ``(n_ref, n_desc)`` float16; non-finite
-  RDKit values are replaced by the per-column median, then
-  standard-scaled. float16 keeps the file small (~half the size of
-  float32) — well within the precision useful for standardized
-  values that mostly sit in ``[-3, 3]``.
-- ``physchem_scaler.json`` — bundles both the imputer parameters
-  (``median`` per descriptor) and the StandardScaler parameters
-  (``mean``, ``scale`` per descriptor), plus ``descriptor_names`` and
-  the RDKit / scikit-learn versions used. Everything needed to apply
-  the identical impute-then-standardize transform to a new molecule
-  at run time lives here.
+``physchem_scaler.json`` (shipped with the package, loaded by
+:func:`canonical_scaler`) bundles both the imputer parameters (``median`` per
+descriptor) and the StandardScaler parameters (``mean``, ``scale`` per
+descriptor), plus ``descriptor_names`` and the RDKit / scikit-learn versions
+used. It was fitted on the whole reference library with :func:`fit_scaler`;
+everything needed to apply the identical impute-then-standardize transform
+to a new molecule lives here.
 
 The same :func:`compute_physchem_raw` + :func:`apply_scaler` pair computes
 query rows at run time, so reference and query descriptors match exactly.
@@ -37,7 +32,6 @@ from sklearn.preprocessing import StandardScaler
 from eosquality.utils.logging import logger
 from eosquality.utils.parallel import map_rows
 
-PHYSCHEM_SCALED_FILE = "physchem_scaled.npy"
 PHYSCHEM_SCALER_FILE = "physchem_scaler.json"
 
 

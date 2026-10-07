@@ -17,14 +17,10 @@ _LAZY = {
     **{
         name: "eosquality.scores"
         for name in (
-            "Consistency",
-            "ConsistencyRunResult",
             "Extremity",
             "ExtremityRunResult",
-            "Signal",
-            "SignalRunResult",
-            "Support",
-            "SupportRunResult",
+            "ReferenceMatch",
+            "ReferenceMatchRunResult",
             "Typicality",
             "TypicalityRunResult",
         )
@@ -124,14 +120,10 @@ __all__ = [
     "RunResult",
     "Typicality",
     "TypicalityRunResult",
-    "Support",
-    "SupportRunResult",
-    "Consistency",
-    "ConsistencyRunResult",
     "Extremity",
     "ExtremityRunResult",
-    "Signal",
-    "SignalRunResult",
+    "ReferenceMatch",
+    "ReferenceMatchRunResult",
     "set_log_level",
     "set_verbosity",
 ]

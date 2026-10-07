@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import pytest
 
@@ -34,7 +36,7 @@ def files(tmp_path, reference, query, library, monkeypatch):
 
 def test_fit_and_run(files, query):
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
-    assert _run([*fit, "--exclude", "ref_signal"]) == 0
+    assert _run([*fit, "--exclude", "ref_match"]) == 0
     run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
     assert _run(run) == 0
     scores = pd.read_csv(files["output"])
@@ -44,7 +46,7 @@ def test_fit_and_run(files, query):
         "ref_typicality_pct",
         "ref_typicality_raw",
     ]
-    assert "ref_signal" not in scores.columns
+    assert "ref_match" not in scores.columns
     assert len(scores) == len(query)
 
 
@@ -55,7 +57,7 @@ def test_fit_refuses_existing_artifacts_with_reference(files):
 
 def test_fit_with_training_and_details(files, query, training_dir):
     fit = ["fit", "-r", files["reference"], "-t", str(training_dir)]
-    assert _run([*fit, "-a", files["artifacts"], "--exclude", "ref_signal"]) == 0
+    assert _run([*fit, "-a", files["artifacts"], "--exclude", "ref_match"]) == 0
     run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
     assert _run(run) == 0
     columns = pd.read_csv(files["output"]).columns
@@ -82,7 +84,7 @@ def test_training_only_and_no_adding_later(files, training_dir, capsys):
     out = str(files["tmp"] / "s_eos0aaa_v1.csv")
     assert _run(["run", "-i", files["query"], "-a", only, "-o", out]) == 0
     # Training sets cannot be added to existing artifacts: -a must be new.
-    ref_only = ["ref_extremity", "ref_support", "ref_consistency", "ref_signal"]
+    ref_only = ["ref_extremity", "ref_match"]
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
     assert _run([*fit, "--exclude", ",".join(ref_only)]) == 0
     capsys.readouterr()
@@ -96,7 +98,7 @@ def test_fit_argument_errors(files, training_dir, capsys):
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
     assert _run([*fit, "--exclude", "support"]) == 1
     assert "unknownscore" in _err(capsys)
-    every = "ref_typicality,ref_extremity,ref_support,ref_consistency,ref_signal"
+    every = "ref_typicality,ref_extremity,ref_match"
     assert _run([*fit, "--exclude", every]) == 1
     assert "nothingtofit" in _err(capsys)
 
@@ -116,7 +118,7 @@ def test_names_must_carry_the_same_model(files, training_dir, capsys):
 
 def test_run_refuses_artifacts_of_another_model(files, capsys):
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
-    assert _run([*fit, "--exclude", "ref_signal"]) == 0
+    assert _run([*fit, "--exclude", "ref_match"]) == 0
     renamed = files["tmp"] / "artifacts_eos9zzz_v1"
     (files["tmp"] / "artifacts_eos0aaa_v1").rename(renamed)
     q = files["tmp"] / "query_eos9zzz_v1.csv"
@@ -128,7 +130,7 @@ def test_run_refuses_artifacts_of_another_model(files, capsys):
 
 def test_fit_and_run_write_log_files(files):
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
-    assert _run([*fit, "--exclude", "ref_signal"]) == 0
+    assert _run([*fit, "--exclude", "ref_match"]) == 0
     fit_log = (files["tmp"] / "artifacts_eos0aaa_v1" / "eosquality.log").read_text()
     assert "| INFO     | eosquality." in fit_log
     assert "[eosframes]" not in fit_log and "eosframes" in fit_log  # routed
@@ -157,8 +159,47 @@ def test_query_name_needs_no_model(files, training_dir, query):
 
 def test_run_output_must_be_csv(files, capsys):
     fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
-    assert _run([*fit, "--exclude", "ref_signal"]) == 0
+    assert _run([*fit, "--exclude", "ref_match"]) == 0
     capsys.readouterr()
     bad = str(files["tmp"] / "quality_eos0aaa_v1")
     assert _run(["run", "-i", files["query"], "-a", files["artifacts"], "-o", bad]) == 1
     assert "mustbea.csvfile" in _err(capsys)
+
+
+def _library_csv(tmp_path, smiles, name):
+    path = tmp_path / name
+    pd.DataFrame({"smiles": smiles[:30]}).to_csv(path, index=False)
+    return str(path)
+
+
+def test_build_writes_exactly_the_library_files(tmp_path, smiles):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    out = tmp_path / "lib"
+    assert _run(["build", "-i", csv, "-o", str(out)]) == 0
+    assert sorted(p.name for p in out.iterdir()) == [
+        "connectivity_keys.npz",
+        "metadata.json",
+        "smiles.csv",
+    ]
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["library_name"] == "ersilia_reference_library_v7"
+
+
+def test_build_refuses_an_existing_folder(tmp_path, smiles, capsys):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    out = tmp_path / "lib"
+    out.mkdir()
+    (out / "keep.txt").write_text("x")
+    assert _run(["build", "-i", csv, "-o", str(out)]) == 1
+    assert "alreadyexists" in _err(capsys)
+    assert [p.name for p in out.iterdir()] == ["keep.txt"]
+
+
+def test_build_needs_a_library_id_name_or_an_explicit_one(tmp_path, smiles, capsys):
+    csv = _library_csv(tmp_path, smiles, "mylib.csv")
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "a")]) == 1
+    assert "notalibraryid" in _err(capsys)
+    assert not (tmp_path / "a").exists()
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "b"), "--name", "mylib"]) == 0
+    meta = json.loads((tmp_path / "b" / "metadata.json").read_text())
+    assert meta["library_name"] == "mylib"

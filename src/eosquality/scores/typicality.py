@@ -1,4 +1,4 @@
-"""Typicality score: per-feature + CDF-calibrated aggregate, no vector index needed.
+"""Typicality score: per-feature + CDF-calibrated aggregate, no library needed.
 
 Typicality is **density-based**: for each query value, look up its int8
 quantization in the per-column count LUT built on the reference and
@@ -90,7 +90,7 @@ class Typicality(ScoreComponent):
     - ``reference_typicality_`` — mean reference-as-query calibrated
       typicality. ≈ 0.5 by construction; a sanity-check anchor.
 
-    Depends only on :class:`SharedFitState` — no vector index required.
+    Depends only on :class:`SharedFitState` — no reference library required.
     """
 
     NAME = SUBFOLDER

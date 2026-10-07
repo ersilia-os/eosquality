@@ -85,10 +85,7 @@ def main():
         panels.append(ax)
     for ax in panels:
         ax.set_ylim(-1.15 * lim, 1.15 * lim)
-    # Support is FP-only, so its curves coincide across models: room for the legend.
-    panels[scores.index("support") if "support" in scores else 0].legend(
-        loc="lower left"
-    )
+    panels[0].legend(loc="lower left")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stylia.save_figure(str(args.out_dir / f"reference_calibration{args.suffix}.png"))
 

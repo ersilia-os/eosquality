@@ -81,7 +81,10 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
 #       calibrated score is the CDF of the Q66 of per-column percentiles.
 #   7 — typicality: the calibrated score is built the same way, from
 #       per-column percentiles of the density (derived from the count LUTs).
-ARTIFACT_FORMAT_VERSION = 7
+#   8 — support, consistency and signal removed (and with them the kNN state,
+#       the 80/10/10 splits and the saved scaled reference); ref_match and
+#       ref_scaffold added; the metadata names the library by library_path.
+ARTIFACT_FORMAT_VERSION = 8
 
 
 @dataclass
@@ -100,9 +103,9 @@ class FitMetadata:
     column_characteristics: dict[str, ColumnCharacteristics]  # per-column kind/sparsity
     library_id: str = ""  # e.g. "ersilia_reference_library_v0"
     fit_duration_seconds: float = 0.0  # wall time spent in fit_shared
-    # Absolute path of a non-canonical vector index; "" for the canonical
+    # Absolute path of a non-canonical library folder; "" for the canonical
     # library, which is resolved by library_id at run time instead.
-    vector_index_path: str = ""
+    library_path: str = ""
     format_version: int = ARTIFACT_FORMAT_VERSION
 
 

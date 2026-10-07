@@ -1,29 +1,20 @@
 """Private helpers shared across the score classes.
 
-These functions are used by more than one of Typicality / Support /
-Consistency / Extremity (and by the :class:`ErsiliaQuality` orchestrator).
-Keeping them in one neutral module avoids the "Support owns
-``_query_output_distances`` even though it never uses it" smell.
+These functions are used by more than one score (and by the
+:class:`ErsiliaQuality` orchestrator). Keeping them in one neutral module
+avoids one score owning a helper that others also use.
 """
 
 from __future__ import annotations
-
-import pathlib
-import warnings
 
 import numpy as np
 import pandas as pd
 from rdkit import Chem, rdBase
 
-from eosquality.exceptions import IncompatibleArtifactsError
-from eosquality.knn.fit import fit_knn
-from eosquality.knn.state import KnnFitState
-from eosquality.library.identity import LIBRARY_ID, reference_library_path
 from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
-from eosquality.utils.logging import logger
 from eosquality.vectorindex import VectorIndex
 
 # ---------------------------------------------------------------------------
@@ -128,9 +119,9 @@ def _cdf_score(
     ``sorted_self`` is the ascending array of the same raw quantity computed
     on the reference (finite values only).
 
-    - ``higher_is_higher=True`` (typicality, extremity, signal): a value
+    - ``higher_is_higher=True`` (typicality, extremity): a value
       above the reference median maps above 0.5.
-    - ``higher_is_higher=False`` (support, consistency — distances): a
+    - ``higher_is_higher=False`` (distances): a
       *smaller* value maps above 0.5 via a ``1 − cdf`` flip.
 
     The CDF uses **mid-ranks**, ``cdf = (#{ref < v} + #{ref ≤ v}) / (2n)``,
@@ -156,7 +147,7 @@ def _score_from_aggregates(
 ) -> np.ndarray:
     """``higher_is_higher=True`` wrapper around :func:`_cdf_score`.
 
-    Used by typicality / extremity / signal, where the per-row aggregate
+    Used by typicality / extremity, where the per-row aggregate
     grows with the property being measured.
     """
     return _cdf_score(aggregates, sorted_self_aggregates, higher_is_higher=True)
@@ -174,7 +165,7 @@ def _sorted_finite(values: np.ndarray, component: str) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Shared / kNN state resolution
+# Shared state resolution
 # ---------------------------------------------------------------------------
 
 
@@ -237,109 +228,8 @@ def _resolve_shared(
     return fit_shared(reference, eos_id=eos_id, version=version)
 
 
-def _resolve_shared_and_knn(
-    *,
-    reference: pd.DataFrame,
-    vector_index: str | pathlib.Path | VectorIndex,
-    k: int,
-    eos_id: str | None,
-    version: str | None,
-    shared: SharedFitState | None,
-    knn: KnnFitState | None,
-) -> tuple[SharedFitState, KnnFitState, VectorIndex]:
-    """Resolve the shared and kNN states, fitting them on demand.
-
-    Parameters
-    ----------
-    reference:
-        Raw reference DataFrame; only consulted if ``shared`` or ``knn``
-        is ``None``.
-    vector_index:
-        Either a path to a VectorIndex folder, or a pre-loaded
-        :class:`VectorIndex` instance.
-    k, eos_id, version:
-        Required only when ``shared`` / ``knn`` need to be fit here.
-    shared, knn:
-        Optional pre-fit states from a composed orchestrator pass.
-
-    Returns
-    -------
-    tuple
-        ``(shared, knn, loaded_vector_index)``. The third value is the
-        actual VectorIndex object (loaded once) so the caller can cache
-        it for run-time.
-    """
-    if isinstance(vector_index, VectorIndex):
-        vi = vector_index
-    else:
-        vi = VectorIndex.load(pathlib.Path(vector_index))
-
-    if shared is None:
-        if eos_id is None or version is None:
-            raise ValueError(
-                "fit needs either a pre-fit shared= argument, or eos_id= "
-                "and version= so the shared state can be fit here."
-            )
-        shared = fit_shared(
-            reference,
-            eos_id=eos_id,
-            version=version,
-            library_id=vi.library_name,
-            vector_index_path=_custom_index_path(vi),
-        )
-    else:
-        validate_against_schema(reference, shared.schema)
-
-    if knn is None:
-        knn = fit_knn(shared=shared, vector_index=vi, k=k)
-    return shared, knn, vi
-
-
-def _custom_index_path(vi: VectorIndex) -> str:
-    """Absolute index folder for a non-canonical index, ``""`` for the canonical one."""
-    if vi.library_name == LIBRARY_ID:
-        return ""
-    return str(vi.index_dir.resolve())
-
-
-def _resolve_vector_index(shared: SharedFitState) -> VectorIndex:
-    """Load the VectorIndex the artifact was fit against.
-
-    Artifacts fit on the canonical library (``library_id == LIBRARY_ID``)
-    resolve it via :func:`eosquality.library.identity.reference_library_path`
-    (env override → ``./data/indices/`` → ``~/.eosquality/`` cache), so they
-    stay portable across machines. Artifacts fit on a custom index record
-    its absolute folder in ``shared.metadata.vector_index_path`` and load
-    it from there. Either way the loaded index's ``library_name`` must equal
-    the ``library_id`` recorded at fit time.
-    """
-    library_id = shared.metadata.library_id
-    if not library_id:
-        raise RuntimeError(
-            "Cannot resolve a vector index: shared.metadata.library_id is empty. "
-            "An index-aware score is loaded but the fit did not tag a library."
-        )
-    if library_id == LIBRARY_ID:
-        path = reference_library_path()
-    elif shared.metadata.vector_index_path:
-        path = pathlib.Path(shared.metadata.vector_index_path)
-    else:
-        raise IncompatibleArtifactsError(
-            f"Artifacts were fit against reference library {library_id!r} but "
-            f"this install ships {LIBRARY_ID!r}. Install a compatible "
-            "eosquality release or refit against the current library."
-        )
-    vi = VectorIndex.load(path)
-    if vi.library_name != library_id:
-        raise IncompatibleArtifactsError(
-            f"Vector index at {path} is library {vi.library_name!r}, but the "
-            f"artifacts were fit against {library_id!r}."
-        )
-    return vi
-
-
 # ---------------------------------------------------------------------------
-# Query-time distances (FP and output-space)
+# Standardisation and query-time fingerprint distances
 # ---------------------------------------------------------------------------
 
 
@@ -379,61 +269,6 @@ def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
     return a is not None and a == b
 
 
-def _query_fp_distances(
-    query: pd.DataFrame,
-    vi: VectorIndex,
-    k: int,
-    *,
-    exclude_self_match: bool = True,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(fp_distances, indices)`` for each query row, shape ``(n_query, k)``.
-
-    Wraps :meth:`VectorIndex.query`. The reference's calibration CDFs are
-    built from **identity-stripped** self-kNN (each library row's k nearest
-    neighbors are k *other* molecules). For queries to be comparable, a
-    query that *is* a library molecule must not count itself as a
-    neighbor: we query ``k + 1`` neighbors and drop the zero-distance
-    neighbor whose library SMILES is the query molecule (string match, or
-    same RDKit canonical isomeric SMILES). Rows without such a match drop
-    their furthest neighbor instead. A zero-distance neighbor that is a
-    *different* molecule (e.g. a stereoisomer sharing the Morgan
-    fingerprint) is kept, exactly as in the library's own self-kNN.
-
-    Pass ``exclude_self_match=False`` to return the raw top-k.
-
-    Rows whose SMILES is missing or does not parse get NaN distances (and
-    index 0, a placeholder), so structure-based scores are NaN for them
-    instead of the whole batch failing inside FPSim2; a warning names them.
-    """
-    query_smiles = list(query["input"])
-    valid = np.array([_parses(s) for s in query_smiles], dtype=bool)
-    if valid.all():
-        return _query_fp_distances_valid(query_smiles, vi, k, exclude_self_match)
-    bad = np.flatnonzero(~valid)
-    shown = ", ".join(str(query.index[i]) for i in bad[:5])
-    logger.warning(
-        f"{len(bad):,} query row(s) have a missing or unparsable SMILES "
-        f"(rows {shown}{', …' if len(bad) > 5 else ''}); their structure-based "
-        "scores are NaN."
-    )
-    distances = np.full((len(query_smiles), k), np.nan)
-    indices = np.zeros((len(query_smiles), k), dtype=np.int64)
-    if valid.any():
-        d, i = _query_fp_distances_valid(
-            [query_smiles[j] for j in np.flatnonzero(valid)], vi, k, exclude_self_match
-        )
-        distances[valid], indices[valid] = d, i
-    return distances, indices
-
-
-def _parses(smiles) -> bool:
-    """Whether ``smiles`` is a non-empty string that RDKit can parse."""
-    if not isinstance(smiles, str) or not smiles.strip():
-        return False
-    with rdBase.BlockLogs():
-        return Chem.MolFromSmiles(smiles) is not None
-
-
 def _query_fp_distances_valid(
     query_smiles: list[str], vi: VectorIndex, k: int, exclude_self_match: bool
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -460,41 +295,3 @@ def _query_fp_distances_valid(
     fp_kept = fp_distances[keep_mask].reshape(n_query, k)
     idx_kept = vi_indices[keep_mask].reshape(n_query, k)
     return fp_kept, idx_kept
-
-
-# Rows per chunk when computing output-space neighbor distances. Bounds the
-# ``(chunk, k, n_features)`` temporary instead of materialising it for the
-# whole reference (~0.5 GB at 1.35M × 5 × 10 in float64).
-_OUTPUT_DISTANCE_CHUNK = 65_536
-
-
-def _query_output_distances(
-    query_repr: np.ndarray,
-    ref_repr: np.ndarray,
-    indices: np.ndarray,
-    fp_distances: np.ndarray | None = None,
-) -> np.ndarray:
-    """Mean L1 in output space from ``query_repr`` to ``ref_repr[indices]``.
-
-    Returns ``(n_query, k)``: for each query row and each of its k
-    FP-selected neighbors, the mean absolute difference over the features
-    that are finite on both sides (NaN if none are).
-    ``indices`` come from :func:`_query_fp_distances` (run time) or the
-    precomputed self-kNN (fit time). ``ref_repr`` is the post-reduction
-    scaled reference matrix, ``SharedFitState.ref_repr``. Computed in
-    row chunks to keep peak memory flat for reference-sized inputs. Pass the
-    matching ``fp_distances`` to get NaN wherever a neighbour is only a
-    placeholder (unparsable query SMILES, see :func:`_query_fp_distances`).
-    """
-    n_query = query_repr.shape[0]
-    out = np.empty(indices.shape, dtype=np.float64)
-    for start in range(0, n_query, _OUTPUT_DISTANCE_CHUNK):
-        stop = min(start + _OUTPUT_DISTANCE_CHUNK, n_query)
-        diffs = query_repr[start:stop, None, :] - ref_repr[indices[start:stop]]
-        np.abs(diffs, out=diffs)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN
-            out[start:stop] = np.nanmean(diffs, axis=2)
-    if fp_distances is not None:
-        out[~np.isfinite(fp_distances)] = np.nan  # placeholder neighbours
-    return out
