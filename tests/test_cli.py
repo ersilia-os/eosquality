@@ -203,3 +203,43 @@ def test_build_needs_a_library_id_name_or_an_explicit_one(tmp_path, smiles, caps
     assert _run(["build", "-i", csv, "-o", str(tmp_path / "b"), "--name", "mylib"]) == 0
     meta = json.loads((tmp_path / "b" / "metadata.json").read_text())
     assert meta["library_name"] == "mylib"
+
+
+def test_help_lists_user_and_maintainer_commands(capsys):
+    assert _run(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "Commands" in out and "Developer commands" in out
+    assert out.index("setup") < out.index("Developer commands") < out.index("build")
+
+
+@pytest.fixture
+def served_library(library, tmp_path, monkeypatch):
+    """``setup`` pointed at the test library, served from a ``file://`` URL."""
+    import importlib
+
+    setup_cli = importlib.import_module(
+        "eosquality.cli.setup"
+    )  # the name `setup` is the command
+
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_BASE_URL", library.parent.as_uri() + "/")
+    monkeypatch.setattr(setup_cli, "LIBRARY_ID", "test_library")
+    monkeypatch.setattr(setup_cli, "library_dirname", lambda: library.name)
+    monkeypatch.setattr(setup_cli, "user_cache_dir", lambda: tmp_path / "cache")
+    return tmp_path / "cache" / library.name
+
+
+def test_setup_fetches_the_library_once(served_library, capsys):
+    assert _run(["setup"]) == 0
+    assert (served_library / "connectivity_keys.npz").is_file()
+    marker = served_library / "marker.txt"
+    marker.write_text("x")
+    assert _run(["setup"]) == 0  # cached: nothing is fetched again
+    assert marker.exists()
+    assert _run(["setup", "--force"]) == 0
+    assert not marker.exists()
+
+
+def test_setup_reports_a_library_it_cannot_fetch(served_library, monkeypatch, capsys):
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_BASE_URL", "file:///nonexistent/")
+    assert _run(["setup"]) == 1
+    assert "couldnotfetchthereferencelibrary" in _err(capsys)
