@@ -15,7 +15,7 @@ The library's `vN` must equal the package's major version. Importing a release w
 
 **When to bump.** Any change that alters scores needs a new library, and therefore a new package major version. That covers adding or removing molecules, correcting SMILES, and changing the Morgan parameters. Edits to metadata only do not.
 
-**Status.** The package is currently `0.0.1` with library `ersilia_reference_library_v0` (about 1.36M molecules).
+**Status.** The package is currently `0.1.0` with library `ersilia_reference_library_v0` (about 1.36M molecules).
 
 ## Artifact compatibility
 
