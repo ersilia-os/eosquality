@@ -74,6 +74,30 @@ def connectivity_layer(smiles: str) -> str:
     return key[:CONNECTIVITY_LENGTH]
 
 
+def _scaffold(smiles: str) -> str:
+    """Murcko scaffold SMILES; ``""`` for acyclic molecules or on failure.
+
+    RDKit fails to canonicalise some scaffolds that keep a stereo double bond
+    next to a ring once the side chains are cut; those are retried without
+    stereo (the ring scaffold is the same).
+    """
+    from rdkit import Chem, rdBase
+    from rdkit.Chem.Scaffolds import MurckoScaffold
+
+    try:
+        with rdBase.BlockLogs():  # the failure prints an RDKit banner otherwise
+            return MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles)
+    except RuntimeError:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        Chem.RemoveStereochemistry(mol)
+        try:
+            return MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
+        except RuntimeError:
+            return ""
+
+
 def _layers(
     smiles: list[str], label: str = "InChIKey layers"
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -92,8 +116,6 @@ def _layers(
         ``(molecule layers, scaffold layers)``, both length ``len(smiles)``;
         ``""`` where there is none.
     """
-    from eosquality.training.folds import _scaffold
-
     molecules = np.empty(len(smiles), dtype=object)
     scaffolds = np.empty(len(smiles), dtype=object)
     with console.progress(label) as bar:

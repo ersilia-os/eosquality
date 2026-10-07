@@ -1,8 +1,8 @@
 """Training-score distributions per query set (rows) and model (violins).
 
-Left column: ``trn_tanimoto_pct`` (calibrated, 0–1). Middle: ``trn_tanimoto_raw``
-(1 − mean Tanimoto to the 5 nearest training molecules). Right:
-``trn_difficulty``. Only models fitted with training sets appear.
+Left column: ``trn_tanimoto_pct`` (calibrated, 0–1). Right: ``trn_tanimoto_raw``
+(mean Tanimoto to the 5 nearest training molecules). Only models fitted with
+training sets appear.
 
 A query set drawn from the model's own training chemistry should sit near
 0.5 on the calibrated scales; sets of unrelated chemistry shift towards 1.
@@ -29,7 +29,6 @@ stylia.set_style("ersilia")
 PANELS = [
     ("trn_tanimoto_pct", "Similarity (percentile)", (0.0, 1.0)),
     ("trn_tanimoto_raw", "Similarity (raw, mean Tanimoto)", (0.0, 1.0)),
-    ("trn_difficulty", "Difficulty (calibrated)", (0.0, 1.0)),
 ]
 
 

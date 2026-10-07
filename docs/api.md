@@ -24,18 +24,17 @@ eq.fit(
     eos_id,              # required, e.g. "eos4e40"
     version="v1",
     exclude=(),          # score names not to fit, e.g. ["ref_signal"]
-    include=(),          # scores that are off by default, i.e. ["trn_difficulty"]
     max_features=10,     # cap on output columns, both modalities; None disables it
     vector_index=None,   # custom index folder (programmatic use and tests)
 ) -> ErsiliaQuality
 ```
 
 `fit` fits the **reference modality** when `reference` is given and the **training modality** when `training_sets` is given. At least one of the two is required. Every score of each given modality is fitted unless it is named in `exclude`.
-- **Score names.** `exclude` takes the public, modality-prefixed names in `ALL_SCORES`: `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match`, `trn_difficulty`. An unknown name raises `ValueError`, and so does excluding every score of a given input.
+- **Score names.** `exclude` takes the public, modality-prefixed names in `ALL_SCORES`: `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match`. An unknown name raises `ValueError`, and so does excluding every score of a given input.
 - **The reference library.** `reference["input"]` must match the library's SMILES row for row, which also fixes its size. The canonical library is resolved locally (see [cli.md](cli.md#the-reference-library)). `vector_index` points at a custom index instead; its absolute path is stored in the artifacts.
 - **Fixed settings.** Support and consistency use k = 5 fingerprint neighbours. Signal uses RDKit physchem descriptors and 1,000 training rows.
 - **Re-fitting.** Calling `fit` again replaces every component, including ones excluded this time.
-- **Training sets.** The folder holds one CSV per output column (`smiles`, optional `y` or `value`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
+- **Training sets.** The folder holds one CSV per output column (`smiles`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 - **Both inputs.** The training sets are loaded first. The reference modality is then fitted only on the output columns that have a usable training set (at least 20 valid molecules), and `max_features` selects among those; the training modality is then fitted on the selected columns only, so both modalities cover the same columns. A training-only fit applies `max_features` too, keeping the largest training set of each cluster on `1 − Jaccard` overlap of the training molecules. There is no way to add training sets to a fitted instance or to saved artifacts: fit both together.
 
 **Score names.** `ALL_SCORES` lists the eight public names above, reference scores first.
@@ -84,7 +83,6 @@ eq = ErsiliaQuality.load("artifacts/")
 | `trn_physchem_raw` | ≤ 1 | physchem similarity, `1 − d / 18.70` with d the mean distance above and 18.70 the median distance between two random reference-library molecules in the same space; 1 is identical, 0 is no closer than a random pair, and it is not clipped, so it can be negative |
 | `trn_match` | 1 / 0 | 1 if the query's InChIKey connectivity layer (first 14 characters) equals that of a training molecule of any column, so the same structure ignoring stereochemistry, isotopes and charge; empty if the SMILES does not parse |
 | `trn_scaffold` | 1 / 0 | 1 if the connectivity layer of the query's Murcko scaffold equals that of a training molecule's scaffold; empty (`NA`) if the query has no scaffold, e.g. an acyclic molecule, or does not parse |
-| `trn_difficulty` | (0, 1] | **off by default** (`include=["trn_difficulty"]`): one value for the whole model, the 66th percentile across labelled output columns of the error model's predicted error (higher is harder); no raw column. Its four inputs, `nn1_tanimoto`, `nn5_tanimoto`, `ensemble_variance`, `surrogate_score`, go to `training_details` as `trn_<name>` |
 
 The `ref_` columns come from the reference modality and the `trn_` columns from the training modality. Scores that were not fit are left out. A row with no usable output feature has NaN typicality, extremity and consistency.
 
@@ -98,7 +96,6 @@ The `ref_` columns come from the reference modality and the `trn_` columns from 
 - `trn_tanimoto_n_columns`, `trn_tanimoto_columns`, `trn_tanimoto_k`
 - `trn_physchem_columns`, `trn_physchem_k` (neighbours averaged per column)
 - `trn_match_n_molecules`, `trn_match_n_scaffolds` (distinct connectivity layers held)
-- `trn_difficulty_columns`, `trn_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error), `trn_difficulty_cv` (per column: `scaffold` or `random` folds), `trn_difficulty_n_labelled`
 
 ### `reference_details`
 
@@ -116,7 +113,6 @@ The `ref_` columns come from the reference modality and the `trn_` columns from 
 | `trn_physchem_dist` | mean Euclidean distance, in library-scaled descriptor units, to the 5 nearest training molecules (Q66 across columns); details file only |
 | `trn_physchem_raw` | the similarity of that distance, as in `scores` |
 | `trn_in_training` | the query is itself a training molecule of some column (same standardised SMILES; stricter than `trn_match`) |
-| `trn_difficulty`, `trn_nn1_tanimoto`, `trn_nn5_tanimoto`, `trn_ensemble_variance`, `trn_surrogate_score` | only when the error model is on |
 | `nn1_similarity` | Tanimoto similarity of the nearest training molecule over all columns |
 | `nn_smiles`, `nn_keys`, `nn_similarities` | the 5 nearest training molecules over all columns: standardised SMILES, key and similarity, `\|`-separated, closest first, deduplicated |
 | `nn_columns` | the output columns each of those molecules is a training molecule of, `;`-joined within a neighbour, `\|` between neighbours |
@@ -128,7 +124,7 @@ does not parse keep their `key` and `input`, with empty neighbour fields.
 
 ## Per-score components
 
-Every reference component can also be used on its own (`TrainingDistance` and `TrainingDifficulty` need a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
+Every reference component can also be used on its own (the training scores need a training state; use the orchestrator). Each has `.fit(...)`, `.run(...)`, `.save(root)` and `.load(root)`:
 
 ```python
 from eosquality import Typicality, Extremity, Support, Consistency, Signal

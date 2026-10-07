@@ -11,10 +11,10 @@ def test_library_use_is_silent(training_dir, capsys):
     console.enable(False)
     logger.set_verbosity(False)
     eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
-    eq.run(pd.DataFrame({"input": ["CCO", "c1ccccc1O"]}))
+    eq.run(pd.DataFrame({"input": ["CCO", "not a smiles"]}))
     captured = capsys.readouterr()
     assert captured.out == ""
-    # Only genuine warnings surface (the fixture has conflicting duplicate labels).
+    # Only genuine warnings surface (here, the unparsable query SMILES).
     assert "Step" not in captured.err and "INFO" not in captured.err
     assert "WARNING" in captured.err
 

@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 7, training format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 7, training format 11. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
 
 ## Example results
 
@@ -109,7 +109,7 @@ Comparing the current scores on the 25 example sets with format 1 (old CSVs in `
 - **Run time** for 1,000 queries is about 15–25 s with all five scores, dominated by FPSim2 queries (about 10 ms each) and Signal's descriptors. Queries run single-threaded on purpose: multi-threaded FPSim2 returns ties in an unstable order, which made consistency non-reproducible. Fitting one model takes about a minute without Signal; Signal adds a few minutes (SHAP over the ~135k-row val slice). Typicality and extremity fit in under a second each.
 - **Training-set quality is not assessed.** The loader standardises SMILES,
   merges duplicates and reports how many rows it dropped or merged, but a set
-  whose labels are wrong, whose assay differs from the deployed model's, or
+  whose assay differs from the deployed model's, or
   which is not actually the model's training data will be scored against
   anyway. `trn_*` answers "how does this molecule relate to the data in this
   folder", not "was this model trained well".
@@ -137,152 +137,9 @@ drug-like screen; the synthetic set is the farthest for every model.
 
 | Stage | Adds | Needs | Status |
 |---|---|---|---|
-| 1 | Training data loader (standardisation, duplicate merging, label kind) | SMILES (y optional) | done |
+| 1 | Training data loader (standardisation, duplicate merging) | SMILES | done |
 | 2 | `trn_tanimoto`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, published as similarities (`_raw`, and `_pct` calibrated on each column's leave-one-out values; no cutoff) + nearest training molecules | SMILES | done |
 | 2b | `trn_physchem` (the same in library-scaled physchem space), `trn_match` and `trn_scaffold` (connectivity-layer lookups) | SMILES | done |
-| 3 | `trn_difficulty`: learned error model per labelled column (surrogate RF with scaffold CV; four scalar inputs), calibrated rank, Q66 → one value | y | built, **parked** (off by default); the validation below used the earlier MACCS + KDE inputs |
-| 4 | Conformal expected-error intervals | labelled molecules outside the training set | planned |
-
-### Validation on the Ersilia example training sets
-
-These numbers are for the error model `trn_difficulty`, which is parked, with the inputs it had then (MACCS keys and three KDEs, since replaced by four scalars); they have not been re-measured.
-
-The headline evidence, on the example models' own training data.
-
-**Protocol** (`scripts/evaluate_training.py`, Protocol B). Split one labelled
-training set 80/20 by Murcko scaffold; fit the training modality on the 80%;
-train a stand-in "black-box" model on the same 80%; then ask how well each
-training score ranks that model's absolute errors on the held-out 20%. Three
-stand-ins are used: `rf_morgan` (a random forest on Morgan bits, the same
-family as difficulty's own surrogate, so partly circular), `xgb_physchem`
-(XGBoost on physicochemical descriptors) and `knn_morgan` (5-NN on Morgan
-bits). The last two are the transfer case an Ersilia black box represents.
-
-`scripts/evaluate_training_sets.py` runs this over 19 endpoints of the four
-example models and writes `output/training_validation.csv`;
-`scripts/figures/training_validation.py` plots it.
-
-![Training-score validation](figures/training_validation.png)
-
-Spearman of each score against the held-out |error|, averaged over the three
-stand-in models. † marks a value inside the permutation baseline, i.e.
-indistinguishable from random ranking.
-
-| endpoint | label | train | distance | difficulty |
-|---|---|---|---|---|
-| bbb_martins | binary | 1,580 | 0.28 | **0.72** |
-| cytotoxicity_hepg2 | binary | 7,998 | 0.04 | **0.68** |
-| cytotoxicity_imr90 | binary | 7,998 | 0.32 | **0.63** |
-| cyp3a4_veith | binary | 8,000 | 0.09 | **0.62** |
-| herg | binary | 507 | 0.31 | **0.60** |
-| abaumannii_inhibition_probability | binary | 6,145 | 0.11 | **0.57** |
-| ames | binary | 5,356 | 0.26 | **0.48** |
-| inhibition_50um | binary | 1,867 | 0.17 | **0.47** |
-| dili | binary | 373 | **0.19** | 0.08† |
-| vdss_lombardo | continuous | 888 | 0.22 | **0.57** |
-| ppbr_az | continuous | 1,435 | 0.08 | **0.43** |
-| clearance_hepatocyte_az | continuous | 816 | 0.09† | **0.36** |
-| clearance_microsome_az | continuous | 875 | 0.20 | **0.36** |
-| lipophilicity_astrazeneca | continuous | 3,359 | 0.27 | **0.32** |
-| half_life_obach | continuous | 532 | 0.21 | **0.29** |
-| ld50_zhu | continuous | 5,860 | 0.08 | **0.21** |
-| caco2_wang | continuous | 695 | 0.14 | **0.20** |
-| hydrationfreeenergy_freesolv | continuous | 432 | 0.10 | **0.10** |
-| solubility_aqsoldb | continuous | 7,929 | -0.01 | **0.06** |
-
-Read this critically:
-
-- **Difficulty beats distance in 18 of 19 endpoints**, and it still does when
-  the stand-in model is not a random forest (mean 0.48 binary, 0.25
-  continuous, against 0.16 and 0.14 for distance).
-- **Binary endpoints score far higher than continuous ones, and it is not
-  circularity.** The obvious suspicion is that for a binary label `|y − p|`
-  is nearly a function of the classifier's confidence, which the error model
-  sees (`probability_top1`, ensemble variance, and the prediction itself,
-  which for a binary label *is* P(y = 1)). Removing all three and leaving
-  only structure (MACCS, kNN distance, the three KDEs) cost at most 0.07:
-  hERG 0.52 → 0.50, BBBP 0.67 → 0.60, `inhibition_50um` 0.41 → 0.41. So the
-  binary advantage is in the chemistry, not in re-reading the confidence
-  (`scripts/ablate_confidence_inputs.py`). A likelier explanation is that
-  ranking a bounded, bimodal `|y − p|` is simply an easier task than ranking a
-  continuous residual. Either way, do not compare a binary column's number
-  with a continuous one.
-- **The continuous numbers are the conservative read** (0.25–0.29 mean), and
-  they sit in the range Novartis reports for error models on public ADME data
-  (0.16–0.46 on public sets, 0.06–0.39 on their in-house ones: Parrondo-Pizarro
-  et al., *JCIM* 2026, 66(2), 923–935, §3.2.3). Their error models also beat
-  every standard UQ metric they tested, so this is the band to judge
-  `trn_difficulty` against, not 1.0.
-- **Three endpoints fail.** On `solubility_aqsoldb` both scores are ~0: a
-  7,929-molecule set covering very diverse chemistry, where held-out error is
-  driven by measurement noise more than by locality.
-  `hydrationfreeenergy_freesolv` (432 molecules) is too small for either score
-  to say anything. On `dili` difficulty is indistinguishable from random while
-  distance is not. The per-column `trn_difficulty_spearman` in the run
-  metadata is the warning sign to check before trusting the score on a given
-  column, and the fit warns when it falls below 0.2.
-- **Ranking, not flagging.** Mean AUROC for picking the top-quartile errors
-  is 0.76 (binary) and 0.67 (continuous) for difficulty, 0.57 for distance.
-  Useful for triage, far from a decision rule.
-- **Calibration holds on real artifacts.** 400 training molecules of
-  eos4e40 scored against their own fitted artifacts average 0.492
-  (the Morgan distance percentile) and 0.503 (`trn_difficulty`), and all 400 are flagged
-  `trn_in_training` — the leave-one-out and out-of-fold construction does
-  what it claims.
-- **The per-column values are not redundant.** On eos7m30's 10 selected
-  columns, the median pairwise Spearman between per-column distances is 0.50,
-  so the Q66 across columns is aggregating genuinely different views rather
-  than repeating one. Calibration also spreads the per-column values (mean
-  within-molecule sd 0.18, against 0.09 raw), and the calibrated and raw
-  whole-model values rank queries slightly differently (ρ = 0.95).
-
-### Design benchmark (MoleculeNet)
-
-The score's design was chosen on public data, with the same protocol.
-Results on six MoleculeNet endpoints follow (Spearman of score vs held-out |error|). † marks a value within the permutation baseline (95th percentile of |ρ| under 1,000 permutations), i.e. indistinguishable from random. Bold is the better of the two scores.
-
-| endpoint | rf_morgan: distance / difficulty | xgb_physchem: distance / difficulty | knn_morgan: distance / difficulty |
-|---|---|---|---|
-| ESOL | 0.09† / **0.40** | -0.10† / **0.03†** | 0.10 / **0.31** |
-| Lipophilicity | 0.28 / **0.34** | 0.22 / **0.26** | 0.32 / **0.35** |
-| BBBP (binary) | 0.41 / **0.79** | 0.25 / **0.69** | 0.27 / **0.62** |
-| FreeSolv | -0.04† / **0.08†** | **0.29** / 0.15 | 0.04† / **0.07†** |
-| BACE pIC50 | 0.26 / **0.36** | 0.04† / **0.18** | 0.28 / **0.35** |
-| BACE class (binary) | 0.17 / **0.69** | 0.07† / **0.60** | 0.11 / **0.54** |
-| mean | 0.20 / 0.45 | 0.13 / 0.32 | 0.19 / 0.37 |
-
-What the table shows:
-- **Difficulty beats distance** in 17 of 18 cases, including against the two black boxes that differ from its surrogate, so it is not only learning its own random forest.
-- **Binary endpoints gain most.** For them the error is dominated by classifier confidence, which the error model sees through the surrogate's probability and tree variance.
-- **Continuous endpoints are harder.** The values (0.3–0.4) are in the range Novartis reports for error models on public ADME data (Spearman 0.16–0.46, Parrondo-Pizarro et al., *JCIM* 2026, 66(2), 923–935).
-- **Small sets are noise.** FreeSolv (432 training molecules, 210 test) is noise for everything, and XGBoost on physchem descriptors is hardest to anticipate from fingerprints.
-
-The evaluation also reports UNIQUE's ranking metrics and Spearman on the most feature-, label- and discontinuity-shifted test molecules.
-
-The error model's hyperparameters matter little. On five of these endpoints, the mean Spearman over the three black boxes was 0.40–0.42 for every setting tried:
-- the current random forest, 200 trees with `min_samples_leaf=5`;
-- UNIQUE's example, 50 trees with `max_depth=10`;
-- 500 trees with `min_samples_leaf=10`;
-- `max_features="sqrt"`;
-- UNIQUE's LASSO.
-
-Distance alone reached 0.17.
-
-**Cost.** The error models dominate the fit, and each is capped at 10,000
-labelled molecules (`MAX_FIT_MOLECULES`). On eos42ez (3 columns of 39,044
-molecules) that cap took the error models from 6m 15s to 1m 51s and the whole
-fit from 9m 03s to 4m 27s, while the out-of-fold Spearman moved by at most
-0.02 (0.924 → 0.922, 0.959 → 0.943, 0.878 → 0.861); the saved artifacts went
-from 646 MB to 361 MB. Scoring 1,000 queries against 10 columns takes about
-8 s: the query's SMILES, Morgan bits and per-column neighbour
-searches are computed once and shared by the training scores
-(`TrainingQuery`), which halved it.
-
-The surrogate considers every fingerprint bit at each split (`max_features=1.0`). Restricting it to a third of the bits, or to their square root, is up to 15 times faster, but it ranked held-out errors less well on the two largest continuous sets: lipophilicity 0.31 and 0.30 instead of 0.32, BACE pIC50 0.28 and 0.24 instead of 0.30. So the slower setting stays.
-
-The design of `trn_difficulty` came out of this benchmark: UNIQUE's feature set (i) with MACCS keys, rather than choosing among UNIQUE's three sets per column (see `concepts.md`). Before that change, difficulty was below distance on ESOL (0.06) and lipophilicity (0.19) against `rf_morgan`.
-
-To reproduce, download the MoleculeNet CSVs (`delaney-processed.csv`, `Lipophilicity.csv`, `BBBP.csv`, `SAMPL.csv`, `bace.csv` from `deepchemdata.s3-us-west-1.amazonaws.com/datasets/`) and run, for example, `python scripts/evaluate_training.py --csv Lipophilicity.csv --y-col exp`.
 
 ## Open items
 
@@ -299,20 +156,6 @@ Training modality:
       from the training sets, so its calibrated form loses resolution exactly
       where a user most wants it. Consider a log companion, as
       `ref_support_log` does for support.
-- [ ] `trn_difficulty` is near random on noisy, diverse endpoints
-      (`solubility_aqsoldb`, `dili`). The fit warns below Spearman 0.2, but a
-      weak column still enters the Q66 with equal weight. Consider dropping or
-      down-weighting such columns.
-- [ ] The error models are fitted on at most 10,000 molecules per column. The
-      cap cost at most 0.02 out-of-fold Spearman on eos42ez, but it has not
-      been checked on a set much larger than 39,000.
-- [ ] Conformal expected-error intervals (stage 4 above).
-- [ ] Error model (`trn_difficulty`, and its four inputs `nn1_tanimoto`,
-      `nn5_tanimoto`, `ensemble_variance`, `surrogate_score`): parked. It is off
-      by default (`_registry.DEFAULT_OFF`; `fit(include=["trn_difficulty"])` turns
-      it on) and not written to the scores CSV. The code, tests and artifact
-      format stay in place; revisit once the similarity and physchem domain
-      columns are settled.
 
 New:
 

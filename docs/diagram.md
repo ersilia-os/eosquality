@@ -26,13 +26,12 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, y?/value?, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
+    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
     SEL --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b> (trn_tanimoto)<br/>mean Morgan distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TP["<b>Training physchem</b> (trn_physchem)<br/>217 descriptors, library scaler, clip ±10<br/>mean distance to the 5 nearest per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TM["<b>Training match</b> (trn_match, trn_scaffold)<br/>connectivity layers of the molecules<br/>and of their Murcko scaffolds"]
-    IDX -.-> TDF["<b>Training difficulty</b> (parked, off by default)<br/>columns with y, ≤ 10k molecules<br/>surrogate RF, scaffold CV → OOF errors<br/>error model on 4 scalars → calibrated rank,<br/>Q66 → one value"]
 ```
 
 ## Run
@@ -49,9 +48,8 @@ flowchart LR
     TQ --> TDR["Training distance<br/>per column → 66th percentile"]
     TQ --> TPH["Training physchem<br/>per column → 66th percentile"]
     TQ --> TMA["Training match<br/>connectivity-layer lookup"]
-    TQ -.-> TDF["Training difficulty (parked)<br/>error model per column → 66th percentile"]
-    TDR & TPH & TMA & TDF --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
-    TYP & EXT & SUP & CON & SIG & TDR & TPH & TMA & TDF --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log; trn_match and trn_scaffold flags)"]
+    TDR & TPH & TMA --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
+    TYP & EXT & SUP & CON & SIG & TDR & TPH & TMA --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log; trn_match and trn_scaffold flags)"]
 ```
 
 ## Save layout
@@ -77,14 +75,11 @@ One subfolder per modality; either or both may be present.
   training_mode/                          # iff fitted with -t/--training-sets
     training_sets/
       metadata.json                       # training_format_version, eos_id, version, columns
-      columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
+      columns.json  arrays.npz            # per column: n, ids
       indices/c000/ …                     # one VectorIndex per output column
     training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_tanimoto
     training_physchem/  c000/ …  # trn_physchem
     training_match/  connectivity_keys.npz  metadata.json  # trn_match, trn_scaffold
-    training_difficulty/  state.json  metadata.json  # trn_difficulty; off by default (include=)
-      c000/ …           surrogate.joblib  density.joblib  error_model.joblib
-                        arrays.npz  state.json      # one folder per labelled column
 ```
 
 Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.

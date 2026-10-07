@@ -66,7 +66,7 @@ def test_fit_with_training_and_details(files, query, training_dir):
         "trn_physchem_raw",
         "trn_match",
         "trn_scaffold",
-    ]  # the error model is off by default
+    ]
     details = pd.read_csv(files["tmp"] / "quality_eos0aaa_v1.training_details.csv")
     assert len(details) == len(query)  # one row per query, not per column
     reference_details = pd.read_csv(

@@ -1,7 +1,6 @@
 """Training modality: per-output-column training sets and the state built from them.
 
-Each output column of a model may come with its own training set (SMILES,
-optionally labels ``y``). :func:`load_training` reads and standardises them;
+Each output column of a model may come with its own training set (SMILES). :func:`load_training` reads and standardises them;
 :func:`fit_training` builds one small Morgan :class:`VectorIndex` per column;
 training-aware scores (``scores/training_distance.py``) sit on top. Persisted
 under ``training_mode/training_sets/`` and versioned separately from the reference

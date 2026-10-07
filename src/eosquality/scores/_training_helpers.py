@@ -30,7 +30,7 @@ def _columns_summary(values: np.ndarray) -> np.ndarray:
 class TrainingQuery:
     """Query features computed once per run and shared by the training scores.
 
-    Standardising SMILES, physchem descriptors, Morgan bits and each
+    Standardising SMILES, physchem descriptors and each
     column's nearest-neighbour search are the costly steps of scoring; the
     training scores need the same ones, so they are computed on first use and
     cached here.
@@ -54,7 +54,6 @@ class TrainingQuery:
         self.smiles = list(smiles)
         self.rows = np.arange(len(self.smiles)) if rows is None else rows
         self.n_rows = len(self.smiles) if n_rows is None else n_rows
-        self._morgan: np.ndarray | None = None
         self._physchem: np.ndarray | None = None
         self._nearest: dict[str, tuple[int, tuple]] = {}
 
@@ -76,20 +75,6 @@ class TrainingQuery:
         std = [_standardize(s) for s in query["input"]]
         rows = np.flatnonzero([s is not None for s in std])
         return cls([std[i] for i in rows], rows, len(query))
-
-    @property
-    def morgan(self) -> np.ndarray:
-        """``(n, 2048)`` Morgan bits.
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        if self._morgan is None:
-            from eosquality.training.folds import morgan_bits
-
-            self._morgan = morgan_bits(self.smiles)
-        return self._morgan
 
     @property
     def physchem(self) -> np.ndarray:
