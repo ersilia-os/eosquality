@@ -15,7 +15,6 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
-from eosquality.vectorindex import VectorIndex
 
 # ---------------------------------------------------------------------------
 # Aggregation + calibration shared by typicality and extremity
@@ -229,19 +228,8 @@ def _resolve_shared(
 
 
 # ---------------------------------------------------------------------------
-# Standardisation and query-time fingerprint distances
+# Standardisation
 # ---------------------------------------------------------------------------
-
-
-# Tanimoto distance below this is a perfect fingerprint match. FPSim2 returns
-# exactly 0.0; the epsilon guards against float wobble.
-_SELF_MATCH_DISTANCE_THRESHOLD = 1e-6
-
-
-def _canonical(smiles: str) -> str | None:
-    """RDKit canonical isomeric SMILES, or ``None`` if it does not parse."""
-    mol = Chem.MolFromSmiles(smiles)
-    return Chem.MolToSmiles(mol) if mol is not None else None
 
 
 def _standardize(smiles: str) -> str | None:
@@ -260,38 +248,3 @@ def _standardize(smiles: str) -> str | None:
         if len(frags) > 1:
             mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
         return Chem.MolToSmiles(mol)
-
-
-def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
-    if query_smiles == library_smiles:
-        return True
-    a, b = _canonical(query_smiles), _canonical(library_smiles)
-    return a is not None and a == b
-
-
-def _query_fp_distances_valid(
-    query_smiles: list[str], vi: VectorIndex, k: int, exclude_self_match: bool
-) -> tuple[np.ndarray, np.ndarray]:
-    """:func:`_query_fp_distances` for SMILES that are known to parse."""
-    if not exclude_self_match:
-        fp_distances, vi_indices = vi.query(query_smiles, k=k)
-        return fp_distances.astype(np.float64), vi_indices
-
-    fp_distances, vi_indices = vi.query(query_smiles, k=k + 1)
-    fp_distances = fp_distances.astype(np.float64)
-    n_query = fp_distances.shape[0]
-    library_smiles = vi.smiles
-
-    # Column to drop per row: the self match if present, else the furthest.
-    drop_col = np.full(n_query, k, dtype=np.int64)
-    rows, cols = np.nonzero(fp_distances < _SELF_MATCH_DISTANCE_THRESHOLD)
-    for i, j in zip(rows, cols, strict=True):
-        if drop_col[i] != k:
-            continue  # already found this row's self match
-        if _is_same_molecule(query_smiles[i], library_smiles[vi_indices[i, j]]):
-            drop_col[i] = j
-
-    keep_mask = np.arange(k + 1)[None, :] != drop_col[:, None]
-    fp_kept = fp_distances[keep_mask].reshape(n_query, k)
-    idx_kept = vi_indices[keep_mask].reshape(n_query, k)
-    return fp_kept, idx_kept
