@@ -122,43 +122,66 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
 
     The SMILES are standardised (largest fragment, canonical isomeric) before
     their connectivity layers are taken, exactly as a query's are at run time.
+    The folder is written whole or not at all: the files are built in a
+    temporary folder next to ``output``, which is renamed to ``output`` only
+    once every file is complete, so an interrupted build leaves nothing behind.
 
     Parameters
     ----------
     smiles : list of str
         Library molecules, in order.
     output : str or pathlib.Path
-        Folder to write (created if needed).
+        Folder to write; it must not exist, or be empty.
     name : str
         Library identity, stored as ``library_name``.
+
+    Raises
+    ------
+    FileExistsError
+        If ``output`` exists and is not an empty folder.
     """
+    import shutil
+    import tempfile
 
     import pandas as pd
+    from rdkit import __version__ as rdkit_version
 
     from eosquality.library.reference import KEYS_FILE, METADATA_FILE, SMILES_FILE
     from eosquality.scores._helpers import _standardize
     from eosquality.scores._match_keys import _layers, save_keys, unique_keys
 
-    folder = pathlib.Path(output)
-    folder.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({"smiles": smiles}).to_csv(folder / SMILES_FILE, index=False)
-    standardised = [s for s in map(_standardize, smiles) if s]
-    molecules, scaffolds = _layers(standardised, "library InChIKey layers")
-    save_keys(folder / KEYS_FILE, unique_keys(molecules), unique_keys(scaffolds))
-    with open(folder / METADATA_FILE, "w") as f:
-        json.dump(
-            {
-                "n_samples": len(smiles),
-                "n_unparsable": len(smiles) - len(standardised),
-                "n_molecule_keys": int(len(unique_keys(molecules))),
-                "n_scaffold_keys": int(len(unique_keys(scaffolds))),
-                "eosquality_version": _package_version(),
-                "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
-                "library_name": name,
-            },
-            f,
-            indent=2,
-        )
+    final = pathlib.Path(output)
+    if final.exists() and (not final.is_dir() or any(final.iterdir())):
+        raise FileExistsError(f"{final} already exists and is not an empty folder.")
+    final.parent.mkdir(parents=True, exist_ok=True)
+    work = pathlib.Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=final.parent))
+    try:
+        pd.DataFrame({"smiles": smiles}).to_csv(work / SMILES_FILE, index=False)
+        standardised = [s for s in map(_standardize, smiles) if s]
+        molecules, scaffolds = _layers(standardised, "library InChIKey layers")
+        molecule_keys, scaffold_keys = unique_keys(molecules), unique_keys(scaffolds)
+        save_keys(work / KEYS_FILE, molecule_keys, scaffold_keys)
+        with open(work / METADATA_FILE, "w") as f:
+            json.dump(
+                {
+                    "n_samples": len(smiles),
+                    "n_unparsable": len(smiles) - len(standardised),
+                    "n_molecule_keys": int(len(molecule_keys)),
+                    "n_scaffold_keys": int(len(scaffold_keys)),
+                    "rdkit_version": rdkit_version,
+                    "eosquality_version": _package_version(),
+                    "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    "library_name": name,
+                },
+                f,
+                indent=2,
+            )
+        if final.exists():
+            final.rmdir()  # empty, checked above
+        work.rename(final)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
 
 
 def _library_name(input_path: str, name: str | None) -> str:
