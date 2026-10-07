@@ -51,6 +51,21 @@ DEFAULT_REFERENCE_BASE_URL: str = (
 )
 
 
+def is_library_id(name: str) -> bool:
+    """Whether ``name`` has the form of a library id, ``ersilia_reference_library_vN``.
+
+    Parameters
+    ----------
+    name : str
+        A candidate library name.
+
+    Returns
+    -------
+    bool
+    """
+    return _LIBRARY_ID_RE.match(name) is not None
+
+
 def library_major() -> int:
     """Return the major version number encoded in :data:`LIBRARY_ID`.
 

@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import pytest
 
@@ -162,3 +164,42 @@ def test_run_output_must_be_csv(files, capsys):
     bad = str(files["tmp"] / "quality_eos0aaa_v1")
     assert _run(["run", "-i", files["query"], "-a", files["artifacts"], "-o", bad]) == 1
     assert "mustbea.csvfile" in _err(capsys)
+
+
+def _library_csv(tmp_path, smiles, name):
+    path = tmp_path / name
+    pd.DataFrame({"smiles": smiles[:30]}).to_csv(path, index=False)
+    return str(path)
+
+
+def test_build_writes_exactly_the_library_files(tmp_path, smiles):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    out = tmp_path / "lib"
+    assert _run(["build", "-i", csv, "-o", str(out)]) == 0
+    assert sorted(p.name for p in out.iterdir()) == [
+        "connectivity_keys.npz",
+        "metadata.json",
+        "smiles.csv",
+    ]
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["library_name"] == "ersilia_reference_library_v7"
+
+
+def test_build_refuses_an_existing_folder(tmp_path, smiles, capsys):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    out = tmp_path / "lib"
+    out.mkdir()
+    (out / "keep.txt").write_text("x")
+    assert _run(["build", "-i", csv, "-o", str(out)]) == 1
+    assert "alreadyexists" in _err(capsys)
+    assert [p.name for p in out.iterdir()] == ["keep.txt"]
+
+
+def test_build_needs_a_library_id_name_or_an_explicit_one(tmp_path, smiles, capsys):
+    csv = _library_csv(tmp_path, smiles, "mylib.csv")
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "a")]) == 1
+    assert "notalibraryid" in _err(capsys)
+    assert not (tmp_path / "a").exists()
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "b"), "--name", "mylib"]) == 0
+    meta = json.loads((tmp_path / "b" / "metadata.json").read_text())
+    assert meta["library_name"] == "mylib"

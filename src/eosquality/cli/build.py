@@ -17,7 +17,12 @@ from datetime import datetime, timezone
 
 import click
 
-from eosquality.cli._common import CliError, run_command, verbose_option
+from eosquality.cli._common import (
+    CliError,
+    require_new_path,
+    run_command,
+    verbose_option,
+)
 from eosquality.utils import console
 
 
@@ -38,6 +43,16 @@ from eosquality.utils import console
     "--output", "-o", required=True, metavar="PATH", help="Output library folder."
 )
 @click.option(
+    "--name",
+    default=None,
+    metavar="NAME",
+    help=(
+        "Library identity (library_name). Default: the CSV file name without its "
+        "extension, which must then be a library id such as "
+        "ersilia_reference_library_v1."
+    ),
+)
+@click.option(
     "--max-samples",
     default=None,
     type=int,
@@ -45,7 +60,13 @@ from eosquality.utils import console
     help="Truncate input to the first N molecules (for testing).",
 )
 @verbose_option
-def build(input_path: str, output: str, max_samples: int | None, verbose: bool) -> None:
+def build(
+    input_path: str,
+    output: str,
+    name: str | None,
+    max_samples: int | None,
+    verbose: bool,
+) -> None:
     """Build the library folder: SMILES, metadata and connectivity keys.
 
     Parameters
@@ -53,7 +74,10 @@ def build(input_path: str, output: str, max_samples: int | None, verbose: bool) 
     input_path : str
         Library CSV with a ``smiles`` column.
     output : str
-        Output folder.
+        Output folder; it must not exist yet.
+    name : str or None
+        Library identity; defaults to the CSV file stem, which must be a
+        library id (``ersilia_reference_library_vN``).
     max_samples : int or None
         Optional truncation for testing.
     verbose : bool
@@ -61,7 +85,7 @@ def build(input_path: str, output: str, max_samples: int | None, verbose: bool) 
     """
 
     run_command(
-        lambda: _build(input_path, output, max_samples),
+        lambda: _build(input_path, output, name, max_samples),
         verbose=verbose,
         command="build",
     )
@@ -137,8 +161,27 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
         )
 
 
-def _build(input_path: str, output: str, max_samples: int | None) -> None:
+def _library_name(input_path: str, name: str | None) -> str:
+    """The library identity: ``--name``, else the CSV stem, which must be a library id."""
+    from eosquality.library.identity import is_library_id
+
+    if name:
+        return name
+    stem = pathlib.Path(input_path).stem
+    if not is_library_id(stem):
+        raise CliError(
+            f"the library name '{stem}' (from the CSV file name) is not a library "
+            "id like 'ersilia_reference_library_v1'; rename the file or pass --name."
+        )
+    return stem
+
+
+def _build(
+    input_path: str, output: str, name: str | None, max_samples: int | None
+) -> None:
     """Body of ``eosquality build`` (see :func:`build`)."""
+    require_new_path(output, "library folder")
+    library_name = _library_name(input_path, name)
     smiles = _read_library(input_path, max_samples)
     started = time.perf_counter()
     console.summary_panel(
@@ -148,6 +191,7 @@ def _build(input_path: str, output: str, max_samples: int | None) -> None:
                 "library",
                 f"{console.path(input_path)}  [dim]{len(smiles):,} molecules[/]",
             ),
+            ("name", library_name),
             ("output", console.path(output)),
         ],
         icon="◆",
@@ -156,7 +200,7 @@ def _build(input_path: str, output: str, max_samples: int | None) -> None:
     with console.section("Build") as section:
         try:
             with steps("Connectivity keys of the molecules and their scaffolds") as st:
-                build_library(smiles, output, pathlib.Path(input_path).stem)
+                build_library(smiles, output, library_name)
                 st.summary = f"{len(smiles):,} molecules"
         except Exception as exc:
             raise CliError(f"library build failed: {exc}") from exc

@@ -33,7 +33,7 @@ library CSV. It is a release tool — ordinary users should not need to run it.
 Use it to produce a new canonical library for the next major release, or to
 build a non-canonical library for internal testing and fit against it::
 
-    eosquality build --input library.csv --output /tmp/lib/
+    eosquality build --input library.csv --output /tmp/lib/ --name my_test_library
     EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/lib/ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
 """
 
