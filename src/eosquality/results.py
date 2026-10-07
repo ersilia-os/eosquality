@@ -14,7 +14,7 @@ class RunResult:
 
     ``scores`` is a per-query DataFrame with the columns of each fitted
     score, in canonical order: ``ref_typicality``, ``ref_typicality_raw``,
-    ``ref_extremity``, ``ref_extremity_raw``, ``ref_support``,
+    ``ref_extremity_pct``, ``ref_extremity_raw``, ``ref_support``,
     ``ref_support_raw``, ``ref_support_log``, ``ref_consistency``,
     ``ref_consistency_raw``, ``ref_signal``, ``ref_signal_raw``. The
     calibrated column is in ``(0, 1]``; ``*_raw`` is the pre-calibration
@@ -43,8 +43,15 @@ class RunResult:
     ``training_details`` (training modality only) has one row per query:
     the whole-model distances and the 5 nearest training molecules over all
     output columns, with their similarities and columns.
+
+    ``reference_details`` (reference modality with extremity fitted) has one
+    row per query: ``key``, ``input`` and, for every selected output column,
+    ``<column>_extremity_raw`` (``min(|scaled|, 1)``) and
+    ``<column>_extremity_pct`` (its percentile among the reference library's
+    values of that column).
     """
 
     scores: pd.DataFrame
     metadata: dict[str, Any]
     training_details: pd.DataFrame | None = None
+    reference_details: pd.DataFrame | None = None

@@ -69,7 +69,7 @@ One subfolder per modality; either or both may be present.
       reference_repr.npy                  # (n_ref, n_selected) scaled reference
     knn/state.json                        # {"k": 5}; iff support or consistency
     typicality/   state.json  reference_self_aggregates.npy  metadata.json
-    extremity/    state.json  reference_self_aggregates.npy  metadata.json
+    extremity/    state.json  column_tables.npz  reference_self_aggregates.npy  metadata.json
     support/      state.json  reference_nearest_similarities.npy  metadata.json
     consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
     signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy

@@ -51,7 +51,15 @@ At fit time, each selected column is quantised to int8 (`round(scaled × 127)`),
 
 ### Extremity (position)
 
-Per-feature extremity is `min(|scaled|, 1)`: 0 at the column centre, 1 at the rails. The row aggregate is Q66, which is then calibrated. Extremity is position-based where typicality is density-based, and the two are complementary. In practice they are strongly anti-correlated for most models (see `docs/figures/score_correlations.png`).
+Extremity asks how far from the centre of its range each output sits.
+
+- **Scaled values.** Each selected output column is first transformed by the eosframes scaler, a type-aware robust scaler fitted on the reference: the column's centre goes to 0, the bulk of the data lands well inside ±1, and tails approach ±1 smoothly instead of being cut, so distinct outliers keep distinct values (the exact body width depends on the column type). Binary columns become {0, 1}, and constant columns 0. Columns are therefore on a common scale, whatever their units.
+- **Per feature.** `min(|scaled|, 1)`: 0 at the column centre, 1 at (or beyond) the rails.
+- **Whole model, raw.** `ref_extremity_raw` is the 66th percentile (Q66) of the per-feature values across the output columns, in [0, 1]. A value of 0.8 means at least a third of the columns sit at 0.8 or beyond; 0 means every column is at its centre. The Q66 keeps the value from collapsing towards the mean as columns are added. Binary columns contribute 0 or 1 by construction, so for a model with several of them the raw value is coarse.
+- **Per column, percentile.** Each column's value is placed on that column's own reference distribution (mid-rank percentile of `min(|scaled|, 1)` among the reference library's values of that column), so a column that is rarely extreme counts the same as one that often is. These are `<column>_extremity_pct` in the reference details file, next to `<column>_extremity_raw`.
+- **Whole model, percentile.** `ref_extremity_pct` takes the Q66 of the per-column percentiles and maps it through the reference library's own distribution of that same statistic: ~0.5 for a typical reference molecule, 0.97 for one more extreme than 97% of the library. The last step keeps the value uniform under the reference whatever the number of columns, so it is comparable across models, which the raw value is not.
+
+Extremity is position-based where typicality is density-based, and the two are complementary. In practice they are strongly anti-correlated for most models (see `docs/figures/score_correlations.png`).
 
 ### Support (closest library analogue)
 

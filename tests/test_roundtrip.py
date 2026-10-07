@@ -22,7 +22,7 @@ def test_run_columns_and_ranges(fitted, query):
     expected = [
         "ref_typicality",
         "ref_typicality_raw",
-        "ref_extremity",
+        "ref_extremity_pct",
         "ref_extremity_raw",
         "ref_support",
         "ref_support_raw",
@@ -36,9 +36,13 @@ def test_run_columns_and_ranges(fitted, query):
     np.testing.assert_allclose(
         scores["ref_support_log"], -np.log10(scores["ref_support"])
     )
-    calibrated = scores[[f"ref_{name}" for name in REFERENCE]]
+    calibrated = scores[
+        [f"ref_{n}_pct" if n == "extremity" else f"ref_{n}" for n in REFERENCE]
+    ]
     finite = calibrated.to_numpy()[np.isfinite(calibrated.to_numpy())]
     assert (finite > 0).all() and (finite <= 1).all()
+    raw = scores["ref_extremity_raw"].dropna()
+    assert ((raw >= 0) & (raw <= 1)).all()
 
 
 def test_save_load_roundtrip(fitted, query, tmp_path):
@@ -138,7 +142,7 @@ def test_output_scores_run_without_smiles(reference, library, query):
     assert list(eq.run(query.drop(columns=["input"])).scores.columns) == [
         "ref_typicality",
         "ref_typicality_raw",
-        "ref_extremity",
+        "ref_extremity_pct",
         "ref_extremity_raw",
     ]
 

@@ -247,8 +247,9 @@ class ErsiliaQuality:
 
         columns: dict[str, pd.Series] = {}
         metadata: dict[str, Any] = {}
+        reference_details = None
         if self._shared is not None:
-            _reference_modality.run_reference(
+            reference_details = _reference_modality.run_reference(
                 self, query, components, columns, metadata
             )
 
@@ -268,7 +269,10 @@ class ErsiliaQuality:
             f"{time.perf_counter() - t_start:.2f}s"
         )
         return RunResult(
-            scores=scores_df, metadata=metadata, training_details=training_details
+            scores=scores_df,
+            metadata=metadata,
+            training_details=training_details,
+            reference_details=reference_details,
         )
 
     # ------------------------------------------------------------------

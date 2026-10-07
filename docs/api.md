@@ -66,7 +66,7 @@ eq = ErsiliaQuality.load("artifacts/")
 
 ## `RunResult`
 
-`RunResult` has three fields: `scores`, `metadata` and `training_details`.
+`RunResult` has four fields: `scores`, `metadata`, `training_details` and `reference_details`.
 
 ### `scores`
 
@@ -75,7 +75,7 @@ eq = ErsiliaQuality.load("artifacts/")
 | column | range | meaning |
 |---|---|---|
 | `ref_typicality`, `ref_typicality_raw` | (0, 1], [0, 1] | calibrated score, Q66 density aggregate |
-| `ref_extremity`, `ref_extremity_raw` | (0, 1], [0, 1] | calibrated score, Q66 position aggregate |
+| `ref_extremity_pct`, `ref_extremity_raw` | (0, 1], [0, 1] | `_raw`: Q66 over the output columns of `min(\|scaled\|, 1)` (0 = all at the centre, 1 = at least a third at the rails); `_pct`: each column's value is first placed on that column's own reference distribution, the per-column percentiles are combined at Q66, and the result is its percentile among the reference library's own values of that statistic; ~0.5 for a typical reference molecule |
 | `ref_support`, `ref_support_raw`, `ref_support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `ref_consistency`, `ref_consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to the 5 FP neighbours |
 | `ref_signal`, `ref_signal_raw` | (0, 1], [0, 1] | calibrated score, Gini of \|SHAP\| |
@@ -99,6 +99,10 @@ The `ref_` columns come from the reference modality and the `trn_` columns from 
 - `trn_physchem_columns`, `trn_physchem_k` (neighbours averaged per column)
 - `trn_match_n_molecules`, `trn_match_n_scaffolds` (distinct connectivity layers held)
 - `trn_difficulty_columns`, `trn_difficulty_spearman` (per column: Spearman of out-of-fold predicted vs actual error), `trn_difficulty_cv` (per column: `scaffold` or `random` folds), `trn_difficulty_n_labelled`
+
+### `reference_details`
+
+`reference_details` is `None` unless extremity is fitted. Otherwise it is a DataFrame with one row per query: `key`, `input` (when the query has them) and, for each selected output column, `<column>_extremity_raw` (`min(|scaled|, 1)`) and `<column>_extremity_pct` (the percentile of that value among the reference library's values of the same column, higher = more extreme). The `ref_extremity_*` columns of `scores` are the whole-model summary of these.
 
 ### `training_details`
 

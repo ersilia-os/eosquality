@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 5, training format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
+**Status:** package `0.0.1`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 6, training format 5. The project is a work in progress. Typicality, extremity, support and consistency are functional and calibrated; Signal is provisional.
 
 ## Example results
 

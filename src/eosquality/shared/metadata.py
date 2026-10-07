@@ -77,7 +77,9 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
 #   4 — support = nearest-analogue similarity, one reference CDF;
 #       support_log output column.
 #   5 — artifacts split into reference_mode/ and training_mode/.
-ARTIFACT_FORMAT_VERSION = 5
+#   6 — extremity: per-column reference tables (column_tables.npz); the
+#       calibrated score is the CDF of the Q66 of per-column percentiles.
+ARTIFACT_FORMAT_VERSION = 6
 
 
 @dataclass
