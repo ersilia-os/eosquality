@@ -79,7 +79,9 @@ def compute_column_characteristics(series: pd.Series) -> ColumnCharacteristics:
 #   5 — artifacts split into reference_mode/ and training_mode/.
 #   6 — extremity: per-column reference tables (column_tables.npz); the
 #       calibrated score is the CDF of the Q66 of per-column percentiles.
-ARTIFACT_FORMAT_VERSION = 6
+#   7 — typicality: the calibrated score is built the same way, from
+#       per-column percentiles of the density (derived from the count LUTs).
+ARTIFACT_FORMAT_VERSION = 7
 
 
 @dataclass

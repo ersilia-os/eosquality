@@ -41,7 +41,7 @@ def test_fit_and_run(files, query):
     assert list(scores.columns[:4]) == [
         "key",
         "input",
-        "ref_typicality",
+        "ref_typicality_pct",
         "ref_typicality_raw",
     ]
     assert "ref_signal" not in scores.columns

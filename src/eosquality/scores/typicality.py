@@ -11,12 +11,24 @@ often it appears in the reference, and unseen int8 values score 0.
 
 Missing values carry no information: a NaN feature stays NaN per feature
 and is ignored by the aggregate; a row whose every feature is NaN scores
-NaN. The per-row aggregate is the **66th percentile** of the finite
-per-feature values (``AGGREGATE_QUANTILE``), mapped through the
-reference's own sorted Q66 distribution via :func:`_score_from_aggregates`
-(mid-rank CDF), so the reference scores ~Uniform(0, 1) and the score is
-comparable across models with different feature counts. Per-feature
-values are retained on :class:`TypicalityRunResult` for diagnostics.
+NaN.
+
+Two columns are published for the whole model:
+
+- ``ref_typicality_raw``: the **66th percentile** across features of the
+  per-feature values (``AGGREGATE_QUANTILE``), in [0, 1].
+- ``ref_typicality_pct``: each feature's value is first placed on that
+  column's own reference distribution of the same density (mid-rank
+  percentile, so columns with different shapes weigh equally; higher is
+  more typical), the per-feature percentiles are aggregated at the same
+  66th percentile, and that aggregate is mapped through the reference's own
+  sorted distribution of it (:func:`_score_from_aggregates`). The result is
+  uniform under the reference and comparable across models with different
+  feature counts. The per-feature raw values and percentiles are returned as
+  ``per_feature`` and ``per_feature_pct``.
+
+A column's density takes at most 256 values, so its percentile table is
+derived exactly from the count LUT (:func:`percentile_luts`) and is not saved.
 """
 
 from __future__ import annotations
@@ -33,6 +45,7 @@ import pandas as pd
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
+    _aggregate_percentiles,
     _make_query_repr,
     _nan_aggregate,
     _reference_repr,
@@ -55,23 +68,25 @@ SELF_AGGREGATES_FILE = "reference_self_aggregates.npy"
 class TypicalityRunResult:
     """Result returned by :meth:`Typicality.run`."""
 
-    score: pd.Series  # (n_query,) calibrated aggregate typicality in [0, 1]
-    score_raw: pd.Series  # (n_query,) Q66 aggregate before CDF lookup, in [0, 1]
-    per_feature: pd.DataFrame  # (n_query, n_features)
+    score: pd.Series  # (n_query,) whole-model typicality percentile, in (0, 1]
+    score_raw: pd.Series  # (n_query,) Q66 of the per-feature values, in [0, 1]
+    per_feature: pd.DataFrame  # (n_query, n_features) count / max count
+    per_feature_pct: pd.DataFrame  # (n_query, n_features) per-column percentiles
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Typicality(ScoreComponent):
     """Density-based per-feature typicality scorer.
 
-    Holds three pieces of fitted state:
+    Holds three pieces of fitted state (plus ``pct_luts_``, derived from the
+    first):
 
     - ``count_luts_`` — ``(256, n_features)`` int array of reference counts
       per int8 level per column. Built once at fit time and consulted at
       query time.
     - ``sorted_self_aggregates_`` — ``(n_ref,)`` ascending array of
-      reference per-row Q66 aggregates. The CDF lookup table that maps
-      raw aggregates to calibrated scores.
+      reference per-row Q66 aggregates of the per-column percentiles. The
+      CDF lookup table that maps the aggregate to the calibrated score.
     - ``reference_typicality_`` — mean reference-as-query calibrated
       typicality. ≈ 0.5 by construction; a sanity-check anchor.
 
@@ -83,6 +98,7 @@ class Typicality(ScoreComponent):
     def __init__(self) -> None:
         super().__init__()
         self._count_luts: np.ndarray | None = None  # (256, n_features)
+        self._pct_luts: np.ndarray | None = None  # (256, n_features), derived
         self._sorted_self_aggregates: np.ndarray | None = None  # (n_ref,)
         self._reference_typicality: float | None = None
 
@@ -124,11 +140,13 @@ class Typicality(ScoreComponent):
         )
         ref_scaled = _reference_repr(shared, reference)
         count_luts = fit_typicality_luts(ref_scaled)
-        _, ref_agg = compute_typicality(scaled_values=ref_scaled, count_luts=count_luts)
+        pct_luts = percentile_luts(count_luts)
+        ref_agg = _aggregate_percentiles(lookup_percentiles(ref_scaled, pct_luts))
         sorted_self_aggregates = _sorted_finite(ref_agg, "Typicality")
 
         self._shared = shared
         self._count_luts = count_luts
+        self._pct_luts = pct_luts
         self._sorted_self_aggregates = sorted_self_aggregates
         self._reference_typicality = float(
             np.nanmean(_score_from_aggregates(ref_agg, sorted_self_aggregates))
@@ -168,6 +186,7 @@ class Typicality(ScoreComponent):
         self._check_fitted()
         assert self._shared is not None
         assert self._count_luts is not None
+        assert self._pct_luts is not None
         assert self._sorted_self_aggregates is not None
 
         if query_repr is None:
@@ -178,14 +197,17 @@ class Typicality(ScoreComponent):
             scaled_values=query_repr,
             count_luts=self._count_luts,
         )
-        score = _score_from_aggregates(raw_aggregate, self._sorted_self_aggregates)
+        per_feature_pct = lookup_percentiles(query_repr, self._pct_luts)
+        score = _score_from_aggregates(
+            _aggregate_percentiles(per_feature_pct), self._sorted_self_aggregates
+        )
         idx = list(query.index)
+        columns = list(self._shared.selected_columns)
         return TypicalityRunResult(
-            score=pd.Series(score, index=idx, name="ref_typicality"),
+            score=pd.Series(score, index=idx, name="ref_typicality_pct"),
             score_raw=pd.Series(raw_aggregate, index=idx, name="ref_typicality_raw"),
-            per_feature=pd.DataFrame(
-                per_feature, index=idx, columns=list(self._shared.selected_columns)
-            ),
+            per_feature=pd.DataFrame(per_feature, index=idx, columns=columns),
+            per_feature_pct=pd.DataFrame(per_feature_pct, index=idx, columns=columns),
             metadata={
                 "anchor": self._reference_typicality,
             },
@@ -229,6 +251,7 @@ class Typicality(ScoreComponent):
             ],
             axis=1,
         ).reshape(_LUT_SIZE, len(column_names))
+        self._pct_luts = percentile_luts(self._count_luts)
         self._sorted_self_aggregates = np.load(
             require_file(folder / SELF_AGGREGATES_FILE, self.NAME)
         )
@@ -249,6 +272,7 @@ class Typicality(ScoreComponent):
         return (
             self._shared is not None
             and self._count_luts is not None
+            and self._pct_luts is not None
             and self._sorted_self_aggregates is not None
             and self._reference_typicality is not None
         )
@@ -265,6 +289,19 @@ class Typicality(ScoreComponent):
         self._check_fitted()
         assert self._count_luts is not None
         return self._count_luts
+
+    @property
+    def pct_luts_(self) -> np.ndarray:
+        """Per-column percentile of each int8 level (derived from the counts).
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(256, n_features)``.
+        """
+        self._check_fitted()
+        assert self._pct_luts is not None
+        return self._pct_luts
 
     @property
     def sorted_self_aggregates_(self) -> np.ndarray:
@@ -383,3 +420,60 @@ def compute_typicality(
     per_feature = counts / col_max[None, :]
     per_feature[q_int8 == -_LUT_OFFSET] = np.nan
     return per_feature, _nan_aggregate(per_feature)
+
+
+def percentile_luts(count_luts: np.ndarray) -> np.ndarray:
+    """Mid-rank percentile of each level's density among the reference values.
+
+    Within a column the density of a level is its count (over a constant),
+    so a level's percentile is the share of reference values whose level is
+    less common, with ties at half weight, as in
+    :func:`~eosquality.scores._helpers._cdf_score`: the most common level
+    scores near 1, rare levels near 0, and unseen levels the floor
+    ``1 / (2 n)``. A column with no counted value gives NaN.
+
+    Parameters
+    ----------
+    count_luts : numpy.ndarray
+        ``(256, n_features)`` counts, as returned by :func:`fit_typicality_luts`.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(256, n_features)`` percentiles in ``(0, 1]``.
+    """
+    counts = np.asarray(count_luts, dtype=np.float64)
+    out = np.full(counts.shape, np.nan)
+    for j in range(counts.shape[1]):
+        c = counts[:, j]
+        n = c.sum()
+        if n <= 0:
+            continue
+        below = (c[None, :] * (c[None, :] < c[:, None])).sum(axis=1)
+        at_or_below = (c[None, :] * (c[None, :] <= c[:, None])).sum(axis=1)
+        out[:, j] = np.clip((below + at_or_below) / (2.0 * n), 0.5 / n, 1.0)
+    return out
+
+
+def lookup_percentiles(scaled_values: np.ndarray, pct_luts: np.ndarray) -> np.ndarray:
+    """Per-feature typicality percentiles of scaled values.
+
+    Parameters
+    ----------
+    scaled_values : numpy.ndarray
+        ``(n, n_features)`` eosframes-scaled values.
+    pct_luts : numpy.ndarray
+        ``(256, n_features)`` from :func:`percentile_luts`.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, n_features)`` percentiles; NaN where the input is NaN.
+    """
+    n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
+    if n_features == 0:
+        return np.ones((scaled_values.shape[0], 0))
+    q_int8 = _quantize_to_int8(scaled_values)
+    out = pct_luts[q_int8 + _LUT_OFFSET, np.arange(n_features)[None, :]]
+    out[q_int8 == -_LUT_OFFSET] = np.nan
+    return out

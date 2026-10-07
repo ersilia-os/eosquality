@@ -74,7 +74,7 @@ eq = ErsiliaQuality.load("artifacts/")
 
 | column | range | meaning |
 |---|---|---|
-| `ref_typicality`, `ref_typicality_raw` | (0, 1], [0, 1] | calibrated score, Q66 density aggregate |
+| `ref_typicality_pct`, `ref_typicality_raw` | (0, 1], [0, 1] | `_raw`: Q66 over the output columns of the density of the value (`count / max count` of its int8 level in the reference; 1 = the most common level); `_pct`: each column's density is first placed on that column's own reference distribution, the per-column percentiles are combined at Q66, and the result is its percentile among the reference library's own values of that statistic; ~0.5 for a typical reference molecule, higher = more typical |
 | `ref_extremity_pct`, `ref_extremity_raw` | (0, 1], [0, 1] | `_raw`: Q66 over the output columns of `min(\|scaled\|, 1)` (0 = all at the centre, 1 = at least a third at the rails); `_pct`: each column's value is first placed on that column's own reference distribution, the per-column percentiles are combined at Q66, and the result is its percentile among the reference library's own values of that statistic; ~0.5 for a typical reference molecule |
 | `ref_support`, `ref_support_raw`, `ref_support_log` | (0, 1], [0, 1], ≥ 0 | calibrated score, Tanimoto similarity of the nearest library analogue, −log10(support) |
 | `ref_consistency`, `ref_consistency_raw` | (0, 1], ≥ 0 | calibrated score, mean output L1 distance to the 5 FP neighbours |
@@ -102,7 +102,7 @@ The `ref_` columns come from the reference modality and the `trn_` columns from 
 
 ### `reference_details`
 
-`reference_details` is `None` unless extremity is fitted. Otherwise it is a DataFrame with one row per query: `key`, `input` (when the query has them) and, for each selected output column, `<column>_extremity_raw` (`min(|scaled|, 1)`) and `<column>_extremity_pct` (the percentile of that value among the reference library's values of the same column, higher = more extreme). The `ref_extremity_*` columns of `scores` are the whole-model summary of these.
+`reference_details` is `None` unless typicality or extremity is fitted. Otherwise it is a DataFrame with one row per query: `key`, `input` (when the query has them) and, for each selected output column and each fitted score, `<column>_typicality_raw` (`count / max count`) or `<column>_extremity_raw` (`min(|scaled|, 1)`), and the matching `_pct` (the percentile of that value among the reference library's values of the same column; higher = more typical or more extreme). The `ref_typicality_*` and `ref_extremity_*` columns of `scores` are the whole-model summaries of these.
 
 ### `training_details`
 
@@ -141,7 +141,7 @@ Typicality.load("art/").run(query).score
 - **Support and Consistency** take `vector_index=` when fitting (and `k=`, 5 by default, as the orchestrator uses).
 - **Names.** Components keep their short names (`eq.support`, `Support`, the `support/` artifacts folder); the `ref_` / `trn_` prefixes belong to the orchestrator's output columns, metadata keys and `exclude`.
 - **Signal** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `vector_index=`.
-- **Run results.** Each component's run result has `score`, `score_raw` and `metadata`. The Series carry the public score names (`ref_support`, `trn_tanimoto_pct`), the same as the orchestrator's output columns. Typicality and extremity also expose `per_feature`. Support also exposes `score_log`, `distance_k_mean` (mean Tanimoto distance to the k neighbours) and `nearest_reference_ids` (closest first).
+- **Run results.** Each component's run result has `score`, `score_raw` and `metadata`. The Series carry the public score names (`ref_support`, `trn_tanimoto_pct`), the same as the orchestrator's output columns. Typicality and extremity also expose `per_feature` and `per_feature_pct`. Support also exposes `score_log`, `distance_k_mean` (mean Tanimoto distance to the k neighbours) and `nearest_reference_ids` (closest first).
 
 ## Logging
 

@@ -177,7 +177,7 @@ def _run(input_path, artifacts, output) -> None:
             )
         if "training" in eq.modalities_:  # fail before the scoring work
             require_new_path(details_path, "training details path")
-        if eq.extremity is not None:
+        if eq.typicality is not None or eq.extremity is not None:
             require_new_path(reference_details, "reference details path")
         console.summary_panel(
             "eosquality · run",

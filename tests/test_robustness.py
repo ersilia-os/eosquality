@@ -36,7 +36,7 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
     for name in ("ref_support", "ref_consistency"):
         assert scores[name].iloc[[1, 3]].isna().all()
         assert scores[name].drop(index=q.index[[1, 3]]).notna().all()
-    assert scores["ref_typicality"].notna().all()  # output-based, needs no SMILES
+    assert scores["ref_typicality_pct"].notna().all()  # output-based, needs no SMILES
     support = fitted.support.run(q)
     assert support.nearest_reference_ids[1] == []
 

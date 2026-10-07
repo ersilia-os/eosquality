@@ -13,7 +13,7 @@ class RunResult:
     """Combined result returned by :meth:`ErsiliaQuality.run`.
 
     ``scores`` is a per-query DataFrame with the columns of each fitted
-    score, in canonical order: ``ref_typicality``, ``ref_typicality_raw``,
+    score, in canonical order: ``ref_typicality_pct``, ``ref_typicality_raw``,
     ``ref_extremity_pct``, ``ref_extremity_raw``, ``ref_support``,
     ``ref_support_raw``, ``ref_support_log``, ``ref_consistency``,
     ``ref_consistency_raw``, ``ref_signal``, ``ref_signal_raw``. The
@@ -44,11 +44,12 @@ class RunResult:
     the whole-model distances and the 5 nearest training molecules over all
     output columns, with their similarities and columns.
 
-    ``reference_details`` (reference modality with extremity fitted) has one
-    row per query: ``key``, ``input`` and, for every selected output column,
-    ``<column>_extremity_raw`` (``min(|scaled|, 1)``) and
-    ``<column>_extremity_pct`` (its percentile among the reference library's
-    values of that column).
+    ``reference_details`` (reference modality with typicality or extremity
+    fitted) has one row per query: ``key``, ``input`` and, for every selected
+    output column and each of those scores, ``<column>_typicality_raw``
+    (``count / max count``) or ``<column>_extremity_raw``
+    (``min(|scaled|, 1)``) and the matching ``_pct`` (its percentile among
+    the reference library's values of that column).
     """
 
     scores: pd.DataFrame

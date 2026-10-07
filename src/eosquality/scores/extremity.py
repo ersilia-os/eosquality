@@ -40,13 +40,12 @@ import pandas as pd
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
-    AGGREGATE_QUANTILE,
+    _aggregate_percentiles,
     _cdf_score,
     _make_query_repr,
     _nan_aggregate,
     _reference_repr,
     _resolve_shared,
-    _row_nanquantile,
     _score_from_aggregates,
     _sorted_finite,
 )
@@ -369,10 +368,3 @@ def _per_column_percentiles(
                 per_feature[:, j].astype(np.float32), table, higher_is_higher=True
             )
     return out
-
-
-def _aggregate_percentiles(per_feature_pct: np.ndarray) -> np.ndarray:
-    """Per-row Q66 of the per-feature percentiles (NaN where none is finite)."""
-    if per_feature_pct.shape[1] == 0:
-        return np.full(per_feature_pct.shape[0], np.nan)
-    return _row_nanquantile(per_feature_pct, AGGREGATE_QUANTILE)
