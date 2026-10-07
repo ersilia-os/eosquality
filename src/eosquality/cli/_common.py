@@ -11,7 +11,7 @@ from contextlib import contextmanager
 import click
 
 from eosquality import set_verbosity
-from eosquality.utils import console
+from eosquality.utils import console, parallel
 from eosquality.utils.logging import logger
 
 
@@ -35,7 +35,7 @@ def require_new_path(path: str, what: str = "output path") -> None:
         )
 
 
-def run_command(fn, *, verbose: bool, command: str) -> None:
+def run_command(fn, *, verbose: bool, command: str, jobs: int | None = None) -> None:
     """Run a command body with curated output; failures become ``✖ error:`` lines.
 
     Turns the curated console on in the command's accent colour, and restores
@@ -51,6 +51,10 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
         Enable DEBUG logging and on-screen tracebacks.
     command : str
         Command name, for its accent colour (``console.STEP_COLORS``).
+    jobs : int, optional
+        Worker processes for the per-molecule RDKit work (``-1``: every core).
+        The CLI is a proper entry point, so it may start a pool (see
+        :mod:`eosquality.utils.parallel`).
     """
     # Global output state is restored on exit, so calling the CLI in-process
     # (tests, notebooks) leaves library use silent again.
@@ -61,7 +65,8 @@ def run_command(fn, *, verbose: bool, command: str) -> None:
         set_verbosity(True)
     ctx = click.get_current_context()
     try:
-        fn()
+        with parallel.workers(jobs):
+            fn()
     except CliError as exc:
         console.echo(f"[bold red]error:[/] {console.plain(exc)}", "error")
         ctx.exit(1)
@@ -109,6 +114,15 @@ def staged_log(final_path: pathlib.Path):
         else:
             console.echo(f"[dim]log →[/] {console.path(tmp)}")
 
+
+jobs_option = click.option(
+    "--jobs",
+    "-j",
+    default=-1,
+    show_default=True,
+    metavar="N",
+    help="Worker processes for the RDKit descriptors (-1: every core, 1: none).",
+)
 
 verbose_option = click.option(
     "--verbose",

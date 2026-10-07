@@ -5,18 +5,38 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 
 import numpy as np
 
 from eosquality.utils import console
 
-# A process pool is used only when the caller asks for it (``n_jobs > 1``)
-# and the input is at least this large: spawning workers (each re-imports
-# RDKit) costs more than it saves on small inputs. Library code (fit, run)
-# never asks: with the "spawn" start method (macOS, Windows) a pool started
-# from a user's script without an ``if __name__ == "__main__":`` guard
-# re-executes that script in every worker. Only ``eosquality build`` opts in.
+# A process pool is used only when the caller asks for it (``n_jobs > 1``, or
+# ``workers(n)`` around a command) and the input is large enough: spawning
+# workers (each re-imports RDKit) costs more than it saves on small inputs.
+# Library code never asks by default: with the "spawn" start method (macOS,
+# Windows) a pool started from a user's script without an
+# ``if __name__ == "__main__":`` guard re-executes that script in every worker.
+# The CLI, a proper entry point, opts in through :func:`workers`.
 PARALLEL_MIN_ITEMS = 5_000
+_default_jobs: int | None = None
+
+
+@contextmanager
+def workers(n_jobs: int | None):
+    """Let :func:`map_rows` calls inside the block use ``n_jobs`` processes.
+
+    Parameters
+    ----------
+    n_jobs : int or None
+        Worker processes (``-1``: every CPU; ``None`` or 1: none).
+    """
+    global _default_jobs
+    previous, _default_jobs = _default_jobs, n_jobs
+    try:
+        yield
+    finally:
+        _default_jobs = previous
 
 
 def map_rows(
@@ -27,6 +47,7 @@ def map_rows(
     label: str,
     n_jobs: int | None = None,
     chunksize: int = 256,
+    min_items: int = PARALLEL_MIN_ITEMS,
     show_progress: bool | None = None,
 ) -> np.ndarray:
     """Fill ``out[i] = fn(items[i])`` for every item and return ``out``.
@@ -42,10 +63,12 @@ def map_rows(
     label : str
         Progress-bar title.
     n_jobs : int, optional
-        Worker processes. ``None`` or 1 (the default) runs in-process; ``-1``
-        uses every CPU.
+        Worker processes. ``None`` takes the :func:`workers` setting (in-process
+        outside one); 1 runs in-process; ``-1`` uses every CPU.
     chunksize : int, optional
         Items per task sent to a worker.
+    min_items : int, optional
+        Fewest items for which a pool is worth starting.
     show_progress : bool, optional
         Show a progress bar; ``None`` shows it only for parallel runs.
 
@@ -53,15 +76,17 @@ def map_rows(
     -------
     numpy.ndarray
         ``out``, filled. A process pool is used only with ``n_jobs`` other
-        than 1 and at least :data:`PARALLEL_MIN_ITEMS` inputs.
+        than 1 and at least ``min_items`` inputs.
     """
     n = len(items)
     if n == 0:
         return out
+    if n_jobs is None:
+        n_jobs = _default_jobs
     if n_jobs is not None and n_jobs < 0:
         n_jobs = os.cpu_count() or 1
     n_jobs = max(1, min(n_jobs or 1, n))
-    parallel = n_jobs > 1 and n >= PARALLEL_MIN_ITEMS
+    parallel = n_jobs > 1 and n >= min_items
     progress = (
         console.progress(label)
         if (show_progress is None and parallel) or show_progress
@@ -72,6 +97,7 @@ def map_rows(
         progress.start()
     try:
         if parallel:
+            _single_threaded_workers()
             with mp.Pool(processes=n_jobs) as pool:
                 _fill(out, pool.imap(fn, items, chunksize=chunksize), progress, task_id)
         else:
@@ -80,6 +106,22 @@ def map_rows(
         if progress is not None:
             progress.stop()
     return out
+
+
+def _single_threaded_workers() -> None:
+    """Make spawned workers inherit one BLAS thread each.
+
+    RDKit descriptors call into numpy linear algebra; with every worker also
+    running a multi-threaded BLAS the cores are oversubscribed and the pool
+    ends up slower than a single process.
+    """
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ.setdefault(var, "1")
 
 
 def _fill(out: np.ndarray, rows, progress, task_id) -> None:

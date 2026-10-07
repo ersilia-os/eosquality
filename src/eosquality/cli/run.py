@@ -11,6 +11,7 @@ import click
 
 from eosquality.cli._common import (
     CliError,
+    jobs_option,
     require_new_path,
     run_command,
     verbose_option,
@@ -115,11 +116,13 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
 @click.option(
     "--output", "-o", required=True, metavar="CSV", help="Scores CSV to write (.csv)."
 )
+@jobs_option
 @verbose_option
 def run(
     input_path: str,
     artifacts: str,
     output: str,
+    jobs: int,
     verbose: bool,
 ) -> None:
     """Score a query CSV and write the scores (and training details) CSVs.
@@ -132,6 +135,8 @@ def run(
         Fitted artifacts folder.
     output : str
         Scores CSV path (must not exist).
+    jobs : int
+        Worker processes for the descriptors.
     verbose : bool
         Print debug messages and diagnostic tables.
     """
@@ -140,6 +145,7 @@ def run(
         lambda: _run(input_path, artifacts, output),
         verbose=verbose,
         command="run",
+        jobs=jobs,
     )
 
 

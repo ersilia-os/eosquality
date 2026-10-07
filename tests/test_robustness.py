@@ -116,6 +116,22 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
     )
 
 
+def test_workers_context_lets_the_cli_use_a_pool(monkeypatch):
+    """Only inside ``parallel.workers`` does the descriptor map start a pool."""
+    from eosquality.library.physchem import compute_physchem_raw
+    from eosquality.utils import parallel
+
+    def no_pool(*args, **kwargs):
+        raise AssertionError("pool requested")
+
+    monkeypatch.setattr(parallel.mp, "Pool", no_pool)
+    smiles = ["CCO"] * 300
+    assert len(compute_physchem_raw(smiles)) == 300  # outside: in-process
+    with parallel.workers(2), pytest.raises(AssertionError, match="pool requested"):
+        compute_physchem_raw(smiles)
+    assert len(compute_physchem_raw(smiles)) == 300  # restored
+
+
 def test_all_unparsable_queries_are_reported_not_crashed(
     tmp_path, training_dir, capsys
 ):

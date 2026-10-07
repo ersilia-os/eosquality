@@ -89,6 +89,7 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
 | `--artifacts`, `-a DIR` | required | new artifacts folder |
+| `--jobs`, `-j N` | -1 | worker processes for the RDKit descriptors (every core by default, 1 for none); only used for 200 or more molecules |
 | `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_match`, `trn_tanimoto`, `trn_physchem`, `trn_match` |
 | `--verbose`, `-v` | off | |
 
@@ -127,6 +128,7 @@ For a training-only artifact, the query only needs SMILES, in an `input` or `smi
 | `--input`, `-i PATH` | required | query CSV |
 | `--artifacts`, `-a PATH` | required | folder written by `fit` |
 | `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its details CSVs) |
+| `--jobs`, `-j N` | -1 | worker processes for the RDKit descriptors (every core by default, 1 for none) |
 | `--verbose`, `-v` | off | |
 
 Artifacts written by an older eosquality format fail with a "refit" message.

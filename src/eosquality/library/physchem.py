@@ -30,6 +30,8 @@ from rdkit.Chem import Descriptors
 from eosquality.utils.parallel import map_rows
 
 PHYSCHEM_SCALER_FILE = "physchem_scaler.json"
+# The descriptors cost milliseconds per molecule, so a pool pays off early.
+_MIN_PARALLEL = 200
 
 
 # RDKit's canonical descriptor list — (name, callable) tuples. Captured
@@ -122,6 +124,7 @@ def compute_physchem_raw(
         label=label,
         n_jobs=n_jobs,
         chunksize=256,
+        min_items=_MIN_PARALLEL,
         show_progress=show_progress,
     )
 

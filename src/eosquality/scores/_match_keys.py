@@ -103,12 +103,16 @@ def _layers(
 
 
 def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:
-    """1 / 0 for layers found in ``known``; NA where the layer is empty."""
-    present = np.array([bool(x) for x in layers], dtype=bool)
-    found = np.isin(layers, known)
-    return pd.Series(np.where(present, found.astype(int), 0), dtype="Int64").mask(
-        ~present
-    )
+    """1 / 0 for layers found in ``known``; NA where the layer is empty.
+
+    ``known`` is the sorted array of :func:`unique_keys`, so each layer is one
+    binary search (``np.isin`` would sort the whole array on every call).
+    """
+    layers = np.asarray(layers, dtype=known.dtype)
+    present = layers != ""
+    at = np.minimum(np.searchsorted(known, layers), len(known) - 1)
+    found = (known[at] == layers) if len(known) else np.zeros(len(layers), bool)
+    return pd.Series(found.astype(int), dtype="Int64").mask(~present)
 
 
 def unique_keys(layers: np.ndarray) -> np.ndarray:
