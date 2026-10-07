@@ -121,7 +121,7 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 
 ## Code Conventions
 
-- **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used.
+- **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used. Ruff's `target-version` follows `requires-python` (py311), not the org template's py310.
 - **Dependencies** are pinned to exact versions in `pyproject.toml`; bump them deliberately.
 - **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `✖ error:` lines and exit status 1. The library fetch command is `setup`, matching the other Ersilia tools.
 - **Output:** user-facing status goes through `utils/console/` (steps, panels), never through `logger.info`. `logger` is for diagnostics, which go to the log file and appear on screen only with `-v`. Library code narrates fit/run with `console.section` + `console.Steps`, which are no-ops while the console is off.

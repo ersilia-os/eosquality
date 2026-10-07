@@ -4,7 +4,7 @@
 
 ## Example results
 
-The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/*.py` (in an environment with stylia). They have not been regenerated since the reference scores changed (see Open items), so none is embedded here.
+The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/*.py` (in an environment with stylia).
 
 | model | endpoint | outputs | kept after selection |
 |---|---|---|---|
@@ -14,17 +14,30 @@ The example models and query sets are those of `scripts/run_all_scores.sh`: it f
 | eos42ez | cytotoxicity | 3 | 3 |
 | eos7m30 | ADMET panel | 49 | 10 |
 
-The query sets:
-- **Library sample:** 1,000 molecules drawn from the reference library itself.
-- **Drugs:** 43% of them are in the library.
-- **Natural products, synthetic:** none are in the library.
-- **Inert:** 0.4% are in the library.
+The query sets, and how many of their molecules the reference library holds (`ref_match` / `ref_scaffold`, the same for every model):
 
-**Calibration.** Library molecules score roughly Uniform(0, 1) on typicality and extremity, and the `reference_<score>` anchors are 0.500 by construction (mid-rank calibration). The tests check this on a small library; the example outputs have not been re-measured since the per-column percentiles.
+| query set | `ref_match` = 1 | `ref_scaffold` = 1 | no scaffold (NA) |
+|---|---|---|---|
+| Library sample | 100% | 100% | 0.4% |
+| Drugs | 71% | 92% | 10% |
+| Inert | 53% | 92% | 0.4% |
+| Synthetic | 0% | 21% | 5% |
+| Natural products | 0% | 7% | 34% |
+
+`ref_match` ignores stereochemistry, charge and tautomers, so it finds more drugs and inert molecules than an exact SMILES comparison (43% of the drugs, 0.4% of the inert set).
+
+**Calibration.** Library molecules score roughly Uniform(0, 1) on typicality and extremity, and the anchors are 0.500 by construction (mid-rank calibration). On the library sample the KS distance to uniform is at most 0.040 for every model and both scores, against a 95% critical value of 0.043 for n = 1,000.
+
+![Reference calibration](figures/reference_calibration.png)
+![Score distributions](figures/score_distributions.png)
 
 **Typicality steps.** Typicality's percentile moves in steps for the one-output models because a column's density has only about 130 distinct values across 1.35M molecules (int8 density levels). Ties cannot spread out into a uniform distribution. Mid-rank centres them rather than biasing them upward.
 
-**Redundancy.** For single-output models typicality and extremity are nearly redundant (Spearman ρ from −0.85 to −0.95 on the example models, measured before the per-column percentiles): a value far from the centre is almost always a rare value.
+**Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.59 and −0.38).
+
+![Score correlations](figures/score_correlations.png)
+
+**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The artifacts are 36–188 MB per model (the largest, the 3-output cytotoxicity model with its training sets).
 
 ## Decisions to review
 
@@ -61,7 +74,7 @@ set's own typical value and often saturates. That is honest — the training set
 thousand molecules against a 1.35M-molecule library, so almost any query is
 farther from them than their molecules are from each other — but it leaves
 the calibrated score with little resolution once everything is "far", which
-is why `trn_tanimoto_raw` is reported alongside it. The figure predates the physchem and match scores and shows the old column names.
+is why `trn_tanimoto_raw` is reported alongside it.
 Drugs are the closest set for eos4e40 (E. coli), whose training data is a
 drug-like screen; the synthetic set is the farthest for every model.
 
@@ -75,7 +88,6 @@ drug-like screen; the synthetic set is the farthest for every model.
 
 Reference modality:
 
-- [ ] Regenerate the example outputs and figures (`scripts/run_all_scores.sh`, `scripts/figures/*.py`): they predate the per-column percentiles and the removal of support, consistency and signal.
 - [ ] Build the match keys for the real library (`eosquality build`) and upload the library folder.
 - [ ] Raise the feature-selection cap from 10 to around 30 columns.
 - [ ] Decide on typicality/extremity redundancy (see Decisions to review).

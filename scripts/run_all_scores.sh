@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fit + run every model present in data/fit_examples/ against every
-# matching 1000-molecule query in data/run_examples/, using *all* quality
-# scores. A model with training sets in
+# matching 1000-molecule query in data/run_examples/, using every quality
+# score. A model with training sets in
 # data/training_examples/training_<eos>_v1/ also gets the training scores
 # (and the reference scores then cover only its selected training columns).
 #
@@ -9,6 +9,7 @@
 #   output/artifacts_<eos>_v1/                        per-model fit artifacts
 #   output/scores_<dataset>_<eos>_v1.csv              per-(model, dataset) scores
 #   output/scores_<dataset>_<eos>_v1.training_details.csv   (with training sets)
+#   output/scores_<dataset>_<eos>_v1.reference_details.csv  (per-column typicality, extremity)
 #
 # Auto-discovers both the model list and the per-model query list — no
 # hardcoded MODELS / DATASETS arrays. To skip a model, remove its fit
@@ -63,7 +64,8 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
         OUTPUT="$OUT_DIR/scores_${DATASET}_${EOS}_v1.csv"
 
         echo "==> [$EOS] eosquality run ($DATASET) → $OUTPUT"
-        rm -f "$OUTPUT" "${OUTPUT%.csv}.training_details.csv"
+        rm -f "$OUTPUT" "${OUTPUT%.csv}.training_details.csv" \
+            "${OUTPUT%.csv}.reference_details.csv"
         eosquality run \
             -i "$QUERY_INPUT" \
             -a "$ARTIFACTS" \
