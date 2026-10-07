@@ -150,7 +150,7 @@ def run_reference(
             st.summary = (
                 f"{query_repr.shape[0]:,} molecules · {query_repr.shape[1]} feature(s)"
             )
-        metadata["n_reference"] = len(eq._shared.reference_ids)
+        metadata["n_reference"] = eq._shared.metadata.n_samples
         for name, component in components.items():
             column = score_name(name)
             with steps(f"Score: {column}") as st:

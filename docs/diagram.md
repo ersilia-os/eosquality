@@ -58,7 +58,7 @@ One subfolder per modality; either or both may be present.
     shared/
       schema.json  scaler.json  binary_class_freq.json
       metadata.json                       # n_samples, library_id, library_path, format_version, …
-      reference_ids.json  selected_columns.json
+      selected_columns.json
     typicality/   state.json  count_luts.npy  reference_self_aggregates.npy  metadata.json
     extremity/    state.json  column_tables.npz  reference_self_aggregates.npy  metadata.json
     match/        state.json  metadata.json        # counts only; the keys live in the library folder

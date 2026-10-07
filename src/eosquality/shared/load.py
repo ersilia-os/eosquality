@@ -50,8 +50,6 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
         scaler_params = json.load(f)
     with open(folder / "binary_class_freq.json") as f:
         binary_class_freq = json.load(f)
-    with open(folder / "reference_ids.json") as f:
-        reference_ids = json.load(f)
     with open(folder / "selected_columns.json") as f:
         selected_columns = list(json.load(f)["selected_columns"])
 
@@ -63,7 +61,6 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
         scaler_params=scaler_params,
         binary_class_freq=binary_class_freq,
         metadata=metadata,
-        reference_ids=reference_ids,
         selected_columns=selected_columns,
     )
 
