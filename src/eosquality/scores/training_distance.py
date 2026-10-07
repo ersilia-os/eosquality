@@ -43,6 +43,7 @@ import pandas as pd
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import _cdf_score, _sorted_finite
 from eosquality.scores._training_helpers import (
+    K_NEIGHBORS,
     SUMMARY_QUANTILE,
     TrainingQuery,
     _columns_summary,
@@ -54,14 +55,9 @@ from eosquality.utils.logging import logger
 SUBFOLDER = "training_distance"
 STATE_FILE = "state.json"
 LOO_FILE = "loo_mean_distances.npz"
-# Nearest training neighbours averaged per (molecule, column), and reported
-# in the details table. Capped by the column's precomputed self-kNN.
-K_NEIGHBORS = 5
-
-# The training details table, one row per query. ``trn_difficulty`` is
-# inserted after ``trn_tanimoto_raw`` when fitted. ``nn_*`` describe the
-# K_NEIGHBORS nearest training molecules over all columns, closest first,
-# "|"-separated (``nn_columns``: ";" between the columns of one molecule).
+# The columns of this score's details table, one row per query. ``nn_*``
+# describe the K_NEIGHBORS nearest training molecules over all columns, closest
+# first, "|"-separated (``nn_columns``: ";" between the columns of one molecule).
 DETAIL_COLUMNS = [
     "key",
     "input",
@@ -269,6 +265,16 @@ class TrainingDistance(ScoreComponent):
         bool
         """
         return self._training is not None and self._loo is not None
+
+    @property
+    def fit_summary(self) -> str:
+        """One line for the fit log.
+
+        Returns
+        -------
+        str
+        """
+        return f"leave-one-out tables for {K_NEIGHBORS}-NN distances"
 
     @property
     def training_(self) -> TrainingFitState:

@@ -137,7 +137,7 @@ class TrainingPhyschem(ScoreComponent):
         TrainingPhyschemRunResult
         """
         self._check_fitted()
-        assert self._domains is not None
+        assert self._domains is not None and self._training is not None
         if features is None:
             features = TrainingQuery.from_frame(query)
         rows, names = features.rows, list(self._domains)
@@ -145,16 +145,17 @@ class TrainingPhyschem(ScoreComponent):
         shape = (len(query), len(names))
         raw = np.full(shape, np.nan)
         calibrated = np.full(shape, np.nan)
-        physchem = features.physchem if len(features.smiles) else None
-        for j, name in enumerate(names):
-            if physchem is None:
-                continue
-            domain = self._domains[name]
-            distance = domain.measure(physchem)
-            raw[rows, j] = distance
-            calibrated[rows, j] = _cdf_score(
-                distance, domain.sorted_distances, higher_is_higher=True
-            )
+        if len(features.smiles):
+            physchem = features.physchem
+            for j, name in enumerate(names):
+                domain = self._domains[name]
+                distance = domain.measure(
+                    physchem, self._training.columns[name].rows_of(features.smiles)
+                )
+                raw[rows, j] = distance
+                calibrated[rows, j] = _cdf_score(
+                    distance, domain.sorted_distances, higher_is_higher=True
+                )
         summary_distance = _columns_summary(raw)
         return TrainingPhyschemRunResult(
             score=pd.Series(
@@ -206,6 +207,18 @@ class TrainingPhyschem(ScoreComponent):
         bool
         """
         return self._training is not None and self._domains is not None
+
+    @property
+    def fit_summary(self) -> str:
+        """One line for the fit log.
+
+        Returns
+        -------
+        str
+        """
+        sizes = sorted({d.n_train for d in self.domains_.values()})
+        span = f"{sizes[0]:,}-{sizes[-1]:,}" if len(sizes) > 1 else f"{sizes[0]:,}"
+        return f"{len(self.domains_)} physchem domain(s) · {span} molecules"
 
     @property
     def domains_(self) -> dict[str, PhyschemDomain]:
