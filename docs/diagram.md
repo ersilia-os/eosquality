@@ -13,7 +13,7 @@ flowchart LR
     LIB -- "self-kNN, k = 5" --> KNN["<b>knn/</b><br/>5 neighbours per ref row<br/>mean FP distance"]
     SH --> KNN
 
-    SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>CDF of Q66"]
+    SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>per-column pct, Q66, CDF"]
     SH --> EXT["<b>Extremity</b><br/>|scaled| position<br/>CDF of Q66"]
     LIB -- "nearest analogue" --> SUP["<b>Support</b><br/>Tanimoto similarity of<br/>nearest library analogue · CDF"]
     KNN --> CON["<b>Consistency</b><br/>output L1 to FP neighbours<br/>CDF per FP-distance bin"]

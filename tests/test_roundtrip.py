@@ -20,7 +20,7 @@ def fitted(reference, library):
 def test_run_columns_and_ranges(fitted, query):
     scores = fitted.run(query).scores
     expected = [
-        "ref_typicality",
+        "ref_typicality_pct",
         "ref_typicality_raw",
         "ref_extremity_pct",
         "ref_extremity_raw",
@@ -37,7 +37,10 @@ def test_run_columns_and_ranges(fitted, query):
         scores["ref_support_log"], -np.log10(scores["ref_support"])
     )
     calibrated = scores[
-        [f"ref_{n}_pct" if n == "extremity" else f"ref_{n}" for n in REFERENCE]
+        [
+            f"ref_{n}_pct" if n in ("typicality", "extremity") else f"ref_{n}"
+            for n in REFERENCE
+        ]
     ]
     finite = calibrated.to_numpy()[np.isfinite(calibrated.to_numpy())]
     assert (finite > 0).all() and (finite <= 1).all()
@@ -72,7 +75,7 @@ def test_standalone_component_load(fitted, query, tmp_path):
     )
     typicality = Typicality.load(tmp_path / "art/reference_mode").run(query)
     np.testing.assert_array_equal(
-        typicality.score.to_numpy(), expected["ref_typicality"].to_numpy()
+        typicality.score.to_numpy(), expected["ref_typicality_pct"].to_numpy()
     )
 
 
@@ -140,7 +143,7 @@ def test_output_scores_run_without_smiles(reference, library, query):
         exclude=["ref_support", "ref_consistency", "ref_signal"],
     )
     assert list(eq.run(query.drop(columns=["input"])).scores.columns) == [
-        "ref_typicality",
+        "ref_typicality_pct",
         "ref_typicality_raw",
         "ref_extremity_pct",
         "ref_extremity_raw",

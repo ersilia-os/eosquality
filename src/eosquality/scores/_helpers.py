@@ -53,6 +53,13 @@ def _nan_aggregate(per_feature: np.ndarray) -> np.ndarray:
 _QUANTILE_CHUNK = 262_144
 
 
+def _aggregate_percentiles(per_feature_pct: np.ndarray) -> np.ndarray:
+    """Per-row Q66 of the per-feature percentiles (NaN where none is finite)."""
+    if per_feature_pct.shape[1] == 0:
+        return np.full(per_feature_pct.shape[0], np.nan)
+    return _row_nanquantile(per_feature_pct, AGGREGATE_QUANTILE)
+
+
 def _row_nanquantile(values: np.ndarray, q: float) -> np.ndarray:
     """Row-wise ``np.nanquantile(values, q, axis=1)`` (linear method), vectorised.
 

@@ -198,11 +198,11 @@ def run_reference(
     Returns
     -------
     pandas.DataFrame or None
-        The reference details table (per-column extremity, one row per query),
-        or None when extremity is not fitted.
+        The reference details table (per-column typicality and extremity, one
+        row per query), or None when neither is fitted.
     """
     assert eq._shared is not None
-    details = None
+    results: dict[str, Any] = {}
     needs_knn = eq.support is not None or eq.consistency is not None
     steps = console.Steps(1 + needs_knn + len(components))
     with console.section("Reference modality") as section:
@@ -221,8 +221,8 @@ def run_reference(
             column = score_name(name)
             columns[result.score.name] = result.score
             columns[result.score_raw.name] = result.score_raw
-            if name == "extremity":
-                details = _extremity_details(query, result)
+            if name in ("typicality", "extremity"):
+                results[name] = result
             if hasattr(result, "score_log"):
                 columns[f"{column}_log"] = result.score_log
             metadata.update({f"{column}_{k}": v for k, v in result.metadata.items()})
@@ -231,11 +231,25 @@ def run_reference(
                 f"raw mean={float(result.score_raw.mean()):.4f}"
             )
         section.summary = f"{len(components)} score(s)"
-    return details
+    return _reference_details(query, results) if results else None
 
 
-def _extremity_details(query: pd.DataFrame, result) -> pd.DataFrame:
-    """Per-column extremity of each query: ``<column>_extremity_raw`` / ``_pct``."""
+def _reference_details(query: pd.DataFrame, results: dict[str, Any]) -> pd.DataFrame:
+    """Per-column values of each query, ``<column>_<score>_raw`` / ``_pct``.
+
+    Parameters
+    ----------
+    query : pandas.DataFrame
+        Query predictions.
+    results : dict
+        Typicality and/or extremity run results, by component name.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``key``, ``input`` (when given), then per score and column the raw
+        value and the percentile on that column's reference distribution.
+    """
     keys = (
         query["key"].astype(str).tolist()
         if "key" in query.columns
@@ -244,9 +258,10 @@ def _extremity_details(query: pd.DataFrame, result) -> pd.DataFrame:
     parts = {"key": keys}
     if "input" in query.columns:
         parts["input"] = query["input"].tolist()
-    for name in result.per_feature.columns:
-        parts[f"{name}_extremity_raw"] = result.per_feature[name].to_numpy()
-        parts[f"{name}_extremity_pct"] = result.per_feature_pct[name].to_numpy()
+    for name, result in results.items():
+        for column in result.per_feature.columns:
+            parts[f"{column}_{name}_raw"] = result.per_feature[column].to_numpy()
+            parts[f"{column}_{name}_pct"] = result.per_feature_pct[column].to_numpy()
     return pd.DataFrame(parts)
 
 

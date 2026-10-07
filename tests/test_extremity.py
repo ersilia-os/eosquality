@@ -87,12 +87,17 @@ def test_save_load_keeps_the_tables(fitted, query, tmp_path):
     pd.testing.assert_frame_equal(before.reference_details, after.reference_details)
 
 
-def test_no_reference_details_without_extremity(reference, library):
+def test_no_reference_details_without_typicality_or_extremity(reference, library):
     eq = ErsiliaQuality().fit(
         reference,
         eos_id="eos0aaa",
         vector_index=library,
         max_features=4,
-        exclude=["ref_extremity", "ref_support", "ref_consistency", "ref_signal"],
+        exclude=[
+            "ref_typicality",
+            "ref_extremity",
+            "ref_consistency",
+            "ref_signal",
+        ],
     )
     assert eq.run(reference.head(5)).reference_details is None

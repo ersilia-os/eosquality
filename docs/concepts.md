@@ -47,7 +47,13 @@ The same rule applies to every score:
 
 ### Typicality (density)
 
-At fit time, each selected column is quantised to int8 (`round(scaled × 127)`), and a 256-slot count table is built from the reference. Per-feature typicality is `count(level) / max_count`: the most common level scores 1 and unseen levels score 0. The row aggregate is the 66th percentile over features (Q66), which keeps the aggregate from collapsing towards the mean as the number of features grows. That aggregate is then calibrated.
+Typicality asks how common each output value is among the reference library's values of that column.
+
+- **Per feature.** At fit time each selected column is quantised to int8 (`round(scaled × 127)`) and a 256-slot count table is built from the reference. The density of a value is `count(level) / max_count`: the most common level scores 1 and unseen levels score 0. For a binary column the majority class scores 1 and the minority class scores minority/majority; a constant column always scores 1.
+- **Whole model, raw.** `ref_typicality_raw` is the 66th percentile (Q66) of the per-feature densities across the output columns, in [0, 1]. The Q66 keeps the value from collapsing towards the mean as columns are added. The densities of different columns are not comparable (a smooth column with many levels has low densities everywhere, a binary one does not), so the raw value is not comparable across models.
+- **Per column, percentile.** Each column's density is placed on that column's own reference distribution (mid-rank percentile of the density among the reference library's values of that column; higher = more typical), so every column counts equally whatever its shape. The density takes at most 256 values per column, so this table is derived exactly from the count table and is not saved. These are `<column>_typicality_pct` in the reference details file, next to `<column>_typicality_raw`.
+- **Whole model, percentile.** `ref_typicality_pct` takes the Q66 of the per-column percentiles and maps it through the reference library's own distribution of that same statistic: ~0.5 for a typical reference molecule, near 1 for a molecule more typical than almost all of the library. The last step keeps the value uniform under the reference whatever the number of columns, so it is comparable across models.
+- **Resolution.** The int8 grid has 1/127 of the scaled range per level. A column with few distinct values, or a bulk compressed by the eosframes scaling, falls into few levels, so its percentiles are coarse (many ties, handled by mid-ranks).
 
 ### Extremity (position)
 
