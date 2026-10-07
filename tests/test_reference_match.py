@@ -80,3 +80,76 @@ def test_roundtrip_reads_the_keys_from_the_library(fitted, query, smiles, tmp_pa
     assert not list((tmp_path / "art/reference_mode/match").glob("*.npz"))
     loaded = ErsiliaQuality.load(tmp_path / "art")
     pd.testing.assert_frame_equal(before.scores, loaded.run(q).scores)
+
+
+def test_build_records_the_rdkit_version(library):
+    import json
+
+    from rdkit import __version__ as rdkit_version
+
+    meta = json.loads((library / "metadata.json").read_text())
+    assert meta["rdkit_version"] == rdkit_version
+
+
+def test_a_different_rdkit_version_is_refused(tmp_path, smiles, reference, library):
+    import json
+    import shutil
+
+    from eosquality.exceptions import IncompatibleArtifactsError
+
+    other = tmp_path / "lib"
+    shutil.copytree(library, other)
+    meta = json.loads((other / "metadata.json").read_text())
+    meta["rdkit_version"] = "1999.01.1"
+    (other / "metadata.json").write_text(json.dumps(meta))
+    with pytest.raises(IncompatibleArtifactsError, match="RDKit version mismatch"):
+        ReferenceLibrary.load(other).match_keys()
+    with pytest.raises(IncompatibleArtifactsError, match="1999.01.1"):
+        ErsiliaQuality().fit(reference, eos_id="eos0aaa", library=other)
+    # Without ref_match nothing reads the keys, so the version does not matter.
+    ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", library=other, exclude=["ref_match"]
+    )
+
+
+def test_a_library_without_a_recorded_version_is_not_checked(tmp_path, smiles):
+    import json
+
+    build_library(smiles[:10], tmp_path / "lib", "x")
+    meta_path = tmp_path / "lib" / "metadata.json"
+    meta = json.loads(meta_path.read_text())
+    del meta["rdkit_version"]
+    meta_path.write_text(json.dumps(meta))
+    assert len(ReferenceLibrary.load(tmp_path / "lib").match_keys()) == 2
+
+
+def test_an_interrupted_build_leaves_nothing_behind(tmp_path, smiles, monkeypatch):
+    out = tmp_path / "lib"
+
+    def boom(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as m:
+        m.setattr("eosquality.scores._match_keys._layers", boom)
+        with pytest.raises(KeyboardInterrupt):
+            build_library(smiles[:10], out, "x")
+    assert list(tmp_path.iterdir()) == []  # no folder, no temporary folder
+    build_library(smiles[:10], out, "x")  # a retry just works
+    assert sorted(p.name for p in out.iterdir()) == [
+        "connectivity_keys.npz",
+        "metadata.json",
+        "smiles.csv",
+    ]
+
+
+def test_build_only_writes_into_a_new_or_empty_folder(tmp_path, smiles):
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "keep.txt").write_text("x")
+    with pytest.raises(FileExistsError):
+        build_library(smiles[:10], full, "x")
+    assert [p.name for p in full.iterdir()] == ["keep.txt"]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    build_library(smiles[:10], empty, "x")
+    assert (empty / "metadata.json").is_file()

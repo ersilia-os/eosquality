@@ -3,7 +3,8 @@
 A library folder (``data/indices/<LIBRARY_ID>/``) holds:
 
 - ``smiles.csv`` — one ``smiles`` column, the library molecules in order;
-- ``metadata.json`` — ``library_name`` (its identity), ``n_samples``, build info;
+- ``metadata.json`` — ``library_name`` (its identity), ``n_samples``, the RDKit
+  version the keys were built with, build info;
 - ``connectivity_keys.npz`` — the sorted unique InChIKey connectivity layers of
   the library molecules and of their Murcko scaffolds, written once by
   ``eosquality build`` and used by ``ref_match`` / ``ref_scaffold``.
@@ -145,6 +146,28 @@ class ReferenceLibrary:
                 "reference library SMILES, in the same order."
             )
 
+    def _check_rdkit_version(self) -> None:
+        """Raise if RDKit differs from the one the match keys were built with.
+
+        Libraries built before the version was recorded are not checked.
+        """
+        stored = self.metadata.get("rdkit_version")
+        if not stored:
+            return
+        from rdkit import __version__ as current
+
+        if stored != current:
+            from eosquality.exceptions import IncompatibleArtifactsError
+
+            raise IncompatibleArtifactsError(
+                f"RDKit version mismatch: the reference library's match keys were "
+                f"built with RDKit {stored}, but this environment has RDKit "
+                f"{current}. InChIKeys and scaffolds can differ between RDKit "
+                f"versions, which would silently corrupt ref_match and "
+                f"ref_scaffold. Install RDKit {stored}, or rebuild the library "
+                "with 'eosquality build' (or exclude ref_match)."
+            )
+
     def match_keys(self) -> tuple[np.ndarray, np.ndarray]:
         """Sorted unique connectivity layers of the molecules and of their scaffolds.
 
@@ -154,6 +177,7 @@ class ReferenceLibrary:
             ``(molecules, scaffolds)``.
         """
         if self._keys is None:
+            self._check_rdkit_version()
             file = self.path / KEYS_FILE
             if not file.is_file():
                 raise FileNotFoundError(

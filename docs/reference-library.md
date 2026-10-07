@@ -41,10 +41,10 @@ When an artifact is fit against a custom library (`library=` in the Python API),
 | file | content |
 |---|---|
 | `smiles.csv` | the library SMILES, in order; a model's reference predictions must be for exactly these molecules, in this order |
-| `metadata.json` | `library_name` (the identity), `n_samples`, number of keys, eosquality version, build timestamp |
+| `metadata.json` | `library_name` (the identity), `n_samples`, number of keys, `rdkit_version` (the RDKit the keys were built with), eosquality version, build timestamp |
 | `connectivity_keys.npz` | the sorted unique InChIKey connectivity layers of the (standardised) molecules and of their Murcko scaffolds, for `ref_match` / `ref_scaffold` |
 
-**Version pinning.** The connectivity keys depend on the RDKit version (InChI generation and scaffold perception can change between releases). A library is built once with a pinned RDKit, and its keys are shipped with it; rebuild the library when RDKit is upgraded.
+**Version pinning.** The connectivity keys depend on the RDKit version (InChI generation and scaffold perception can change between releases). The build records the RDKit version in `metadata.json`, and reading the keys (at `fit` and at `run`) raises `IncompatibleArtifactsError` if the installed RDKit differs, rather than returning keys that may disagree. Install the recorded RDKit, rebuild the library, or exclude `ref_match`. Libraries built before the version was recorded are not checked.
 
 ## Releasing a new library (maintainers)
 

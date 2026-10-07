@@ -36,7 +36,7 @@ The query sets:
   training sets, the candidates are first restricted to the columns that have
   one (41 of eos7m30's 49), and both modalities then use the same 10.
 - **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
-- **The match flags** say a structure or scaffold is in the library (or a training set), not that the model's prediction for it is right. Their keys depend on the RDKit version the library was built with.
+- **The match flags** say a structure or scaffold is in the library (or a training set), not that the model's prediction for it is right. Their keys depend on the RDKit version the library was built with: a different installed RDKit is refused, not silently accepted.
 - **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality setup`.
 - **Training-set quality is not assessed.** The loader standardises SMILES,
   merges duplicates and reports how many rows it dropped or merged, but a set
