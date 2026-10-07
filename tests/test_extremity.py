@@ -27,7 +27,7 @@ def test_each_column_is_uniform_on_the_reference(fitted, reference):
 def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.extremity.run(reference).score
     assert score.mean() == pytest.approx(0.5, abs=0.01)
-    assert fitted.extremity.reference_extremity_ == pytest.approx(0.5, abs=0.01)
+    assert fitted.extremity.anchor_ == pytest.approx(0.5, abs=0.01)
 
 
 def test_raw_is_the_q66_of_the_per_column_values(fitted, query):

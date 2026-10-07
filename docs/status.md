@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 8, training format 11. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 9, training format 11. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
 
 ## Example results
 

@@ -88,7 +88,7 @@ def fit_reference(
         for name in requested:
             with steps(f"Score: {score_name(name)}"):
                 setattr(eq, name, fitters[name]())
-                anchor = getattr(getattr(eq, name), f"reference_{name}_", None)
+                anchor = getattr(getattr(eq, name), "anchor_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
         section.summary = f"{len(requested)} score(s) fitted"
 

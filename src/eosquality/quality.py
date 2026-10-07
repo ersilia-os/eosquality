@@ -383,7 +383,7 @@ class ErsiliaQuality:
             raise RuntimeError(
                 f"reference_{score} is only defined when {score} has been fit."
             )
-        return getattr(component, f"reference_{score}_")
+        return component.anchor_
 
     def _reset(self) -> None:
         """Drop every fitted component (a re-fit replaces all of them)."""

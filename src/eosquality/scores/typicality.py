@@ -33,248 +33,67 @@ derived exactly from the count LUT (:func:`percentile_luts`) and is not saved.
 
 from __future__ import annotations
 
-import json
 import pathlib
-import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
-from eosquality.schema.infer import validate_against_schema
-from eosquality.scores._base import ScoreComponent, read_json, require_file
-from eosquality.scores._helpers import (
-    _aggregate_percentiles,
-    _make_query_repr,
-    _nan_aggregate,
-    _reference_repr,
-    _resolve_shared,
-    _score_from_aggregates,
-    _sorted_finite,
-)
-from eosquality.shared.state import SharedFitState
-from eosquality.utils.logging import logger
+from eosquality.scores._base import require_file
+from eosquality.scores._helpers import _nan_aggregate
+from eosquality.scores._percentile_score import PercentileScore
 
 _INT8_MAX_VAL = 127
 _LUT_SIZE = 256
 _LUT_OFFSET = 128  # lut index = int8 + offset; the slot at index 0 is the NaN sentinel
 SUBFOLDER = "typicality"
-STATE_FILE = "state.json"
-SELF_AGGREGATES_FILE = "reference_self_aggregates.npy"
+COUNT_LUTS_FILE = "count_luts.npy"
 
 
-@dataclass
-class TypicalityRunResult:
-    """Result returned by :meth:`Typicality.run`."""
-
-    score: pd.Series  # (n_query,) whole-model typicality percentile, in (0, 1]
-    score_raw: pd.Series  # (n_query,) Q66 of the per-feature values, in [0, 1]
-    per_feature: pd.DataFrame  # (n_query, n_features) count / max count
-    per_feature_pct: pd.DataFrame  # (n_query, n_features) per-column percentiles
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-class Typicality(ScoreComponent):
+class Typicality(PercentileScore):
     """Density-based per-feature typicality scorer.
 
-    Fitted state:
+    Fitted state, beside the whole-model CDF table of
+    :class:`~eosquality.scores._percentile_score.PercentileScore`:
 
     - per-column int8 count LUTs, ``(256, n_features)``: reference counts per
       level per column, built at fit time (saved);
     - ``pct_luts_`` — ``(256, n_features)`` per-column percentile of each
-      level, derived from the counts (not saved);
-    - the ascending reference per-row Q66 aggregates of the per-column
-      percentiles: the CDF table that maps the aggregate to the score;
-    - ``reference_typicality_`` — mean reference-as-query calibrated
-      typicality. ≈ 0.5 by construction; a sanity-check anchor.
+      level, derived from the counts (not saved).
 
     Depends only on :class:`SharedFitState` — no reference library required.
     """
 
     NAME = SUBFOLDER
+    SCORE = "ref_typicality"
 
     def __init__(self) -> None:
         super().__init__()
         self._count_luts: np.ndarray | None = None  # (256, n_features)
         self._pct_luts: np.ndarray | None = None  # (256, n_features), derived
-        self._sorted_self_aggregates: np.ndarray | None = None  # (n_ref,)
-        self._reference_typicality: float | None = None
 
-    # ------------------------------------------------------------------
-    # Fit
-    # ------------------------------------------------------------------
-
-    def fit(
-        self,
-        reference: pd.DataFrame,
-        *,
-        eos_id: str | None = None,
-        version: str | None = None,
-        shared: SharedFitState | None = None,
-    ) -> Typicality:
-        """Build the int8 density LUTs and the Q66 calibration table.
-
-        Parameters
-        ----------
-        reference : pandas.DataFrame
-            Predictions on the reference library.
-        eos_id, version : str, optional
-            Model id and version, needed only to fit ``shared`` here.
-        shared : SharedFitState, optional
-            Pre-fit shared state (as passed by :class:`ErsiliaQuality`).
-
-        Returns
-        -------
-        Typicality
-            ``self``, fitted.
-        """
-        t0 = time.perf_counter()
-        shared = _resolve_shared(
-            reference,
-            shared=shared,
-            eos_id=eos_id,
-            version=version,
-            component="Typicality",
-        )
-        ref_scaled = _reference_repr(shared, reference)
-        count_luts = fit_typicality_luts(ref_scaled)
-        pct_luts = percentile_luts(count_luts)
-        ref_agg = _aggregate_percentiles(lookup_percentiles(ref_scaled, pct_luts))
-        sorted_self_aggregates = _sorted_finite(ref_agg, "Typicality")
-
-        self._shared = shared
-        self._count_luts = count_luts
-        self._pct_luts = pct_luts
-        self._sorted_self_aggregates = sorted_self_aggregates
-        self._reference_typicality = float(
-            np.nanmean(_score_from_aggregates(ref_agg, sorted_self_aggregates))
-        )
-        self._finish_fit(t0)
-        logger.debug(
-            f"Typicality fit | reference_typicality={self._reference_typicality:.4f}"
-            f" | duration={self._fit_duration_seconds:.3f}s"
-        )
-        return self
-
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
-
-    def run(
-        self,
-        query: pd.DataFrame,
-        *,
-        query_repr: np.ndarray | None = None,
-    ) -> TypicalityRunResult:
-        """Score query samples.
-
-        Parameters
-        ----------
-        query : pandas.DataFrame
-            The reference's numeric output columns.
-        query_repr : numpy.ndarray, optional
-            Pre-scaled, feature-selected query array; skips validation and scaling
-            (the orchestrator shares this work across scores).
-
-        Returns
-        -------
-        TypicalityRunResult
-            Calibrated score, Q66 aggregate, per-feature values and metadata.
-        """
-        self._check_fitted()
-        assert self._shared is not None
+    def _per_feature(self, scaled: np.ndarray) -> np.ndarray:
         assert self._count_luts is not None
+        return compute_typicality(scaled, self._count_luts)[0]
+
+    def _percentiles(self, scaled: np.ndarray, per_feature: np.ndarray) -> np.ndarray:
         assert self._pct_luts is not None
-        assert self._sorted_self_aggregates is not None
+        return lookup_percentiles(scaled, self._pct_luts)
 
-        if query_repr is None:
-            validate_against_schema(query, self._shared.schema)
-            query_repr = _make_query_repr(self._shared, query)
-
-        per_feature, raw_aggregate = compute_typicality(
-            scaled_values=query_repr,
-            count_luts=self._count_luts,
-        )
-        per_feature_pct = lookup_percentiles(query_repr, self._pct_luts)
-        score = _score_from_aggregates(
-            _aggregate_percentiles(per_feature_pct), self._sorted_self_aggregates
-        )
-        idx = list(query.index)
-        columns = list(self._shared.selected_columns)
-        return TypicalityRunResult(
-            score=pd.Series(score, index=idx, name="ref_typicality_pct"),
-            score_raw=pd.Series(raw_aggregate, index=idx, name="ref_typicality_raw"),
-            per_feature=pd.DataFrame(per_feature, index=idx, columns=columns),
-            per_feature_pct=pd.DataFrame(per_feature_pct, index=idx, columns=columns),
-            metadata={
-                "anchor": self._reference_typicality,
-            },
-        )
-
-    # ------------------------------------------------------------------
-    # Save / load
-    # ------------------------------------------------------------------
-
-    def _save_own(self, folder: pathlib.Path) -> None:
-        """Write ``state.json`` (baseline + per-column LUTs) and the CDF array."""
-        assert self._shared is not None
-        assert self._count_luts is not None
-        assert self._sorted_self_aggregates is not None
-        np.save(folder / SELF_AGGREGATES_FILE, self._sorted_self_aggregates)
-        column_names = list(self._shared.selected_columns)
-        payload = {
-            "reference_typicality": self._reference_typicality,
-            "column_names": column_names,
-            "count_luts": {
-                col: self._count_luts[:, j].astype(int).tolist()
-                for j, col in enumerate(column_names)
-            },
-        }
-        with open(folder / STATE_FILE, "w") as f:
-            json.dump(payload, f)
-
-    def _load_own(self, folder: pathlib.Path) -> None:
-        assert self._shared is not None
-        payload = read_json(folder / STATE_FILE, self.NAME)
-        column_names = list(self._shared.selected_columns)
-        if payload["column_names"] != column_names:
-            raise ValueError(
-                f"typicality/{STATE_FILE} column_names do not match "
-                "shared selected columns."
-            )
-        self._count_luts = np.stack(
-            [
-                np.asarray(payload["count_luts"][col], dtype=np.int64)
-                for col in column_names
-            ],
-            axis=1,
-        ).reshape(_LUT_SIZE, len(column_names))
+    def _fit_columns(self, scaled: np.ndarray, columns: list[str]) -> None:
+        self._count_luts = fit_typicality_luts(scaled)
         self._pct_luts = percentile_luts(self._count_luts)
-        self._sorted_self_aggregates = np.load(
-            require_file(folder / SELF_AGGREGATES_FILE, self.NAME)
-        )
-        self._reference_typicality = float(payload["reference_typicality"])
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
+    def _save_columns(self, folder: pathlib.Path) -> dict[str, Any]:
+        assert self._count_luts is not None
+        np.save(folder / COUNT_LUTS_FILE, self._count_luts)
+        return {}
 
-    @property
-    def is_fitted_(self) -> bool:
-        """Whether the component is fitted (or loaded).
+    def _load_columns(self, folder: pathlib.Path, state: dict[str, Any]) -> None:
+        self._count_luts = np.load(require_file(folder / COUNT_LUTS_FILE, self.NAME))
+        self._pct_luts = percentile_luts(self._count_luts)
 
-        Returns
-        -------
-        bool
-        """
-        return (
-            self._shared is not None
-            and self._count_luts is not None
-            and self._pct_luts is not None
-            and self._sorted_self_aggregates is not None
-            and self._reference_typicality is not None
-        )
+    def _has_columns(self) -> bool:
+        return self._count_luts is not None and self._pct_luts is not None
 
     @property
     def pct_luts_(self) -> np.ndarray:
@@ -288,18 +107,6 @@ class Typicality(ScoreComponent):
         self._check_fitted()
         assert self._pct_luts is not None
         return self._pct_luts
-
-    @property
-    def reference_typicality_(self) -> float:
-        """Mean calibrated typicality of the reference (about 0.5).
-
-        Returns
-        -------
-        float
-        """
-        self._check_fitted()
-        assert self._reference_typicality is not None
-        return self._reference_typicality
 
 
 # ---------------------------------------------------------------------------

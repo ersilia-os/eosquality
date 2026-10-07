@@ -33,7 +33,7 @@ def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.typicality.run(reference).score
     assert score.name == "ref_typicality_pct"
     assert score.mean() == pytest.approx(0.5, abs=0.01)
-    assert fitted.typicality.reference_typicality_ == pytest.approx(0.5, abs=0.01)
+    assert fitted.typicality.anchor_ == pytest.approx(0.5, abs=0.01)
 
 
 def test_raw_is_the_q66_of_count_over_max(fitted, reference):
