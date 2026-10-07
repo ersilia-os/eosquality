@@ -1,4 +1,4 @@
-"""Redundancy check: Spearman correlation between the five calibrated scores.
+"""Redundancy check: Spearman correlation between the calibrated scores.
 
 One heatmap per model, computed over all of that model's queries (every
 query set pooled). Off-diagonal values near 0 mean the scores carry
@@ -18,9 +18,6 @@ stylia.set_style("ersilia")
 ABBREV = {
     "typicality": "Typ",
     "extremity": "Ext",
-    "support": "Sup",
-    "consistency": "Con",
-    "signal": "Sig",
 }
 
 

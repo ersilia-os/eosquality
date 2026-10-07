@@ -12,8 +12,6 @@ training sets. Public names are the output columns and the values accepted
 by ``exclude`` (``--exclude`` in the CLI).
 """
 
-# Nearest neighbours per molecule (FP kNN of support and consistency).
-N_NEIGHBORS = 5
 # Feature-selection cap of the shared state (``fit_shared``).
 DEFAULT_MAX_FEATURES = 10
 
@@ -21,9 +19,7 @@ DEFAULT_MAX_FEATURES = 10
 SCORE_ORDER: tuple[str, ...] = (
     "typicality",
     "extremity",
-    "support",
-    "consistency",
-    "signal",
+    "match",
 )
 # Training-modality components (present iff training sets were fit).
 TRAINING_ORDER: tuple[str, ...] = (
@@ -36,25 +32,24 @@ TRAINING_ORDER: tuple[str, ...] = (
 SCORE_NAMES: dict[str, str] = {
     "typicality": "ref_typicality",
     "extremity": "ref_extremity",
-    "support": "ref_support",
-    "consistency": "ref_consistency",
-    "signal": "ref_signal",
+    "match": "ref_match",
     "training_distance": "trn_tanimoto",
     "training_physchem": "trn_physchem",
     "training_match": "trn_match",
 }
-# Scores that emit a second output column of their own, for display: trn_match
-# also writes trn_scaffold.
-ALSO_EMITS: dict[str, tuple[str, ...]] = {"trn_match": ("trn_scaffold",)}
+# Scores that emit a second output column of their own, for display: the match
+# scores also write the scaffold flag.
+ALSO_EMITS: dict[str, tuple[str, ...]] = {
+    "ref_match": ("ref_scaffold",),
+    "trn_match": ("trn_scaffold",),
+}
 COMPONENTS: dict[str, str] = {score: comp for comp, score in SCORE_NAMES.items()}
 REFERENCE_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in SCORE_ORDER)
 TRAINING_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in TRAINING_ORDER)
 ALL_SCORES: tuple[str, ...] = REFERENCE_SCORES + TRAINING_SCORES
 
-# Scores that need the vector index at fit time (Signal reads the library's
-# descriptor matrices from the index folder; it never queries the index).
-INDEX_AWARE = frozenset({"support", "consistency", "signal"})
-KNN_USERS = frozenset({"support", "consistency"})
+# Scores that read the reference library at fit and run time.
+LIBRARY_USERS = frozenset({"match"})
 
 
 def score_name(component: str) -> str:
@@ -63,12 +58,12 @@ def score_name(component: str) -> str:
     Parameters
     ----------
     component : str
-        Internal component name, e.g. ``"support"``.
+        Internal component name, e.g. ``"match"``.
 
     Returns
     -------
     str
-        e.g. ``"ref_support"``.
+        e.g. ``"ref_match"``.
     """
     return SCORE_NAMES[component]
 

@@ -1,4 +1,4 @@
-"""Shared fixtures: a tiny custom library (index + descriptors) and synthetic model outputs.
+"""Shared fixtures: a tiny custom library (SMILES + match keys) and synthetic model outputs.
 
 Built once per test session from ``tests/fixtures/smiles_700.csv`` (a random
 sample of the canonical reference library): the first 600 molecules form
@@ -17,8 +17,7 @@ import pytest
 from rdkit import Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors
 
-from eosquality.basic_descriptors import BasicDescriptors
-from eosquality.vectorindex import VectorIndex
+from eosquality.cli.build import build_library
 
 DATA = pathlib.Path(__file__).parent / "fixtures"
 N_REF = 600
@@ -58,12 +57,9 @@ def smiles() -> list[str]:
 
 @pytest.fixture(scope="session")
 def library(tmp_path_factory, smiles) -> pathlib.Path:
-    """Custom index + physchem + MACCS over the first N_REF molecules."""
+    """Custom library folder (SMILES, metadata, match keys) of the first N_REF molecules."""
     out = tmp_path_factory.mktemp("library")
-    ref = smiles[:N_REF]
-    VectorIndex.build(ref, out, max_k=10, library_name="test_library")
-    BasicDescriptors.build_physchem(ref, out)
-    BasicDescriptors.build_maccs(ref, out)
+    build_library(smiles[:N_REF], out, "test_library")
     return out
 
 

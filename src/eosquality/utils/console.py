@@ -320,6 +320,23 @@ def median_summary(values) -> str:
     return f"median {float(np.median(finite)):.3f}"
 
 
+def share_summary(flags) -> str:
+    """``"31% of 1,000"``: the share of ones among the known values of a flag column.
+
+    Parameters
+    ----------
+    flags : pandas.Series
+        A 1 / 0 column, with NA where the question has no answer.
+
+    Returns
+    -------
+    str
+        ``"no valid rows"`` when every value is missing.
+    """
+    known = flags.dropna()
+    return f"{known.mean():.0%} of {len(known):,}" if len(known) else "no valid rows"
+
+
 def detail(rows, *, indent: int = 6) -> None:
     """Borderless block of dim right-aligned labels and values (shown verbatim).
 

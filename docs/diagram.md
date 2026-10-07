@@ -6,20 +6,16 @@
 flowchart LR
     subgraph inputs[Inputs]
         REF["Model predictions on the<br/>reference library<br/><i>key, input, outputs…</i>"]
-        LIB[("Reference library<br/>Morgan FPSim2 index · self-kNN<br/>physchem · MACCS")]
+        LIB[("Reference library folder<br/>smiles.csv · metadata.json<br/>connectivity_keys.npz")]
     end
 
-    REF --> SH["<b>shared/</b><br/>schema · eosframes scaler<br/>feature selection (≤10 medoids)<br/>80/10/10 split · scaled ref matrix"]
-    LIB -- "self-kNN, k = 5" --> KNN["<b>knn/</b><br/>5 neighbours per ref row<br/>mean FP distance"]
-    SH --> KNN
+    REF --> SH["<b>shared/</b><br/>schema · eosframes scaler<br/>feature selection (≤10 medoids)"]
+    LIB -- "check: same molecules, same order" --> SH
 
     SH --> TYP["<b>Typicality</b><br/>int8 density LUTs<br/>per-column pct, Q66, CDF"]
-    SH --> EXT["<b>Extremity</b><br/>|scaled| position<br/>CDF of Q66"]
-    LIB -- "nearest analogue" --> SUP["<b>Support</b><br/>Tanimoto similarity of<br/>nearest library analogue · CDF"]
-    KNN --> CON["<b>Consistency</b><br/>output L1 to FP neighbours<br/>CDF per FP-distance bin"]
-    SH --> CON
-    SH --> SIG["<b>Signal</b> (provisional)<br/>XGBoost physchem → outputs<br/>CDF of |SHAP| Gini on val"]
-    LIB -- "physchem" --> SIG
+    SH --> EXT["<b>Extremity</b><br/>|scaled| position<br/>per-column pct, Q66, CDF"]
+    LIB -- "connectivity keys" --> MAT["<b>Match</b> (ref_match, ref_scaffold)<br/>keys read from the library;<br/>the artifact keeps only the counts"]
+    SH --> MAT
 ```
 
 ## Fit — training modality
@@ -39,17 +35,16 @@ flowchart LR
 ```mermaid
 flowchart LR
     Q["Query predictions<br/><i>key, input, outputs…</i>"] --> SCALE["validate schema<br/>scale + select features<br/>(once)"]
-    Q --> FPQ["FPSim2 top-(k+1)<br/>drop self match<br/>(once)"]
-    LIB[("Reference library")] --> FPQ
-    SCALE --> TYP[Typicality] & EXT[Extremity] & CON[Consistency]
-    FPQ --> SUP[Support] & CON
-    Q -- SMILES --> SIG["Signal<br/>physchem → SHAP → Gini"]
-    Q -- SMILES --> TQ["TrainingQuery (once)<br/>standardise · physchem · Morgan<br/>per-column kNN"]
+    LIB[("Reference library<br/>connectivity keys")] --> MAT
+    SCALE --> TYP[Typicality] & EXT[Extremity]
+    Q -- SMILES --> MAT["Match<br/>standardise · connectivity layers<br/>set lookup"]
+    Q -- SMILES --> TQ["TrainingQuery (once)<br/>standardise · physchem<br/>per-column kNN"]
     TQ --> TDR["Training distance<br/>per column → 66th percentile"]
     TQ --> TPH["Training physchem<br/>per column → 66th percentile"]
     TQ --> TMA["Training match<br/>connectivity-layer lookup"]
     TDR & TPH & TMA --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
-    TYP & EXT & SUP & CON & SIG & TDR & TPH & TMA --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log; trn_match and trn_scaffold flags)"]
+    TYP & EXT --> RDET["&lt;output&gt;.reference_details.csv<br/>per-column typicality and extremity"]
+    TYP & EXT & MAT & TDR & TPH & TMA --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: pct + raw<br/>(+ match and scaffold flags)"]
 ```
 
 ## Save layout
@@ -62,16 +57,11 @@ One subfolder per modality; either or both may be present.
   reference_mode/                         # iff fitted with -r/--reference
     shared/
       schema.json  scaler.json  binary_class_freq.json
-      metadata.json                       # n_samples, library_id, vector_index_path, format_version, …
-      reference_ids.json  splits.json  selected_columns.json
-      reference_repr.npy                  # (n_ref, n_selected) scaled reference
-    knn/state.json                        # {"k": 5}; iff support or consistency
+      metadata.json                       # n_samples, library_id, library_path, format_version, …
+      reference_ids.json  selected_columns.json
     typicality/   state.json  reference_self_aggregates.npy  metadata.json
     extremity/    state.json  column_tables.npz  reference_self_aggregates.npy  metadata.json
-    support/      state.json  reference_nearest_similarities.npy  metadata.json
-    consistency/  state.json  reference_self_distances_per_bin.npz  metadata.json
-    signal/       learner.json  learner.ubj  umbrella.json  reference_self_aggregates.npy
-                  physchem_scaler.json  val_shap_attributions.npy  metadata.json
+    match/        state.json  metadata.json        # counts only; the keys live in the library folder
   training_mode/                          # iff fitted with -t/--training-sets
     training_sets/
       metadata.json                       # training_format_version, eos_id, version, columns
@@ -82,6 +72,6 @@ One subfolder per modality; either or both may be present.
     training_match/  connectivity_keys.npz  metadata.json  # trn_match, trn_scaffold
 ```
 
-Each component's `metadata.json` records only `component`, `fit_timestamp`, `fit_duration_seconds` and `k`.
+Each component's `metadata.json` records only `component`, `fit_timestamp`, and `fit_duration_seconds`.
 
-A standalone score class (e.g. `Support().fit(...).save(folder)`) writes its own subfolder plus the `shared/` (and `knn/`) folders it needs directly into `folder`. That is the same structure as one `reference_mode/`.
+A standalone score class (e.g. `Typicality().fit(...).save(folder)`) writes its own subfolder plus the `shared/` folder it needs directly into `folder`. That is the same structure as one `reference_mode/`.

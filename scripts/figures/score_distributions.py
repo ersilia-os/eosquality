@@ -3,9 +3,8 @@
 Each panel stacks one horizontal histogram-violin per model; the x-axis is
 the calibrated score in [0, 1] (or the raw value with ``--raw``, on a range
 shared down each column). Library-sample molecules should look flat
-(uniform); query sets far from the reference shift towards 0 for support,
-and wherever the model behaves unlike it does on the reference for the
-output-based scores.
+(uniform); query sets shift wherever the model behaves unlike it does on the
+reference.
 
     python scripts/figures/score_distributions.py [--scores-dir output/] [--raw]
 """

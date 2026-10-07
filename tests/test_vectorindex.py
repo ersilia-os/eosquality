@@ -15,7 +15,7 @@ def test_build_resumes_with_identical_inputs(tmp_path, smiles):
     assert vi.n_reference == 100
 
 
-def test_self_knn_excludes_self(library):
-    vi = VectorIndex.load(library)
+def test_self_knn_excludes_self(tmp_path, smiles):
+    vi = VectorIndex.build(smiles[:100], tmp_path / "idx", max_k=5)
     idx = vi.self_knn_indices(5)
     assert (idx != __import__("numpy").arange(len(idx))[:, None]).all()

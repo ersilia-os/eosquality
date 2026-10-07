@@ -27,16 +27,22 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from eosquality.scores._base import ScoreComponent, require_file
+from eosquality.scores._base import ScoreComponent
+from eosquality.scores._match_keys import (
+    KEYS_FILE,
+    _flags,
+    _layers,
+    _scaffold,  # noqa: F401  (re-exported: the scaffold helper used by the tests)
+    connectivity_layer,  # noqa: F401  (re-exported)
+    load_keys,
+    save_keys,
+    unique_keys,
+)
 from eosquality.scores._training_helpers import TrainingQuery
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
-from eosquality.utils import console
 
 SUBFOLDER = "training_match"
-KEYS_FILE = "connectivity_keys.npz"
-# Characters of an InChIKey that form its connectivity layer (first block).
-CONNECTIVITY_LENGTH = 14
 
 
 @dataclass
@@ -46,94 +52,6 @@ class TrainingMatchRunResult:
     match: pd.Series  # (n_query,) Int64: 1 / 0, NA for unparsable rows
     scaffold: pd.Series  # (n_query,) Int64: 1 / 0, NA for no scaffold
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-def connectivity_layer(smiles: str) -> str:
-    """InChIKey connectivity layer of a SMILES; ``""`` when it has none.
-
-    Parameters
-    ----------
-    smiles : str
-        A SMILES string.
-
-    Returns
-    -------
-    str
-        The first 14 characters of the InChIKey, or ``""`` for an empty or
-        unparsable structure.
-    """
-    from rdkit import Chem, rdBase
-
-    if not smiles:
-        return ""
-    with rdBase.BlockLogs():
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None or not mol.GetNumAtoms():
-            return ""
-        key = Chem.MolToInchiKey(mol)
-    return key[:CONNECTIVITY_LENGTH]
-
-
-def _scaffold(smiles: str) -> str:
-    """Murcko scaffold SMILES; ``""`` for acyclic molecules or on failure.
-
-    RDKit fails to canonicalise some scaffolds that keep a stereo double bond
-    next to a ring once the side chains are cut; those are retried without
-    stereo (the ring scaffold is the same).
-    """
-    from rdkit import Chem, rdBase
-    from rdkit.Chem.Scaffolds import MurckoScaffold
-
-    try:
-        with rdBase.BlockLogs():  # the failure prints an RDKit banner otherwise
-            return MurckoScaffold.MurckoScaffoldSmiles(smiles=smiles)
-    except RuntimeError:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return ""
-        Chem.RemoveStereochemistry(mol)
-        try:
-            return MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
-        except RuntimeError:
-            return ""
-
-
-def _layers(
-    smiles: list[str], label: str = "InChIKey layers"
-) -> tuple[np.ndarray, np.ndarray]:
-    """Connectivity layers of the molecules and of their Murcko scaffolds.
-
-    Parameters
-    ----------
-    smiles : list of str
-        Standardised SMILES.
-    label : str, optional
-        Progress-bar title.
-
-    Returns
-    -------
-    tuple of numpy.ndarray
-        ``(molecule layers, scaffold layers)``, both length ``len(smiles)``;
-        ``""`` where there is none.
-    """
-    molecules = np.empty(len(smiles), dtype=object)
-    scaffolds = np.empty(len(smiles), dtype=object)
-    with console.progress(label) as bar:
-        task = bar.add_task(label, total=len(smiles))
-        for i, s in enumerate(smiles):
-            molecules[i] = connectivity_layer(s)
-            scaffolds[i] = connectivity_layer(_scaffold(s))
-            bar.advance(task)
-    return molecules, scaffolds
-
-
-def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:
-    """1 / 0 for layers found in ``known``; NA where the layer is empty."""
-    present = np.array([bool(x) for x in layers], dtype=bool)
-    found = np.isin(layers, known)
-    return pd.Series(np.where(present, found.astype(int), 0), dtype="Int64").mask(
-        ~present
-    )
 
 
 class TrainingMatch(ScoreComponent):
@@ -171,8 +89,10 @@ class TrainingMatch(ScoreComponent):
             {s for n in training.column_names for s in training.columns[n].smiles}
         )
         molecules, scaffolds = _layers(smiles)
-        self._molecules = np.unique(molecules[molecules != ""]).astype(str)
-        self._scaffolds = np.unique(scaffolds[scaffolds != ""]).astype(str)
+        self._molecules, self._scaffolds = (
+            unique_keys(molecules),
+            unique_keys(scaffolds),
+        )
         self._finish_fit(t0)
         return self
 
@@ -217,15 +137,10 @@ class TrainingMatch(ScoreComponent):
 
     def _save_own(self, folder: pathlib.Path) -> None:
         assert self._molecules is not None and self._scaffolds is not None
-        np.savez(
-            folder / KEYS_FILE, molecules=self._molecules, scaffolds=self._scaffolds
-        )
+        save_keys(folder / KEYS_FILE, self._molecules, self._scaffolds)
 
     def _load_own(self, folder: pathlib.Path) -> None:
-        path = require_file(folder / KEYS_FILE, self.NAME)
-        with np.load(path, allow_pickle=False) as arrays:
-            self._molecules = arrays["molecules"]
-            self._scaffolds = arrays["scaffolds"]
+        self._molecules, self._scaffolds = load_keys(folder / KEYS_FILE, self.NAME)
 
     @property
     def is_fitted_(self) -> bool:

@@ -1,18 +1,17 @@
 """Common scaffolding for the per-score components.
 
-Every score class (Typicality, Extremity, Support, Consistency, Signal)
-persists the same three things around its own state: the shared fit
-state under ``<root>/shared/``, the kNN state under ``<root>/knn/`` (only
-for kNN users), and a ``metadata.json`` with fit bookkeeping in its own
-subfolder. :class:`ScoreComponent` owns that boilerplate so each score
-only implements its own ``_save_own`` / ``_load_own`` pair.
+Every score class persists the same two things around its own state: the
+shared fit state under ``<root>/shared/`` (reference scores that use it) and
+a ``metadata.json`` with fit bookkeeping in its own subfolder.
+:class:`ScoreComponent` owns that boilerplate so each score only implements
+its own ``_save_own`` / ``_load_own`` pair.
 
-Standalone use (``Support().fit(...).save(root)`` then
-``Support.load(root)``) writes and reads ``shared/`` itself. The
+Standalone use (``Typicality().fit(...).save(root)`` then
+``Typicality.load(root)``) writes and reads ``shared/`` itself. The
 :class:`~eosquality.quality.ErsiliaQuality` orchestrator instead writes
-``shared/`` and ``knn/`` once and passes the loaded states into each
-component's ``load(root, shared=..., knn=...)``, so the (large) shared
-state is serialised and deserialised only once per artifact.
+``shared/`` once and passes the loaded state into each component's
+``load(root, shared=...)``, so the (large) shared state is serialised and
+deserialised only once per artifact.
 """
 
 from __future__ import annotations
@@ -23,9 +22,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any, ClassVar
 
-from eosquality.knn.load import load_knn
-from eosquality.knn.save import save_knn
-from eosquality.knn.state import KnnFitState
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
 from eosquality.shared.state import SharedFitState
@@ -36,20 +32,17 @@ METADATA_FILE = "metadata.json"
 class ScoreComponent:
     """Base class for score components.
 
-    Subclasses set :attr:`NAME` (also the subfolder name), set
-    :attr:`USES_KNN` when they depend on :class:`KnnFitState`, implement
+    Subclasses set :attr:`NAME` (also the subfolder name), implement
     :attr:`is_fitted_`, :meth:`_save_own` and :meth:`_load_own`, and call
     :meth:`_finish_fit` at the end of ``fit``.
     """
 
     NAME: ClassVar[str] = ""
     USES_SHARED: ClassVar[bool] = True
-    USES_KNN: ClassVar[bool] = False
     USES_TRAINING: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self._shared: SharedFitState | None = None
-        self._knn: KnnFitState | None = None
         self._training = None  # TrainingFitState, for training-modality scores
         self._fit_duration_seconds: float | None = None
         self._fit_timestamp: str | None = None
@@ -68,7 +61,7 @@ class ScoreComponent:
     # ------------------------------------------------------------------
 
     def save(self, root: str | pathlib.Path) -> pathlib.Path:
-        """Persist ``shared/`` (+ ``knn/``) and this component's subfolder.
+        """Persist ``shared/`` and this component's subfolder.
 
         Parameters
         ----------
@@ -84,9 +77,6 @@ class ScoreComponent:
         if self.USES_SHARED:
             assert self._shared is not None
             save_shared(self._shared, root)
-        if self.USES_KNN:
-            assert self._knn is not None
-            save_knn(self._knn, root)
         if self.USES_TRAINING:
             from eosquality.training.state import save_training_state
 
@@ -94,7 +84,7 @@ class ScoreComponent:
         return self.save_component(root)
 
     def save_component(self, root: str | pathlib.Path) -> pathlib.Path:
-        """Persist only this component's own subfolder (no ``shared/``/``knn/``).
+        """Persist only this component's own subfolder (no ``shared/``).
 
         Used by :class:`~eosquality.quality.ErsiliaQuality`, which writes
         the shared upstream state once for all components.
@@ -117,7 +107,6 @@ class ScoreComponent:
             "component": self.NAME,
             "fit_timestamp": self._fit_timestamp,
             "fit_duration_seconds": float(self._fit_duration_seconds or 0.0),
-            "k": int(self._knn.k) if self.USES_KNN and self._knn is not None else None,
         }
         with open(folder / METADATA_FILE, "w") as f:
             json.dump(meta, f, indent=2)
@@ -129,22 +118,19 @@ class ScoreComponent:
         root: str | pathlib.Path,
         *,
         shared: SharedFitState | None = None,
-        knn: KnnFitState | None = None,
         training=None,
     ):
         """Reconstruct from ``<root>/``.
 
-        ``shared`` / ``knn`` / ``training`` may be passed in when already
+        ``shared`` / ``training`` may be passed in when already
         loaded (the orchestrator does this); otherwise they are read from disk.
 
         Parameters
         ----------
         root : str or pathlib.Path
-            Folder holding the component subfolder (and ``shared/`` / ``knn/``).
+            Folder holding the component subfolder (and ``shared/``).
         shared : SharedFitState, optional
             Already-loaded shared state.
-        knn : KnnFitState, optional
-            Already-loaded kNN state.
         training : TrainingFitState, optional
             Already-loaded training state (training-mode components).
 
@@ -161,15 +147,12 @@ class ScoreComponent:
             )
         if cls.USES_SHARED and shared is None:
             shared = load_shared(root)
-        if cls.USES_KNN and knn is None:
-            knn = load_knn(root)
         if cls.USES_TRAINING and training is None:
             from eosquality.training.state import load_training_state
 
             training = load_training_state(root)
         instance = cls()
         instance._shared = shared
-        instance._knn = knn if cls.USES_KNN else None
         instance._training = training if cls.USES_TRAINING else None
         instance._load_own(folder)
         meta_path = folder / METADATA_FILE
@@ -214,19 +197,6 @@ class ScoreComponent:
         self._check_fitted()
         assert self._shared is not None
         return self._shared
-
-    @property
-    def knn_(self) -> KnnFitState:
-        """The kNN state (kNN-using components only).
-
-        Returns
-        -------
-        KnnFitState
-        """
-        self._check_fitted()
-        if self._knn is None:
-            raise AttributeError(f"{type(self).__name__} does not use a kNN state.")
-        return self._knn
 
     @property
     def fit_duration_seconds_(self) -> float | None:

@@ -27,13 +27,14 @@ Fetch the library explicitly (useful for CI or airgapped setups)::
 
 For maintainers / advanced use
 ------------------------------
-``eosquality build`` rebuilds the vector index from a SMILES library CSV.
-It is a release tool — ordinary users should not need to run it. Use it
-to produce a new canonical library for the next major release, or to
-build a non-canonical index for internal testing and fit against it::
+``eosquality build`` prepares a reference-library folder (the SMILES, a
+metadata file and the connectivity keys of ``ref_match``) from a SMILES
+library CSV. It is a release tool — ordinary users should not need to run it.
+Use it to produce a new canonical library for the next major release, or to
+build a non-canonical library for internal testing and fit against it::
 
-    eosquality build --input library.csv --output /tmp/idx/ [--max-k 50]
-    EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/idx/ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
+    eosquality build --input library.csv --output /tmp/lib/
+    EOSQUALITY_REFERENCE_LIBRARY_PATH=/tmp/lib/ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/
 """
 
 import importlib.metadata

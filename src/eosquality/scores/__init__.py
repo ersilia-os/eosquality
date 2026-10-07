@@ -1,27 +1,19 @@
-"""Per-score components: Typicality, Extremity, Support, Consistency, Signal.
+"""Per-score components of the reference modality: Typicality, Extremity, Match.
 
 Each is independently fittable / runnable / saveable / loadable. Typicality
-and Extremity need only :class:`~eosquality.shared.state.SharedFitState` —
-they never touch the vector index. Support and Consistency add
-:class:`~eosquality.knn.state.KnnFitState`. Signal (provisional)
-needs the library folder for its descriptor matrices but not the kNN state.
+and Extremity need only :class:`~eosquality.shared.state.SharedFitState`;
+:class:`ReferenceMatch` also reads the reference library's match keys.
 """
 
-from eosquality.scores.consistency import Consistency, ConsistencyRunResult
 from eosquality.scores.extremity import Extremity, ExtremityRunResult
-from eosquality.scores.signal import Signal, SignalRunResult
-from eosquality.scores.support import Support, SupportRunResult
+from eosquality.scores.reference_match import ReferenceMatch, ReferenceMatchRunResult
 from eosquality.scores.typicality import Typicality, TypicalityRunResult
 
 __all__ = [
-    "Typicality",
-    "TypicalityRunResult",
-    "Support",
-    "SupportRunResult",
-    "Consistency",
-    "ConsistencyRunResult",
     "Extremity",
     "ExtremityRunResult",
-    "Signal",
-    "SignalRunResult",
+    "ReferenceMatch",
+    "ReferenceMatchRunResult",
+    "Typicality",
+    "TypicalityRunResult",
 ]

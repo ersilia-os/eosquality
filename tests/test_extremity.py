@@ -11,9 +11,9 @@ def fitted(reference, library):
     return ErsiliaQuality().fit(
         reference,
         eos_id="eos0aaa",
-        vector_index=library,
+        library=library,
         max_features=4,
-        exclude=["ref_typicality", "ref_support", "ref_consistency", "ref_signal"],
+        exclude=["ref_typicality", "ref_match"],
     )
 
 
@@ -91,13 +91,11 @@ def test_no_reference_details_without_typicality_or_extremity(reference, library
     eq = ErsiliaQuality().fit(
         reference,
         eos_id="eos0aaa",
-        vector_index=library,
+        library=library,
         max_features=4,
         exclude=[
             "ref_typicality",
             "ref_extremity",
-            "ref_consistency",
-            "ref_signal",
         ],
     )
     assert eq.run(reference.head(5)).reference_details is None

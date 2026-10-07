@@ -15,7 +15,7 @@ the content identity written into each library's ``metadata.json``
 folder, and the S3 path segment.
 
 A new reference library — adding or removing molecules, rebuilding the
-vector index with different Morgan parameters, or correcting SMILES in
+connectivity keys, or correcting SMILES in
 place — changes scores and therefore requires a major version bump of
 the package. Metadata-only edits (description, citation) do not bump.
 

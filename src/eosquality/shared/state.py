@@ -9,21 +9,15 @@ import numpy as np
 
 from eosquality.schema.models import Schema
 from eosquality.shared.metadata import FitMetadata
-from eosquality.shared.splitter import Split
 
 
 @dataclass
 class SharedFitState:
     """Schema + eosframes scaler + binary class freqs + metadata + reference ids
-    + canonical 80/10/10 split + selected feature subset.
+    + selected feature subset.
 
     Computed once per fit pass (by :func:`fit_shared`) and consumed by every
     score component. Persisted under ``<root>/shared/``.
-
-    The ``splits`` field carries the train / val / test row indices produced
-    by :class:`~eosquality.shared.splitter.Splitter` against ``n_samples``.
-    Scores that need a held-out slice (currently Signal) read these directly
-    so every consumer agrees on a single split per fit.
 
     The ``selected_columns`` field carries the post-reduction subset of
     feature column names. It is always a subset (or full copy) of
@@ -33,10 +27,9 @@ class SharedFitState:
 
     The ``ref_repr`` field carries the eosframes-scaled reference matrix
     projected onto ``selected_columns`` — shape ``(n_ref, n_selected)``.
-    Set by :func:`fit_shared` after the scaler runs and persisted by
-    :func:`save_shared` as ``shared/reference_repr.npy``; score fits reuse
-    it instead of re-scaling the reference, and Consistency reads it at run
-    time to compute output-space neighbor distances.
+    Set by :func:`fit_shared` after the scaler runs; score fits reuse it
+    instead of re-scaling the reference. It is not saved (``None`` after
+    loading): no score reads it at run time.
     """
 
     schema: Schema
@@ -44,7 +37,6 @@ class SharedFitState:
     binary_class_freq: dict[str, float]
     metadata: FitMetadata
     reference_ids: list[Any]
-    splits: Split
     selected_columns: list[str] = field(default_factory=list)
     ref_repr: np.ndarray | None = None
 

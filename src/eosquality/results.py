@@ -14,12 +14,11 @@ class RunResult:
 
     ``scores`` is a per-query DataFrame with the columns of each fitted
     score, in canonical order: ``ref_typicality_pct``, ``ref_typicality_raw``,
-    ``ref_extremity_pct``, ``ref_extremity_raw``, ``ref_support``,
-    ``ref_support_raw``, ``ref_support_log``, ``ref_consistency``,
-    ``ref_consistency_raw``, ``ref_signal``, ``ref_signal_raw``. The
-    calibrated column is in ``(0, 1]``; ``*_raw`` is the pre-calibration
-    value; ``ref_support_log = −log10(ref_support)``. Scores that were not
-    fit are absent.
+    ``ref_extremity_pct``, ``ref_extremity_raw``, ``ref_match`` and
+    ``ref_scaffold`` (1 / 0: the InChIKey connectivity layer of the molecule,
+    or of its Murcko scaffold, is in the reference library; the scaffold flag
+    is NA without one). The percentile column is in ``(0, 1]``; ``*_raw`` is
+    the pre-calibration value. Scores that were not fit are absent.
 
     Training-modality columns (when training sets were fit) follow:
     ``trn_tanimoto_pct`` (one whole-model value: the similarity percentile of
@@ -36,8 +35,7 @@ class RunResult:
 
     ``metadata`` has ``n_reference`` (reference modality) plus each score's
     run metadata with keys prefixed by the score name (e.g.
-    ``ref_support_k``, ``ref_consistency_n_fp_bins``,
-    ``trn_tanimoto_n_columns``).
+    ``ref_typicality_anchor``, ``trn_tanimoto_n_columns``).
 
     ``training_details`` (training modality only) has one row per query:
     the whole-model distances and the 5 nearest training molecules over all

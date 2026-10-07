@@ -82,7 +82,7 @@ class Extremity(ScoreComponent):
     - ``reference_extremity_`` — mean reference-as-query calibrated
       extremity. ≈ 0.5 by construction; a sanity-check anchor.
 
-    Depends only on :class:`SharedFitState` — no vector index required, no
+    Depends only on :class:`SharedFitState` — no reference library required, no
     per-column LUTs.
     """
 

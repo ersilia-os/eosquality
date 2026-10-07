@@ -241,12 +241,6 @@ def _emit(columns: dict, extras: dict, *series: pd.Series) -> None:
         extras[ser.name] = ser.to_numpy()
 
 
-def _share(flags: pd.Series) -> str:
-    """Console summary of a 1 / 0 flag column: the share of ones."""
-    known = flags.dropna()
-    return f"{known.mean():.0%} of {len(known):,}" if len(known) else "no valid rows"
-
-
 def run_training(
     eq, query: pd.DataFrame, columns: dict[str, pd.Series], metadata: dict[str, Any]
 ) -> pd.DataFrame | None:
@@ -297,7 +291,7 @@ def run_training(
             with steps(f"Score: {name}") as st:
                 result = instance.run(query, features)
                 st.summary = (
-                    _share(result.match)
+                    console.share_summary(result.match)
                     if component == "training_match"
                     else console.median_summary(result.score)
                 )

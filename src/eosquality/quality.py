@@ -1,8 +1,8 @@
 """ErsiliaQuality: thin orchestrator composing the per-score components.
 
 For users who want a one-stop fit/run interface, this class fits the
-shared state once, the kNN state once, and then each requested score on
-top. Each score remains independently saveable / loadable.
+shared state once and then each requested score on top. Each score remains
+independently saveable / loadable.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from eosquality import _artifacts, _reference_modality, _training_modality
 from eosquality._registry import (
     ALL_SCORES,
     DEFAULT_MAX_FEATURES,
-    INDEX_AWARE,
+    LIBRARY_USERS,
     SCORE_ORDER,
     TRAINING_ORDER,
     split_exclude,
@@ -29,13 +29,8 @@ from eosquality.exceptions import (
 )
 from eosquality.results import RunResult
 from eosquality.schema.infer import infer_schema
-from eosquality.scores._helpers import (
-    _resolve_vector_index,
-)
-from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
-from eosquality.scores.signal import Signal
-from eosquality.scores.support import Support
+from eosquality.scores.reference_match import ReferenceMatch
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.training_match import TrainingMatch
 from eosquality.scores.training_physchem import TrainingPhyschem
@@ -45,7 +40,6 @@ from eosquality.training import TrainingFitState
 from eosquality.utils import console
 from eosquality.utils.identifiers import validate_eos_id, validate_version
 from eosquality.utils.logging import logger
-from eosquality.vectorindex import VectorIndex
 
 __all__ = [
     "ALL_SCORES",
@@ -60,7 +54,7 @@ class ErsiliaQuality:
     Two modalities, each present only if its data was given at fit time:
 
     - **reference** — the model's predictions on the reference library
-      (typicality, extremity, support, consistency, signal);
+      (typicality, extremity, match);
     - **training** — the model's per-output-column training sets
       (training_distance, training_physchem, training_match).
     """
@@ -78,16 +72,13 @@ class ErsiliaQuality:
             logger.set_verbosity(True)
 
         self.typicality: Typicality | None = None
-        self.support: Support | None = None
-        self.consistency: Consistency | None = None
         self.extremity: Extremity | None = None
-        self.signal: Signal | None = None
+        self.match: ReferenceMatch | None = None
         self.training_distance: TrainingDistance | None = None
         self.training_physchem: TrainingPhyschem | None = None
         self.training_match: TrainingMatch | None = None
         self._shared: SharedFitState | None = None
         self._training: TrainingFitState | None = None
-        self._vector_index_cache: VectorIndex | None = None
         self.is_fitted_: bool = False
 
     # ------------------------------------------------------------------
@@ -103,7 +94,7 @@ class ErsiliaQuality:
         version: str = "v1",
         exclude: Iterable[str] = (),
         max_features: int | None = DEFAULT_MAX_FEATURES,
-        vector_index: str | pathlib.Path | None = None,
+        library: str | pathlib.Path | None = None,
     ) -> ErsiliaQuality:
         """Fit the reference modality, the training modality, or both.
 
@@ -126,12 +117,12 @@ class ErsiliaQuality:
             Model version, e.g. ``"v1"``.
         exclude : iterable of str, optional
             Scores not to fit, by public name (``ALL_SCORES``), e.g.
-            ``["ref_signal"]``.
+            ``["ref_match"]``.
         max_features : int, optional
             Cap on the output columns used by both modalities; ``None``
             disables it.
-        vector_index : str or pathlib.Path, optional
-            Reference library index folder (default: the resolved canonical
+        library : str or pathlib.Path, optional
+            Reference library folder (default: the resolved canonical
             library). For tests and custom libraries.
 
         Returns
@@ -171,7 +162,7 @@ class ErsiliaQuality:
                 reference,
                 eos_id=eos_id,
                 version=version,
-                vector_index=vector_index,
+                library=library,
                 scores=[c for c in SCORE_ORDER if c not in skip_reference],
                 max_features=max_features,
             )
@@ -198,16 +189,15 @@ class ErsiliaQuality:
     def run(self, query: pd.DataFrame) -> RunResult:
         """Score query samples against the fitted reference population.
 
-        Validates and scales the query once, computes the FP-selected kNN
-        once for Support + Consistency, and passes the precomputed arrays
-        to each component's :meth:`run`.
+        Validates and scales the query once and passes it to each
+        component's :meth:`run`.
 
         Parameters
         ----------
         query:
             DataFrame with the same numeric columns as the reference,
             plus an ``'input'`` SMILES column (``'smiles'`` is accepted as an
-            alias) if Support, Consistency, Signal or a training score was fit.
+            alias) if the match scores or a training score was fit.
 
         Returns
         -------
@@ -224,7 +214,7 @@ class ErsiliaQuality:
             f"[{', '.join(list(components) + list(training_components))}]"
         )
 
-        needs_input_col = bool(set(components) & INDEX_AWARE) or bool(
+        needs_input_col = bool(set(components) & LIBRARY_USERS) or bool(
             training_components
         )
         if "input" not in query.columns and "smiles" in query.columns:
@@ -322,17 +312,6 @@ class ErsiliaQuality:
         return self._shared.schema
 
     @property
-    def reference_support_(self) -> float:
-        """Mean calibrated support of the reference molecules (about 0.5).
-
-        Returns
-        -------
-        float
-            Requires the support score to be fitted.
-        """
-        return self._anchor("support")
-
-    @property
     def reference_typicality_(self) -> float:
         """Mean calibrated typicality of the reference molecules (about 0.5).
 
@@ -353,28 +332,6 @@ class ErsiliaQuality:
             Requires the extremity score to be fitted.
         """
         return self._anchor("extremity")
-
-    @property
-    def reference_consistency_(self) -> float:
-        """Mean calibrated consistency of the reference molecules (about 0.5).
-
-        Returns
-        -------
-        float
-            Requires the consistency score to be fitted.
-        """
-        return self._anchor("consistency")
-
-    @property
-    def reference_signal_(self) -> float:
-        """Mean calibrated signal of the reference molecules (about 0.5).
-
-        Returns
-        -------
-        float
-            Requires the signal score to be fitted.
-        """
-        return self._anchor("signal")
 
     @property
     def modalities_(self) -> list[str]:
@@ -415,7 +372,7 @@ class ErsiliaQuality:
         Returns
         -------
         SharedFitState
-            Schema, scaler, splits, selected columns and the scaled reference.
+            Schema, scaler, selected columns and the scaled reference.
         """
         self._check_fitted()
         assert self._shared is not None
@@ -447,7 +404,6 @@ class ErsiliaQuality:
             setattr(self, name, None)
         self._shared = None
         self._training = None
-        self._vector_index_cache = None
         self.is_fitted_ = False
 
     def _components(self) -> dict[str, Any]:
@@ -473,17 +429,6 @@ class ErsiliaQuality:
         if self._training is not None:
             return self._training.eos_id, self._training.version
         return "", ""
-
-    def _get_vector_index(self) -> VectorIndex:
-        """Load (and cache) the VectorIndex backing the index-aware scores.
-
-        See :func:`eosquality.scores._helpers._resolve_vector_index`.
-        """
-        if self._vector_index_cache is not None:
-            return self._vector_index_cache
-        assert self._shared is not None
-        self._vector_index_cache = _resolve_vector_index(self._shared)
-        return self._vector_index_cache
 
 
 # ---------------------------------------------------------------------------

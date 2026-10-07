@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-HEAVY = ("pandas", "sklearn", "scipy", "rdkit", "xgboost", "FPSim2", "eosframes")
+HEAVY = ("pandas", "sklearn", "scipy", "rdkit", "FPSim2", "eosframes")
 
 
 def _loaded_heavy(code: str) -> list[str]:
@@ -30,4 +30,8 @@ def test_lazy_names_resolve():
 
     assert eosquality.ErsiliaQuality.__name__ == "ErsiliaQuality"
     assert eosquality.RunResult.__name__ == "RunResult"
-    assert set(eosquality.__all__) >= {"ErsiliaQuality", "Support", "set_verbosity"}
+    assert set(eosquality.__all__) >= {
+        "ErsiliaQuality",
+        "ReferenceMatch",
+        "set_verbosity",
+    }

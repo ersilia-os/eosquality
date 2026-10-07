@@ -16,9 +16,9 @@ def fitted(reference, library):
     return ErsiliaQuality().fit(
         reference,
         eos_id="eos0aaa",
-        vector_index=library,
+        library=library,
         max_features=4,
-        exclude=["ref_extremity", "ref_support", "ref_consistency", "ref_signal"],
+        exclude=["ref_extremity", "ref_match"],
     )
 
 

@@ -1,15 +1,19 @@
-"""``eosquality build`` — build a vector index from a SMILES CSV.
+"""``eosquality build`` — prepare a reference-library folder from a SMILES CSV.
 
 Release / maintenance tool. End users do not normally call this; the
 canonical reference library ships with each release. Used to prepare a
-replacement library for the next release, or to build a non-canonical
-index for internal testing (point ``EOSQUALITY_REFERENCE_LIBRARY_PATH`` at
-the result, or pass it as ``vector_index=`` to ``ErsiliaQuality.fit``).
-Writes the Morgan FP index plus the physchem and MACCS descriptor matrices.
+replacement library for the next release, or a non-canonical library for
+internal testing (point ``EOSQUALITY_REFERENCE_LIBRARY_PATH`` at the result,
+or pass it as ``library=`` to ``ErsiliaQuality.fit``).
+
+The folder holds the library SMILES, a ``metadata.json`` with its identity, and
+the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
 """
 
+import json
 import pathlib
 import time
+from datetime import datetime, timezone
 
 import click
 
@@ -19,8 +23,8 @@ from eosquality.utils import console
 
 @click.command(
     "build",
-    help=("Build a reference-library index from a SMILES CSV (maintainers)."),
-    short_help="Build a reference-library vector index from a SMILES CSV.",
+    help=("Build a reference-library folder from a SMILES CSV (maintainers)."),
+    short_help="Build a reference-library folder from a SMILES CSV.",
 )
 @click.option(
     "--input",
@@ -31,20 +35,7 @@ from eosquality.utils import console
     help="Reference library CSV file (must have a 'smiles' column).",
 )
 @click.option(
-    "--output", "-o", required=True, metavar="PATH", help="Output folder for the index."
-)
-@click.option(
-    "--max-k",
-    default=50,
-    show_default=True,
-    metavar="K",
-    help="Maximum k to pre-compute for self-kNN.",
-)
-@click.option(
-    "--radius", default=2, show_default=True, metavar="R", help="Morgan radius."
-)
-@click.option(
-    "--n-bits", default=2048, show_default=True, metavar="N", help="Morgan bits."
+    "--output", "-o", required=True, metavar="PATH", help="Output library folder."
 )
 @click.option(
     "--max-samples",
@@ -54,16 +45,8 @@ from eosquality.utils import console
     help="Truncate input to the first N molecules (for testing).",
 )
 @verbose_option
-def build(
-    input_path: str,
-    output: str,
-    max_k: int,
-    radius: int,
-    n_bits: int,
-    max_samples: int | None,
-    verbose: bool,
-) -> None:
-    """Build the vector index and descriptor matrices for a SMILES library.
+def build(input_path: str, output: str, max_samples: int | None, verbose: bool) -> None:
+    """Build the library folder: SMILES, metadata and connectivity keys.
 
     Parameters
     ----------
@@ -71,8 +54,6 @@ def build(
         Library CSV with a ``smiles`` column.
     output : str
         Output folder.
-    max_k, radius, n_bits : int
-        Self-kNN depth and Morgan fingerprint parameters.
     max_samples : int or None
         Optional truncation for testing.
     verbose : bool
@@ -80,7 +61,7 @@ def build(
     """
 
     run_command(
-        lambda: _build(input_path, output, max_k, radius, n_bits, max_samples, verbose),
+        lambda: _build(input_path, output, max_samples),
         verbose=verbose,
         command="build",
     )
@@ -102,11 +83,62 @@ def _read_library(input_path: str, max_samples: int | None) -> list[str]:
     return smiles[:max_samples] if max_samples else smiles
 
 
-def _build(input_path, output, max_k, radius, n_bits, max_samples, verbose) -> None:
-    """Body of ``eosquality build`` (see :func:`build`)."""
-    from eosquality.basic_descriptors import BasicDescriptors
-    from eosquality.vectorindex import VectorIndex
+def _package_version() -> str:
+    """Installed eosquality version, or ``"unknown"``."""
+    import importlib.metadata
 
+    try:
+        return importlib.metadata.version("eosquality")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> None:
+    """Write a library folder: ``smiles.csv``, ``metadata.json``, the match keys.
+
+    The SMILES are standardised (largest fragment, canonical isomeric) before
+    their connectivity layers are taken, exactly as a query's are at run time.
+
+    Parameters
+    ----------
+    smiles : list of str
+        Library molecules, in order.
+    output : str or pathlib.Path
+        Folder to write (created if needed).
+    name : str
+        Library identity, stored as ``library_name``.
+    """
+
+    import pandas as pd
+
+    from eosquality.library.reference import KEYS_FILE, METADATA_FILE, SMILES_FILE
+    from eosquality.scores._helpers import _standardize
+    from eosquality.scores._match_keys import _layers, save_keys, unique_keys
+
+    folder = pathlib.Path(output)
+    folder.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"smiles": smiles}).to_csv(folder / SMILES_FILE, index=False)
+    standardised = [s for s in map(_standardize, smiles) if s]
+    molecules, scaffolds = _layers(standardised, "library InChIKey layers")
+    save_keys(folder / KEYS_FILE, unique_keys(molecules), unique_keys(scaffolds))
+    with open(folder / METADATA_FILE, "w") as f:
+        json.dump(
+            {
+                "n_samples": len(smiles),
+                "n_unparsable": len(smiles) - len(standardised),
+                "n_molecule_keys": int(len(unique_keys(molecules))),
+                "n_scaffold_keys": int(len(unique_keys(scaffolds))),
+                "eosquality_version": _package_version(),
+                "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "library_name": name,
+            },
+            f,
+            indent=2,
+        )
+
+
+def _build(input_path: str, output: str, max_samples: int | None) -> None:
+    """Body of ``eosquality build`` (see :func:`build`)."""
     smiles = _read_library(input_path, max_samples)
     started = time.perf_counter()
     console.summary_panel(
@@ -116,36 +148,23 @@ def _build(input_path, output, max_k, radius, n_bits, max_samples, verbose) -> N
                 "library",
                 f"{console.path(input_path)}  [dim]{len(smiles):,} molecules[/]",
             ),
-            ("fingerprint", f"Morgan r={radius} · {n_bits} bits · max_k={max_k}"),
             ("output", console.path(output)),
         ],
         icon="◆",
     )
-    steps = console.Steps(3)
+    steps = console.Steps(1)
     with console.section("Build") as section:
         try:
-            with steps("Vector index and self-kNN") as st:
-                VectorIndex.build(
-                    smiles=smiles,
-                    output_dir=output,
-                    max_k=max_k,
-                    radius=radius,
-                    n_bits=n_bits,
-                    verbose=verbose,
-                    library_name=pathlib.Path(input_path).stem,
-                )
+            with steps("Connectivity keys of the molecules and their scaffolds") as st:
+                build_library(smiles, output, pathlib.Path(input_path).stem)
                 st.summary = f"{len(smiles):,} molecules"
-            with steps("Physicochemical descriptors"):
-                BasicDescriptors.build_physchem(smiles, output, n_jobs=-1)
-            with steps("MACCS keys"):
-                BasicDescriptors.build_maccs(smiles, output, n_jobs=-1)
         except Exception as exc:
-            raise CliError(f"index build failed: {exc}") from exc
+            raise CliError(f"library build failed: {exc}") from exc
         section.summary = console.folder_size(output)
     console.summary_panel(
         "Build complete",
         [
-            ("index", console.path(output)),
+            ("library", console.path(output)),
             ("time", console.elapsed(time.perf_counter() - started)),
         ],
         color="green",
