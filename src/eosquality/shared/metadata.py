@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 
@@ -67,6 +67,6 @@ def compute_metadata(df: pd.DataFrame, eos_id: str, version: str) -> FitMetadata
         n_samples=len(df),
         n_features=len(columns),
         columns=columns,
-        fit_timestamp=datetime.now(tz=timezone.utc).isoformat(),
+        fit_timestamp=datetime.now(tz=UTC).isoformat(),
         eosquality_version=eq_version,
     )

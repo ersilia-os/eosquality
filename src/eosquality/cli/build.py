@@ -13,7 +13,7 @@ the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
 import json
 import pathlib
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import click
 
@@ -170,7 +170,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
                     "n_scaffold_keys": int(len(scaffold_keys)),
                     "rdkit_version": rdkit_version,
                     "eosquality_version": _package_version(),
-                    "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    "build_timestamp": datetime.now(tz=UTC).isoformat(),
                     "library_name": name,
                 },
                 f,

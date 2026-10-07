@@ -10,7 +10,7 @@ import importlib.metadata
 import json
 import pathlib
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -559,6 +559,6 @@ def _index_config(fingerprint: dict, library_name: str) -> dict:
         "rdkit_version": _RDKIT_VERSION,
         "fpsim2_version": _package_version("FPSim2"),
         "eosquality_version": _package_version("eosquality"),
-        "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "build_timestamp": datetime.now(tz=UTC).isoformat(),
         "library_name": library_name,
     }
