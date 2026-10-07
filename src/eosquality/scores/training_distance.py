@@ -137,7 +137,7 @@ class TrainingDistance(ScoreComponent):
             Needs an ``input`` SMILES column; ``key`` (if present) labels the
             rows of the details table.
         features : TrainingQuery, optional
-            The query's features, shared with training difficulty (built from
+            The query's features, shared with the other training scores (built from
             ``query`` when omitted).
 
         Returns

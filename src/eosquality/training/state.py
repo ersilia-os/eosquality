@@ -4,8 +4,8 @@ Layout under ``<root>/training_sets/`` (``<root>`` is ``training_mode/`` in
 an :class:`~eosquality.quality.ErsiliaQuality` artifacts folder)::
 
     metadata.json        # training_format_version, column order
-    columns.json         # per column: folder, n, y_kind, has_y, has_pred
-    arrays.npz           # per column: ids, y, pred (when present)
+    columns.json         # per column: folder, n
+    arrays.npz           # per column: ids
     indices/c000/ …      # one VectorIndex folder per column (vector_index.h5,
                          # knn_*.npy, smiles.csv, metadata.json)
 
@@ -58,7 +58,10 @@ SUBFOLDER = "training_sets"
 # 10: the physchem leave-one-out table drops each molecule's own row by
 #    position; the earlier distance test missed it for most molecules, which
 #    biased the table low.
-TRAINING_FORMAT_VERSION = 10
+# 11: no labels or model predictions are kept (training_difficulty and the
+#    error model were removed): columns.json is {folder, n} and arrays.npz
+#    holds only the ids.
+TRAINING_FORMAT_VERSION = 11
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 
@@ -128,7 +131,7 @@ def fit_training(
 def save_training_state(
     state: TrainingFitState, root: str | pathlib.Path
 ) -> pathlib.Path:
-    """Write ``<root>/training_sets/`` (metadata, labels, per-column indices).
+    """Write ``<root>/training_sets/`` (metadata, ids, per-column indices).
 
     Parameters
     ----------
@@ -156,15 +159,8 @@ def save_training_state(
         meta_cols[name] = {
             "folder": sub,
             "n": column.n,
-            "y_kind": column.y_kind,
-            "has_y": column.has_y,
-            "has_pred": column.has_pred,
         }
         arrays[f"{sub}__ids"] = np.asarray(column.ids, dtype=str)
-        if column.y is not None:
-            arrays[f"{sub}__y"] = column.y
-        if column.pred is not None:
-            arrays[f"{sub}__pred"] = column.pred
     np.savez(folder / "arrays.npz", **arrays)
     with open(folder / "columns.json", "w") as f:
         json.dump(meta_cols, f, indent=2)
@@ -217,9 +213,6 @@ def load_training_state(root: str | pathlib.Path) -> TrainingFitState:
                 name=name,
                 smiles=vi.smiles,
                 ids=arrays[f"{sub}__ids"].tolist(),
-                y=arrays[f"{sub}__y"] if info["has_y"] else None,
-                y_kind=info["y_kind"],
-                pred=arrays[f"{sub}__pred"] if info["has_pred"] else None,
             )
             indices[name] = vi
     return TrainingFitState(

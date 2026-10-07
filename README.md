@@ -41,9 +41,8 @@ Please check [Isaura](https://github.com/ersilia-os/isaura) for a large store of
 ### Fitting training sets
 
 `-t` takes a folder with one `<output_column>.csv` per model output, each
-with a `smiles` column and, optionally, a label column (`y` or `value`).
-Labels add `trn_difficulty`, a learned error model. Given both `-r` and `-t`,
-the scores cover only the output columns that have a training set.
+with a `smiles` column. Given both `-r` and `-t`, the scores cover only the
+output columns that have a training set.
 
 ```bash
 eosquality fit -r reference_eos4e40_v1.csv -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/

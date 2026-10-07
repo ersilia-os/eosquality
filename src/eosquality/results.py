@@ -32,8 +32,7 @@ class RunResult:
     ``1 - d / 18.70``: 1 is identical, 0 no closer than a random library
     pair, unclipped; the distance is in ``training_details``), ``trn_match`` and ``trn_scaffold``
     (1 / 0: the InChIKey connectivity layer of the molecule, or of its Murcko
-    scaffold, is in a training set; the scaffold flag is NA without one), and
-    ``trn_difficulty`` when the error model is included.
+    scaffold, is in a training set; the scaffold flag is NA without one).
 
     ``metadata`` has ``n_reference`` (reference modality) plus each score's
     run metadata with keys prefixed by the score name (e.g.

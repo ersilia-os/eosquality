@@ -11,7 +11,6 @@ import click
 from eosquality._registry import (
     ALL_SCORES,
     ALSO_EMITS,
-    DEFAULT_OFF,
     REFERENCE_SCORES,
     SCORE_NAMES,
     TRAINING_SCORES,
@@ -170,7 +169,7 @@ def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:
         s
         for s in (REFERENCE_SCORES if reference else ())
         + (TRAINING_SCORES if training_sets else ())
-        if s not in excluded and s not in DEFAULT_OFF
+        if s not in excluded
     ]
     console.summary_panel(
         "eosquality · fit",

@@ -15,7 +15,6 @@ from eosquality.scores.consistency import Consistency
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
 from eosquality.scores.support import Support
-from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.training_match import TrainingMatch
 from eosquality.scores.training_physchem import TrainingPhyschem
@@ -148,13 +147,7 @@ def write_manifest(eq, folder: pathlib.Path) -> None:
         manifest["training"] = {
             "format_version": TRAINING_FORMAT_VERSION,
             "columns": {
-                name: {
-                    "n": col.n,
-                    "has_y": col.has_y,
-                    "y_kind": col.y_kind,
-                    "has_pred": col.has_pred,
-                }
-                for name, col in eq._training.columns.items()
+                name: {"n": col.n} for name, col in eq._training.columns.items()
             },
         }
     with open(folder / "manifest.json", "w") as f:
@@ -203,12 +196,7 @@ def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
     if has_training:
         root = folder / TRAINING_DIR
         instance._training = load_training_state(root)
-        for cls in (
-            TrainingDistance,
-            TrainingPhyschem,
-            TrainingMatch,
-            TrainingDifficulty,
-        ):
+        for cls in (TrainingDistance, TrainingPhyschem, TrainingMatch):
             if (root / cls.NAME).is_dir():
                 setattr(
                     instance,

@@ -4,18 +4,15 @@ import pytest
 
 from eosquality import ErsiliaQuality
 from eosquality.exceptions import SchemaError
-from eosquality.scores._error_model import feature_names
 from eosquality.training import load_training
 
-# The error model's four inputs, emitted alongside the scores.
-ERROR_MODEL_INPUTS = feature_names()
 # The physchem applicability domain, calibrated and raw.
 PHYSCHEM_COLUMNS = ["trn_physchem_pct", "trn_physchem_raw", "trn_physchem_dist"]
 # The structural applicability domain, calibrated and raw.
 TANIMOTO_COLUMNS = ["trn_tanimoto_pct", "trn_tanimoto_raw"]
 # The exact-structure and scaffold flags.
 MATCH_COLUMNS = ["trn_match", "trn_scaffold"]
-# What a default fit writes to the scores CSV (the error model is off).
+# What a default fit writes to the scores CSV.
 DEFAULT_COLUMNS = [
     *TANIMOTO_COLUMNS,
     "trn_physchem_pct",
@@ -42,9 +39,6 @@ COLUMNS = ["mw", "logp", "tpsa", "aromatic", "hbd", "noisy"]
 def test_loader_kinds_order_and_merging(training_dir):
     cols = load_training(training_dir, COLUMNS)
     assert list(cols) == ["mw", "aromatic", "hbd"]  # schema order
-    assert cols["mw"].y_kind == "continuous"
-    assert cols["aromatic"].y_kind == "binary"
-    assert cols["hbd"].y is None and cols["hbd"].y_kind is None
     # 300 rows + a salt form of row 0 + a duplicate of row 1 → 300 molecules.
     assert cols["mw"].n == 300
     assert len(set(cols["mw"].smiles)) == cols["mw"].n
@@ -57,21 +51,9 @@ def test_loader_rejects_unknown_column(tmp_path, training_dir):
 
 
 def test_loader_needs_smiles_column(tmp_path):
-    (tmp_path / "mw.csv").write_text("molecule,y\nCCO,1\n")
+    (tmp_path / "mw.csv").write_text("molecule\nCCO\n")
     with pytest.raises(SchemaError):
         load_training(tmp_path, COLUMNS)
-
-
-def test_loader_reads_value_as_label(tmp_path, training_dir):
-    expected = load_training(training_dir, COLUMNS)["mw"]
-    df = pd.read_csv(training_dir / "mw.csv")
-    df.rename(columns={"y": "value"}).to_csv(tmp_path / "mw.csv", index=False)
-    column = load_training(tmp_path, COLUMNS)["mw"]
-    assert column.y_kind == expected.y_kind
-    np.testing.assert_array_equal(column.y, expected.y)
-    # With both, 'y' wins.
-    df.assign(value=-1.0).to_csv(tmp_path / "mw.csv", index=False)
-    np.testing.assert_array_equal(load_training(tmp_path, COLUMNS)["mw"].y, expected.y)
 
 
 def test_loader_skips_small_columns(tmp_path, training_dir):
@@ -178,7 +160,6 @@ def test_run_columns_and_details(both, query):
     for c in DEFAULT_COLUMNS:
         assert c in result.scores.columns
     assert "trn_in_training" in result.training_details.columns
-    assert "trn_difficulty" not in result.scores.columns  # off by default
     assert "ref_support" in result.scores.columns  # reference modality still there
     det = result.training_details
     assert len(det) == len(query) and det.key.tolist() == query.key.tolist()
@@ -291,9 +272,7 @@ def test_training_files_named_after_ersilia_columns(
     folder.mkdir()
     for i, col in enumerate(columns):
         part = smiles[100 * i : 100 * i + 200]
-        pd.DataFrame({"smiles": part, "y": np.arange(len(part)) % 2}).to_csv(
-            folder / f"{col}.csv", index=False
-        )
+        pd.DataFrame({"smiles": part}).to_csv(folder / f"{col}.csv", index=False)
     eq = ErsiliaQuality().fit(
         ref,
         folder,
@@ -321,12 +300,11 @@ def test_training_files_named_after_ersilia_columns(
 
 
 def test_scaffold_survives_rdkit_stereo_failure():
-    from eosquality.training.folds import _scaffold, scaffold_folds
+    from eosquality.scores.training_match import _scaffold
 
     # RDKit cannot canonicalise this scaffold with its stereo double bonds.
     tricky = "N#C/C(=C\\C=C\\c1ccccc1)c1ccc(F)cc1"
     assert _scaffold(tricky) == "C(C=Cc1ccccc1)=Cc1ccccc1"
-    assert len(scaffold_folds([tricky, "CCO", "c1ccccc1C"], n_folds=2)) == 3
 
 
 def test_excluding_one_training_score(training_dir, query):
@@ -377,19 +355,6 @@ def test_physchem_distance_is_only_in_the_details_file(both, query):
     )
 
 
-def test_error_model_is_off_unless_included(training_dir, query):
-    smiles_only = query[["key", "input"]]
-    default = ErsiliaQuality().fit(training_sets=training_dir, eos_id="eos0aaa")
-    assert default.training_difficulty is None
-    on = ErsiliaQuality().fit(
-        training_sets=training_dir, eos_id="eos0aaa", include=["trn_difficulty"]
-    )
-    res = on.run(smiles_only)
-    assert list(res.scores.columns) == [*DEFAULT_COLUMNS, "trn_difficulty"]
-    det = res.training_details.columns
-    assert all(f"trn_{f}" in det for f in ERROR_MODEL_INPUTS)
-
-
 # ---------------------------------------------------------------- trn_match
 
 
@@ -424,7 +389,7 @@ def test_scaffold_is_missing_without_one_and_match_is_missing_if_unparsable(both
 
 def test_scaffold_matches_through_the_ring_system(both):
     """A query that is a training molecule's bare scaffold matches on scaffold."""
-    from eosquality.training.folds import _scaffold
+    from eosquality.scores.training_match import _scaffold
 
     known = next(
         s for s in both._training.columns["mw"].smiles if _scaffold(s) not in ("", s)

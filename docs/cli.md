@@ -19,7 +19,7 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 | `fit` gets | Scores |
 |---|---|
 | `-r/--reference` (predictions on the reference library) | `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal` |
-| `-t/--training-sets` (per-output-column training sets) | `trn_tanimoto`, `trn_physchem`, `trn_match` and `trn_scaffold` (the error model `trn_difficulty` is parked and off by default) |
+| `-t/--training-sets` (per-output-column training sets) | `trn_tanimoto`, `trn_physchem`, `trn_match` and `trn_scaffold` |
 | both | both, on the same columns (below) |
 
 ```bash
@@ -28,13 +28,13 @@ eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                 
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_signal     # skip a score
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file. The error model `trn_difficulty` (needs labels `y`, at least 50 in some column) is parked: it is off by default.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file.
 
 **Common behaviour:**
 - **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
   - a header panel with the inputs;
   - a section per modality, made of numbered steps (`▪ Step i/N · …`) that close with a timed `✓` line and a short result;
-  - small tables where useful: training columns, error models, the score summary of `run`;
+  - small tables where useful: training columns, the score summary of `run`;
   - a final summary panel with the outputs and the log file.
 
   Warnings appear in between. With `-v`, DEBUG messages and full tracebacks are shown too. Progress bars appear only on an interactive terminal.
@@ -70,25 +70,26 @@ Fits the quality scores of one model and saves the artifacts.
 
 **Training folder** (`-t`). It holds one `<output_column>.csv` per output column:
 - a `smiles` column (or `input`);
-- optional `y` (or `value`), numeric, binary or continuous;
 - optional `key`, used to name training molecules in the details file.
+
+Other columns, such as labels, are ignored.
 
 When `-r` is also given, every file must name one of its output columns. Columns without a file simply have no training scores.
 
-Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped. Duplicate molecules are merged, with binary labels by majority vote and continuous labels by median. Columns with fewer than 20 molecules are skipped. The fit prints a table of the loaded columns (molecules, label kind, rows dropped as unparsable, molecules merged from conflicting labels) and warns once with the totals.
+Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped and duplicate molecules are merged. Columns with fewer than 20 molecules are skipped. The fit prints a table of the loaded columns (molecules, rows dropped as unparsable) and warns once with the total.
 
-**Both inputs.** With both `-r` and `-t`, the reference modality uses only the output columns that have a usable training set (at least 20 valid molecules); the other columns are left out of every score. Feature selection then keeps at most 10 of the remaining columns, and both modalities use those same columns: the training scores, including the error models, are fitted on the selected columns only. So `trn_in_training` means "a training molecule of one of the selected columns". Training sets cannot be added to existing artifacts later: fit both together.
+**Both inputs.** With both `-r` and `-t`, the reference modality uses only the output columns that have a usable training set (at least 20 valid molecules); the other columns are left out of every score. Feature selection then keeps at most 10 of the remaining columns, and both modalities use those same columns: the training scores are fitted on the selected columns only. So `trn_in_training` means "a training molecule of one of the selected columns". Training sets cannot be added to existing artifacts later: fit both together.
 
 **Artifacts folder** (`-a`). Always a new folder; it gets `reference_mode/` and/or `training_mode/`. An existing folder is refused.
 
-**Excluding scores** (`--exclude`). Takes score names, comma-separated or repeated: `--exclude ref_signal`, `--exclude ref_signal,trn_difficulty`. An unknown name is an error. Naming a score of a modality you did not give is ignored. Excluding every score of a given input is an error (nothing to fit).
+**Excluding scores** (`--exclude`). Takes score names, comma-separated or repeated: `--exclude ref_signal`, `--exclude ref_signal,trn_physchem`. An unknown name is an error. Naming a score of a modality you did not give is ignored. Excluding every score of a given input is an error (nothing to fit).
 
 | flag | default | |
 |---|---|---|
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
 | `--artifacts`, `-a DIR` | required | new artifacts folder |
-| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match`, `trn_difficulty` |
+| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match` |
 | `--verbose`, `-v` | off | |
 
 At least one of `-r` and `-t` is required.

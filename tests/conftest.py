@@ -82,26 +82,19 @@ def query(smiles) -> pd.DataFrame:
 def training_dir(tmp_path_factory, smiles) -> pathlib.Path:
     """Training sets for three output columns of the fixture model.
 
-    ``mw`` (continuous y), ``aromatic`` (binary y) and ``hbd`` (no y), drawn
-    from the 700-molecule fixture so some overlap the reference and queries.
-    ``mw`` also carries a salt form and an exact duplicate of a molecule to
-    exercise standardisation and label merging.
+    ``mw``, ``aromatic`` and ``hbd``, drawn from the 700-molecule fixture so
+    some overlap the reference and queries. ``mw`` also carries a salt form
+    and an exact duplicate of a molecule to exercise standardisation and
+    merging.
     """
     folder = tmp_path_factory.mktemp("training") / "training_eos0aaa_v1"
     folder.mkdir()
     outputs = model_outputs(smiles, seed=2)
-    mw = outputs.iloc[100:400][["input", "mw"]].rename(
-        columns={"input": "smiles", "mw": "y"}
-    )
-    extra = pd.DataFrame(
-        {"smiles": [mw.smiles.iloc[0] + ".Cl", mw.smiles.iloc[1]], "y": [1.0, 2.0]}
-    )
+    mw = outputs.iloc[100:400][["input"]].rename(columns={"input": "smiles"})
+    extra = pd.DataFrame({"smiles": [mw.smiles.iloc[0] + ".Cl", mw.smiles.iloc[1]]})
     pd.concat([mw, extra]).to_csv(folder / "mw.csv", index=False)
-    arom = outputs.iloc[300:650][["input", "aromatic"]].rename(
-        columns={"input": "smiles", "aromatic": "y"}
-    )
-    arom.to_csv(folder / "aromatic.csv", index=False)
-    outputs.iloc[0:250][["input"]].rename(columns={"input": "smiles"}).to_csv(
-        folder / "hbd.csv", index=False
-    )
+    for name, rows in (("aromatic", slice(300, 650)), ("hbd", slice(0, 250))):
+        outputs.iloc[rows][["input"]].rename(columns={"input": "smiles"}).to_csv(
+            folder / f"{name}.csv", index=False
+        )
     return folder

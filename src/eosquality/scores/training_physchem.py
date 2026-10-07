@@ -24,8 +24,6 @@ with one another" (¶128).
 They are related but not redundant: on eos4e40 the two correlate at about
 +0.5, so a molecule can be structurally novel while physicochemically
 ordinary, or the reverse.
-
-Reported for inspection; not an input to the error model.
 """
 
 from __future__ import annotations

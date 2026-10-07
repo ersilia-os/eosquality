@@ -30,7 +30,6 @@ TRAINING_ORDER: tuple[str, ...] = (
     "training_distance",
     "training_physchem",
     "training_match",
-    "training_difficulty",
 )
 
 # Component → public score name (and output column prefix).
@@ -43,11 +42,7 @@ SCORE_NAMES: dict[str, str] = {
     "training_distance": "trn_tanimoto",
     "training_physchem": "trn_physchem",
     "training_match": "trn_match",
-    "training_difficulty": "trn_difficulty",
 }
-# Scores that are not fitted unless asked for (``fit(include=...)``): the error
-# model is parked for now; its code and artifacts format stay in place.
-DEFAULT_OFF: tuple[str, ...] = ("trn_difficulty",)
 # Scores that emit a second output column of their own, for display: trn_match
 # also writes trn_scaffold.
 ALSO_EMITS: dict[str, tuple[str, ...]] = {"trn_match": ("trn_scaffold",)}
