@@ -102,15 +102,16 @@ class TrainingPhyschem(ScoreComponent):
         self._training = training
         self._domains = {}
         names = training.column_names
-        # One live bar at a time: per molecule for a single column, else per column.
+        # The columns of one panel share most molecules: describe each once.
+        union = sorted({s for n in names for s in training.columns[n].smiles})
+        row_of = {smi: i for i, smi in enumerate(union)}
+        raw_all = compute_physchem_raw(
+            union, show_progress=True, label="physchem descriptors"
+        )
         for name in console.track(names, "physchem, columns"):
             column = training.columns[name]
-            raw = compute_physchem_raw(
-                column.smiles,
-                show_progress=len(names) == 1,
-                label="physchem descriptors",
-            )
-            self._domains[name] = PhyschemDomain.fit(raw, scaler)
+            rows = [row_of[smi] for smi in column.smiles]
+            self._domains[name] = PhyschemDomain.fit(raw_all[rows], scaler)
             logger.debug(
                 f"physchem domain | column {name!r}: {column.n:,} molecules, "
                 f"k={self._domains[name].k}"
