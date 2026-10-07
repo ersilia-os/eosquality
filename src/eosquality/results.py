@@ -12,41 +12,26 @@ import pandas as pd
 class RunResult:
     """Combined result returned by :meth:`ErsiliaQuality.run`.
 
-    ``scores`` is a per-query DataFrame with the columns of each fitted
-    score, in canonical order: ``ref_typicality_pct``, ``ref_typicality_raw``,
-    ``ref_extremity_pct``, ``ref_extremity_raw``, ``ref_match`` and
-    ``ref_scaffold`` (1 / 0: the InChIKey connectivity layer of the molecule,
-    or of its Murcko scaffold, is in the reference library; the scaffold flag
-    is NA without one). The percentile column is in ``(0, 1]``; ``*_raw`` is
-    the pre-calibration value. Scores that were not fit are absent.
+    Column and key definitions are in ``docs/api.md``.
 
-    Training-modality columns (when training sets were fit) follow:
-    ``trn_tanimoto_pct`` (one whole-model value: the similarity percentile of
-    the mean Tanimoto distance to the 5 nearest training molecules among the
-    training set's own leave-one-out values, taken at the 66th percentile
-    across output columns; higher is closer), ``trn_tanimoto_raw`` (the mean
-    Tanimoto similarity at the same point, higher is closer),
-    ``trn_physchem_pct`` (the same percentile in physchem space, higher is
-    closer), ``trn_physchem_raw`` (a similarity,
-    ``1 - d / 18.70``: 1 is identical, 0 no closer than a random library
-    pair, unclipped; the distance is in ``training_details``), ``trn_match`` and ``trn_scaffold``
-    (1 / 0: the InChIKey connectivity layer of the molecule, or of its Murcko
-    scaffold, is in a training set; the scaffold flag is NA without one).
-
-    ``metadata`` has ``n_reference`` (reference modality) plus each score's
-    run metadata with keys prefixed by the score name (e.g.
-    ``ref_typicality_anchor``, ``trn_tanimoto_n_columns``).
-
-    ``training_details`` (training modality only) has one row per query:
-    the whole-model distances and the 5 nearest training molecules over all
-    output columns, with their similarities and columns.
-
-    ``reference_details`` (reference modality with typicality or extremity
-    fitted) has one row per query: ``key``, ``input`` and, for every selected
-    output column and each of those scores, ``<column>_typicality_raw``
-    (``count / max count``) or ``<column>_extremity_raw``
-    (``min(|scaled|, 1)``) and the matching ``_pct`` (its percentile among
-    the reference library's values of that column).
+    Attributes
+    ----------
+    scores : pandas.DataFrame
+        One row per query, indexed like the query: the columns of each fitted
+        score, reference scores first (``ref_typicality_pct`` / ``_raw``,
+        ``ref_extremity_pct`` / ``_raw``, ``ref_match``, ``ref_scaffold``),
+        then the training scores (``trn_tanimoto_pct`` / ``_raw``,
+        ``trn_physchem_pct`` / ``_raw``, ``trn_match``, ``trn_scaffold``).
+        Scores that were not fit are absent.
+    metadata : dict
+        ``n_reference`` plus each score's run metadata, keys prefixed by the
+        score name (e.g. ``ref_typicality_anchor``).
+    training_details : pandas.DataFrame or None
+        Per query: the whole-model distances and the 5 nearest training
+        molecules. ``None`` without the training modality.
+    reference_details : pandas.DataFrame or None
+        Per query: the per-column typicality and extremity, raw and percentile.
+        ``None`` when neither score is fitted.
     """
 
     scores: pd.DataFrame
