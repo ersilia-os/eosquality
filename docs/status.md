@@ -291,9 +291,9 @@ Carried over from the previous README TODO list:
 
 Training modality:
 
-- [ ] `trn_distance` saturates near 1 against query sets that are all far from
-      the training sets, so its calibrated form loses resolution exactly where
-      a user most wants it. Consider a log companion (`trn_distance_log`), as
+- [ ] `trn_tanimoto_pct` saturates near 0 against query sets that are all far
+      from the training sets, so its calibrated form loses resolution exactly
+      where a user most wants it. Consider a log companion, as
       `ref_support_log` does for support.
 - [ ] `trn_difficulty` is near random on noisy, diverse endpoints
       (`solubility_aqsoldb`, `dili`). The fit warns below Spearman 0.2, but a
@@ -303,6 +303,12 @@ Training modality:
       cap cost at most 0.02 out-of-fold Spearman on eos42ez, but it has not
       been checked on a set much larger than 39,000.
 - [ ] Conformal expected-error intervals (stage 4 above).
+- [ ] Error model (`trn_difficulty`, and its four inputs `nn1_tanimoto`,
+      `nn5_tanimoto`, `ensemble_variance`, `surrogate_score`): parked. It is off
+      by default (`_registry.DEFAULT_OFF`; `fit(include=["trn_difficulty"])` turns
+      it on) and not written to the scores CSV. The code, tests and artifact
+      format stay in place; revisit once the similarity and physchem domain
+      columns are settled.
 
 New:
 

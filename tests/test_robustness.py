@@ -134,4 +134,6 @@ def test_all_unparsable_queries_are_reported_not_crashed(
         main(["run", "-i", str(query), "-a", str(art), "-o", str(out)])
     assert exc.value.code == 0
     assert "noscoredmolecule" in _unwrapped(capsys.readouterr().err)
-    assert pd.read_csv(out).trn_distance.isna().all()
+    scores = pd.read_csv(out)
+    assert scores.trn_tanimoto_pct.isna().all()
+    assert scores.trn_match.isna().all() and scores.trn_scaffold.isna().all()

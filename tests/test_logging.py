@@ -27,7 +27,7 @@ def test_verbose_turns_curated_output_on(training_dir):
     console.enable(False)
     text = capture.get()
     assert "Training sets" in text and "Training modality" in text
-    assert "Step 1/3" in text
+    assert "Step 1/4" in text
 
 
 def test_dependency_loggers_are_routed(tmp_path):

@@ -22,14 +22,23 @@ class RunResult:
     fit are absent.
 
     Training-modality columns (when training sets were fit) follow:
-    ``trn_distance``, ``trn_distance_raw`` (one whole-model value: Q66 across
-    output columns of the mean distance to the 5 nearest training
-    molecules), ``trn_difficulty``, ``trn_in_training``.
+    ``trn_tanimoto_pct`` (one whole-model value: the similarity percentile of
+    the mean Tanimoto distance to the 5 nearest training molecules among the
+    training set's own leave-one-out values, taken at the 66th percentile
+    across output columns; higher is closer), ``trn_tanimoto_raw`` (the mean
+    Tanimoto similarity at the same point, higher is closer),
+    ``trn_physchem_pct`` (the same percentile in physchem space, higher is
+    closer), ``trn_physchem_raw`` (a similarity,
+    ``1 - d / 18.70``: 1 is identical, 0 no closer than a random library
+    pair, unclipped; the distance is in ``training_details``), ``trn_match`` and ``trn_scaffold``
+    (1 / 0: the InChIKey connectivity layer of the molecule, or of its Murcko
+    scaffold, is in a training set; the scaffold flag is NA without one), and
+    ``trn_difficulty`` when the error model is included.
 
     ``metadata`` has ``n_reference`` (reference modality) plus each score's
     run metadata with keys prefixed by the score name (e.g.
     ``ref_support_k``, ``ref_consistency_n_fp_bins``,
-    ``trn_distance_n_columns``).
+    ``trn_tanimoto_n_columns``).
 
     ``training_details`` (training modality only) has one row per query:
     the whole-model distances and the 5 nearest training molecules over all

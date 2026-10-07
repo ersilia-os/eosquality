@@ -38,6 +38,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -206,6 +207,8 @@ def section(title: str, *, color: str | None = None):
     previous = _active_color
     color = color or previous
     set_active_color(color)
+    if _enabled:
+        console.print()  # a blank line between sections
     rule(title, style=color, right=resources())
     handle = _Handle()
     started = time.perf_counter()
@@ -434,6 +437,35 @@ def summary_panel(
 # ---------------------------------------------------------------------------
 
 
+def track(items, label: str):
+    """Iterate ``items``, with a progress bar when there are at least two.
+
+    Silent (no bar) while the curated output is off or stderr is not a
+    terminal, like :func:`progress`.
+
+    Parameters
+    ----------
+    items : sequence
+        What to iterate; a sequence, so its length is known.
+    label : str
+        What is being processed.
+
+    Yields
+    ------
+    object
+        Each item.
+    """
+    items = list(items)
+    if len(items) < 2:
+        yield from items
+        return
+    with progress(label) as bar:
+        task = bar.add_task(label, total=len(items))
+        for item in items:
+            yield item
+            bar.advance(task)
+
+
 def progress(label: str) -> Progress:
     """A not-yet-started progress bar on the shared console.
 
@@ -455,6 +487,7 @@ def progress(label: str) -> Progress:
         SpinnerColumn(style=_active_color),
         TextColumn(f"[{_active_color}]{label}[/]"),
         BarColumn(bar_width=None, complete_style=_active_color),
+        TaskProgressColumn(),
         MofNCompleteColumn(),
         TextColumn("[dim]·[/]"),
         TimeElapsedColumn(),

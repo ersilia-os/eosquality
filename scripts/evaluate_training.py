@@ -14,7 +14,7 @@ Black boxes (``--black-box``, default ``all``):
 The last two test whether the scores transfer to a model that differs from
 the surrogate, which is the situation of an Ersilia black-box model.
 
-Reported for each training score (trn_distance, trn_distance_raw,
+Reported for each training score (trn_tanimoto_pct, trn_tanimoto_raw,
 trn_difficulty) and black box:
 - Spearman(score, |error|) with a 95% bootstrap interval, and the 95th
   percentile of |Spearman| under 1,000 permutations of the score (a value
@@ -120,7 +120,9 @@ def bootstrap(fn, *arrays, n=500):
     return np.percentile(stats, [2.5, 97.5])
 
 
-SCORES = ("trn_distance", "trn_distance_raw", "trn_difficulty")
+SCORES = ("trn_tanimoto_pct", "trn_tanimoto_raw", "trn_difficulty")
+# Similarities: negated so every score is read as higher = harder to predict.
+HIGHER_IS_CLOSER = {"trn_tanimoto_pct", "trn_tanimoto_raw"}
 
 
 def sparsification_gain(score: np.ndarray, err: np.ndarray) -> float:
@@ -392,7 +394,9 @@ def evaluate(df: pd.DataFrame, name: str = "column", black_boxes=BLACK_BOXES) ->
         folder = Path(tmp) / "training_eos0aaa_v1"
         folder.mkdir()
         train_df[["smiles", "y"]].to_csv(folder / f"{name}.csv", index=False)
-        eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
+        eq = ErsiliaQuality().fit(
+            eos_id="eos0aaa", training_sets=folder, include=["trn_difficulty"]
+        )
         q = pd.DataFrame(
             {"key": [str(i) for i in test_df.index], "input": test_df.smiles}
         )
@@ -406,6 +410,8 @@ def evaluate(df: pd.DataFrame, name: str = "column", black_boxes=BLACK_BOXES) ->
             if c not in scores:
                 continue
             values = scores[c].to_numpy()
+            if c in HIGHER_IS_CLOSER:  # score against the error as a distance
+                values = -values
             entry = metrics(values, err)
             entry["permutation_95"] = permutation_threshold(values, err)
             entry["shifts"] = shift_spearman(values, err, shifts)

@@ -15,6 +15,8 @@ from eosquality.vectorindex import VectorIndex
 # Quantile across output columns for the whole-model value (the column
 # analogue of the Q66 aggregate typicality and extremity use over features).
 SUMMARY_QUANTILE = 0.66
+# A progress bar is drawn for query descriptor passes of at least this many molecules.
+PROGRESS_MIN_MOLECULES = 500
 
 
 def _columns_summary(values: np.ndarray) -> np.ndarray:
@@ -25,8 +27,8 @@ def _columns_summary(values: np.ndarray) -> np.ndarray:
 class TrainingQuery:
     """Query features computed once per run and shared by the training scores.
 
-    Standardising SMILES, MACCS keys, Morgan bits and each column's
-    nearest-neighbour search are the costly steps of scoring; training
+    Standardising SMILES, physchem descriptors, Morgan bits and each
+    column's nearest-neighbour search are the costly steps of scoring; training
     distance and every error model of training difficulty need the same
     ones, so they are computed on first use and cached here.
 
@@ -51,6 +53,7 @@ class TrainingQuery:
         self.n_rows = len(self.smiles) if n_rows is None else n_rows
         self._maccs: np.ndarray | None = None
         self._morgan: np.ndarray | None = None
+        self._physchem: np.ndarray | None = None
         self._nearest: dict[str, tuple[int, tuple]] = {}
 
     @classmethod
@@ -99,6 +102,24 @@ class TrainingQuery:
 
             self._morgan = morgan_bits(self.smiles)
         return self._morgan
+
+    @property
+    def physchem(self) -> np.ndarray:
+        """``(n, 217)`` raw RDKit physchem descriptors; non-finite cells allowed.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        if self._physchem is None:
+            from eosquality.library.physchem import compute_physchem_raw
+
+            self._physchem = compute_physchem_raw(
+                self.smiles,
+                show_progress=len(self.smiles) >= PROGRESS_MIN_MOLECULES,
+                label="query physchem descriptors",
+            )
+        return self._physchem
 
     def nearest(self, vi: VectorIndex, k: int):
         """Top-k training neighbours in ``vi`` (closest first), self excluded.

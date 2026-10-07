@@ -47,6 +47,9 @@ eosquality = "eosquality.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"eosquality.library" = ["physchem_scaler.json"]
+
 [tool.ruff]
 line-length = 88
 indent-width = 4

@@ -18,6 +18,7 @@ from eosquality import _artifacts, _reference_modality, _training_modality
 from eosquality._registry import (
     ALL_SCORES,
     DEFAULT_MAX_FEATURES,
+    DEFAULT_OFF,
     INDEX_AWARE,
     SCORE_ORDER,
     TRAINING_ORDER,
@@ -38,6 +39,8 @@ from eosquality.scores.signal import Signal
 from eosquality.scores.support import Support
 from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
+from eosquality.scores.training_match import TrainingMatch
+from eosquality.scores.training_physchem import TrainingPhyschem
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.state import SharedFitState
 from eosquality.training import TrainingFitState
@@ -61,7 +64,9 @@ class ErsiliaQuality:
     - **reference** — the model's predictions on the reference library
       (typicality, extremity, support, consistency, signal);
     - **training** — the model's per-output-column training sets
-      (training_distance, and training_difficulty when labels allow).
+      (training_distance, training_physchem, training_match, and
+      training_difficulty when
+      labels allow).
     """
 
     def __init__(self, verbose: bool = False) -> None:
@@ -82,6 +87,8 @@ class ErsiliaQuality:
         self.extremity: Extremity | None = None
         self.signal: Signal | None = None
         self.training_distance: TrainingDistance | None = None
+        self.training_physchem: TrainingPhyschem | None = None
+        self.training_match: TrainingMatch | None = None
         self.training_difficulty: TrainingDifficulty | None = None
         self._shared: SharedFitState | None = None
         self._training: TrainingFitState | None = None
@@ -100,6 +107,7 @@ class ErsiliaQuality:
         eos_id: str,
         version: str = "v1",
         exclude: Iterable[str] = (),
+        include: Iterable[str] = (),
         max_features: int | None = DEFAULT_MAX_FEATURES,
         vector_index: str | pathlib.Path | None = None,
     ) -> ErsiliaQuality:
@@ -125,6 +133,9 @@ class ErsiliaQuality:
         exclude : iterable of str, optional
             Scores not to fit, by public name (``ALL_SCORES``), e.g.
             ``["ref_signal"]``.
+        include : iterable of str, optional
+            Scores that are off by default (``DEFAULT_OFF``, currently
+            ``trn_difficulty``) to fit anyway.
         max_features : int, optional
             Cap on the output columns used by both modalities; ``None``
             disables it.
@@ -141,7 +152,8 @@ class ErsiliaQuality:
         validate_version(version)
         if reference is None and training_sets is None:
             raise ValueError("fit needs reference predictions, training sets, or both.")
-        skip_reference, skip_training = split_exclude(exclude)
+        off = [n for n in DEFAULT_OFF if n not in set(include or ())]
+        skip_reference, skip_training = split_exclude([*(exclude or ()), *off])
         if reference is not None and set(SCORE_ORDER) <= skip_reference:
             raise ValueError("Every reference score is excluded: nothing to fit.")
         if training_sets is not None and set(TRAINING_ORDER) <= skip_training:
@@ -490,7 +502,9 @@ def _score_table(scores: pd.DataFrame) -> None:
     names = [
         c
         for c in scores.columns
-        if pd.api.types.is_float_dtype(scores[c]) and not c.endswith(("_raw", "_log"))
+        if pd.api.types.is_numeric_dtype(scores[c])
+        and not pd.api.types.is_bool_dtype(scores[c])
+        and not c.endswith(("_raw", "_log"))
     ]
     console.table(
         ("score", "mean", "median", "min", "max"),
@@ -498,7 +512,7 @@ def _score_table(scores: pd.DataFrame) -> None:
             (
                 c,
                 *(
-                    f"{getattr(scores[c], f)():.3f}"
+                    f"{getattr(scores[c].astype(float), f)():.3f}"
                     for f in ("mean", "median", "min", "max")
                 ),
             )
