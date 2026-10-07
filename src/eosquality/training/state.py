@@ -87,7 +87,6 @@ def fit_training(
             column.smiles,
             pathlib.Path(workdir.name) / _folder(i),
             max_k=min(TRAINING_MAX_K, column.n - 2),
-            library_name=f"training:{name}",
         )
         logger.info(
             f"training | column {name!r}: index built | n={column.n:,} | "
