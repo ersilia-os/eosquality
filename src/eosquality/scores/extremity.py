@@ -72,13 +72,12 @@ class ExtremityRunResult:
 class Extremity(ScoreComponent):
     """Position-based per-feature extremity scorer.
 
-    Holds three pieces of fitted state:
+    Fitted state:
 
     - ``column_tables_`` — per selected column, the ascending reference
       per-feature values (float32): the table of each column's percentile.
-    - ``sorted_self_aggregates_`` — ``(n_ref,)`` ascending array of the
-      reference per-row Q66 of the per-feature percentiles. The CDF lookup
-      table that maps that aggregate to the calibrated score.
+    - the ascending reference per-row Q66 of the per-feature percentiles:
+      the CDF table that maps that aggregate to the calibrated score.
     - ``reference_extremity_`` — mean reference-as-query calibrated
       extremity. ≈ 0.5 by construction; a sanity-check anchor.
 
@@ -270,18 +269,6 @@ class Extremity(ScoreComponent):
         self._check_fitted()
         assert self._column_tables is not None
         return self._column_tables
-
-    @property
-    def sorted_self_aggregates_(self) -> np.ndarray:
-        """Sorted reference Q66 aggregates of the percentiles (the final CDF).
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        self._check_fitted()
-        assert self._sorted_self_aggregates is not None
-        return self._sorted_self_aggregates
 
     @property
     def reference_extremity_(self) -> float:

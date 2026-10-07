@@ -198,26 +198,6 @@ class ScoreComponent:
         assert self._shared is not None
         return self._shared
 
-    @property
-    def fit_duration_seconds_(self) -> float | None:
-        """Wall-clock fit duration.
-
-        Returns
-        -------
-        float or None
-        """
-        return self._fit_duration_seconds
-
-    @property
-    def fit_timestamp_(self) -> str | None:
-        """UTC fit timestamp (ISO 8601).
-
-        Returns
-        -------
-        str or None
-        """
-        return self._fit_timestamp
-
     def _check_fitted(self) -> None:
         if not self.is_fitted_:
             raise RuntimeError(

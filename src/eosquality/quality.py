@@ -130,32 +130,15 @@ class ErsiliaQuality:
         ErsiliaQuality
             ``self``, fitted. See ``docs/api.md`` for details on each argument.
         """
-        validate_eos_id(eos_id)
-        validate_version(version)
-        if reference is None and training_sets is None:
-            raise ValueError("fit needs reference predictions, training sets, or both.")
-        skip_reference, skip_training = split_exclude(exclude or ())
-        if reference is not None and set(SCORE_ORDER) <= skip_reference:
-            raise ValueError("Every reference score is excluded: nothing to fit.")
-        if training_sets is not None and set(TRAINING_ORDER) <= skip_training:
-            raise ValueError("Every training score is excluded: nothing to fit.")
+        skip_reference, skip_training = _validate_fit_args(
+            reference, training_sets, eos_id, version, exclude
+        )
         self._reset()
         t_start = time.perf_counter()
         console.set_active_color(console.STEP_COLORS["fit"])
         logger.info(f"fit | {eos_id} {version}")
-        training_columns = None
-        if training_sets is not None:
-            # Training sets first: with a reference, they decide its columns.
-            output_columns = (
-                infer_schema(reference).column_names if reference is not None else None
-            )
-            training_columns = _training_modality.load_training_sets(
-                training_sets, output_columns
-            )
-            if reference is not None:
-                reference = _restrict_outputs(
-                    reference, output_columns, list(training_columns)
-                )
+        # Training sets first: with a reference, they decide its columns.
+        reference, training_columns = _load_training_first(reference, training_sets)
         if reference is not None:
             _reference_modality.fit_reference(
                 self,
@@ -179,11 +162,7 @@ class ErsiliaQuality:
                 n_loaded=len(training_columns),
             )
         self.is_fitted_ = True
-        fitted = list(self._components()) + list(self._training_components())
-        logger.success(
-            f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | "
-            f"{time.perf_counter() - t_start:.2f}s"
-        )
+        self._log_fit_done(t_start)
         return self
 
     def run(self, query: pd.DataFrame) -> RunResult:
@@ -382,6 +361,14 @@ class ErsiliaQuality:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _log_fit_done(self, t_start: float) -> None:
+        """Log the ``Fit complete`` line with the fitted scores and the elapsed time."""
+        fitted = list(self._components()) + list(self._training_components())
+        logger.success(
+            f"Fit complete | {len(fitted)} score(s) [{', '.join(fitted)}] | "
+            f"{time.perf_counter() - t_start:.2f}s"
+        )
+
     def _check_fitted(self) -> None:
         if not self.is_fitted_:
             raise NotFittedError(
@@ -459,6 +446,74 @@ def _score_table(scores: pd.DataFrame) -> None:
         ],
         title="Score summary",
     )
+
+
+def _validate_fit_args(
+    reference, training_sets, eos_id: str, version: str, exclude
+) -> tuple[set[str], set[str]]:
+    """Validate the arguments of ``fit``; return the excluded components per modality.
+
+    Parameters
+    ----------
+    reference : pandas.DataFrame or None
+        Reference predictions.
+    training_sets : str, pathlib.Path or None
+        Training-sets folder.
+    eos_id, version : str
+        Model identifier and version.
+    exclude : iterable of str
+        Public score names not to fit.
+
+    Returns
+    -------
+    tuple of (set of str, set of str)
+        Excluded reference components and excluded training components.
+
+    Raises
+    ------
+    ValueError
+        If an argument is invalid, or a given input has no score left to fit.
+    """
+    validate_eos_id(eos_id)
+    validate_version(version)
+    if reference is None and training_sets is None:
+        raise ValueError("fit needs reference predictions, training sets, or both.")
+    skip_reference, skip_training = split_exclude(exclude or ())
+    if reference is not None and set(SCORE_ORDER) <= skip_reference:
+        raise ValueError("Every reference score is excluded: nothing to fit.")
+    if training_sets is not None and set(TRAINING_ORDER) <= skip_training:
+        raise ValueError("Every training score is excluded: nothing to fit.")
+    return skip_reference, skip_training
+
+
+def _load_training_first(reference, training_sets):
+    """Load the training sets and restrict the reference to their output columns.
+
+    Parameters
+    ----------
+    reference : pandas.DataFrame or None
+        Reference predictions.
+    training_sets : str, pathlib.Path or None
+        Training-sets folder.
+
+    Returns
+    -------
+    tuple
+        ``(reference, training_columns)``: the reference without the outputs
+        that have no usable training set, and the loaded training columns
+        (``None`` without training sets).
+    """
+    if training_sets is None:
+        return reference, None
+    output_columns = (
+        infer_schema(reference).column_names if reference is not None else None
+    )
+    training_columns = _training_modality.load_training_sets(
+        training_sets, output_columns
+    )
+    if reference is not None:
+        reference = _restrict_outputs(reference, output_columns, list(training_columns))
+    return reference, training_columns
 
 
 def _restrict_outputs(

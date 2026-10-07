@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-from eosquality.utils.progress import make_progress
+from eosquality.utils import console
 
 # A process pool is used only when the caller asks for it (``n_jobs > 1``)
 # and the input is at least this large: spawning workers (each re-imports
@@ -63,7 +63,7 @@ def map_rows(
     n_jobs = max(1, min(n_jobs or 1, n))
     parallel = n_jobs > 1 and n >= PARALLEL_MIN_ITEMS
     progress = (
-        make_progress(label)
+        console.progress(label)
         if (show_progress is None and parallel) or show_progress
         else None
     )

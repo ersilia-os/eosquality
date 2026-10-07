@@ -78,15 +78,14 @@ class TypicalityRunResult:
 class Typicality(ScoreComponent):
     """Density-based per-feature typicality scorer.
 
-    Holds three pieces of fitted state (plus ``pct_luts_``, derived from the
-    first):
+    Fitted state:
 
-    - ``count_luts_`` — ``(256, n_features)`` int array of reference counts
-      per int8 level per column. Built once at fit time and consulted at
-      query time.
-    - ``sorted_self_aggregates_`` — ``(n_ref,)`` ascending array of
-      reference per-row Q66 aggregates of the per-column percentiles. The
-      CDF lookup table that maps the aggregate to the calibrated score.
+    - per-column int8 count LUTs, ``(256, n_features)``: reference counts per
+      level per column, built at fit time (saved);
+    - ``pct_luts_`` — ``(256, n_features)`` per-column percentile of each
+      level, derived from the counts (not saved);
+    - the ascending reference per-row Q66 aggregates of the per-column
+      percentiles: the CDF table that maps the aggregate to the score;
     - ``reference_typicality_`` — mean reference-as-query calibrated
       typicality. ≈ 0.5 by construction; a sanity-check anchor.
 
@@ -278,19 +277,6 @@ class Typicality(ScoreComponent):
         )
 
     @property
-    def count_luts_(self) -> np.ndarray:
-        """Per-column int8 count LUTs.
-
-        Returns
-        -------
-        numpy.ndarray
-            ``(256, n_features)``.
-        """
-        self._check_fitted()
-        assert self._count_luts is not None
-        return self._count_luts
-
-    @property
     def pct_luts_(self) -> np.ndarray:
         """Per-column percentile of each int8 level (derived from the counts).
 
@@ -302,18 +288,6 @@ class Typicality(ScoreComponent):
         self._check_fitted()
         assert self._pct_luts is not None
         return self._pct_luts
-
-    @property
-    def sorted_self_aggregates_(self) -> np.ndarray:
-        """Sorted reference Q66 aggregates (the calibration CDF).
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        self._check_fitted()
-        assert self._sorted_self_aggregates is not None
-        return self._sorted_self_aggregates
 
     @property
     def reference_typicality_(self) -> float:

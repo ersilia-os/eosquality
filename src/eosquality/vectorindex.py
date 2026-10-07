@@ -1,6 +1,6 @@
 """VectorIndex: pre-computed Morgan vector index for molecular kNN.
 
-Build once per reference molecule collection; share across many models.
+Built per training column (``training/state.py``) for the training scores.
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ from FPSim2 import FPSim2Engine
 from FPSim2.io import create_db_file
 from rdkit import __version__ as _RDKIT_VERSION
 
+from eosquality.utils import console
 from eosquality.utils.logging import logger
-from eosquality.utils.progress import make_progress
 
 _PROGRESS_THRESHOLD = 25  # show the FP kNN bar once n_query is at least this
 # FPSim2 top-k searches run single-threaded on purpose: with n_workers > 1
 # the order of equally-similar neighbors is not stable, so which molecule
-# fills the k-th slot (and therefore Consistency) would vary between runs.
+# fills the k-th slot (and therefore the training distances) would vary between runs.
 _QUERY_WORKERS = 1
 
 MAX_K_DEFAULT = 50
@@ -68,11 +68,7 @@ class VectorIndex:
         ``(n_ref, max_k)`` self-kNN, identity neighbor already
         stripped), ``smiles.csv`` (one SMILES per reference row), and
         ``metadata.json`` (library name, radius, n_bits, max_k, RDKit
-        version). The same folder also holds the per-molecule descriptor
-        matrices written by :class:`eosquality.basic_descriptors.BasicDescriptors`
-        (``physchem_scaled.npy``, ``physchem_scaler.json``, ``maccs.npy``).
-        Those are not loaded by :meth:`load`; the Signal score's descriptor
-        backends read them directly from :attr:`index_dir`.
+        version).
     """
 
     def __init__(
@@ -407,7 +403,7 @@ class VectorIndex:
         if show_progress is None:
             show_progress = n_query >= _PROGRESS_THRESHOLD
 
-        progress = make_progress("FP kNN query") if show_progress else None
+        progress = console.progress("FP kNN query") if show_progress else None
         task_id = None
         if progress is not None:
             progress.start()

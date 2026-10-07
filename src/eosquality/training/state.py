@@ -33,34 +33,8 @@ from eosquality.vectorindex import VectorIndex
 
 SUBFOLDER = "training_sets"
 # Bump when the meaning or layout of training_sets/ changes. Independent of
-# ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected.
-# 2: training_distance (uncalibrated) replaced training_domain.
-# 3: training_distance is the mean distance to the 5 nearest training
-#    molecules, calibrated on the leave-one-out values.
-# 4: training_difficulty uses UNIQUE feature set (i) only (state.json carries
-#    `spearman` and `cv`, no `variant`); training-molecule queries reuse
-#    their out-of-fold inputs (arrays.npz carries `oof_error`).
-# 5: error models are fitted on at most MAX_FIT_MOLECULES labelled molecules
-#    per column, so the per-molecule arrays (residuals, oof_*) are NaN
-#    outside that subset and state.json carries `n_fit`.
-# 6: the error model's inputs are four scalars (nn1_tanimoto, nn5_tanimoto,
-#    ensemble_variance, surrogate_score); the MACCS data features and the
-#    three KDE log-densities are gone, so density.joblib is no longer written
-#    and scores/_density.py was deleted.
-# 7: adds training_physchem (mean distance to the 5 nearest training
-#    molecules over standardised physchem descriptors), saved under
-#    training_physchem/c000/.
-# 8: adds training_match (connectivity layers of the training molecules and
-#    their Murcko scaffolds) under training_match/; training_distance is
-#    published as trn_tanimoto.
-# 9: training_physchem scales with the reference library's shipped scaler,
-#    clipped to +/-10, instead of the training set's own statistics.
-# 10: the physchem leave-one-out table drops each molecule's own row by
-#    position; the earlier distance test missed it for most molecules, which
-#    biased the table low.
-# 11: no labels or model predictions are kept (training_difficulty and the
-#    error model were removed): columns.json is {folder, n} and arrays.npz
-#    holds only the ids.
+# ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected. History:
+# git log.
 TRAINING_FORMAT_VERSION = 11
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10

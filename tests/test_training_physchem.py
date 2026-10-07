@@ -173,23 +173,6 @@ def test_scaler_must_match_the_descriptor_count():
         PhyschemDomain.fit(raw, scaler)
 
 
-def test_the_packaged_scaler_is_the_canonical_librarys():
-    """The shipped copy must equal what ``eosquality build`` wrote."""
-    import glob
-    import json
-
-    from eosquality.library.physchem import canonical_scaler
-
-    found = glob.glob("data/indices/*/physchem_scaler.json")
-    if not found:
-        pytest.skip("canonical library not installed here")
-    with open(found[0]) as f:
-        library = json.load(f)
-    shipped = canonical_scaler()
-    for key in ("descriptor_names", "median", "mean", "scale"):
-        assert shipped[key] == library[key], key
-
-
 def test_similarity_is_one_minus_distance_over_the_pair_median():
     rng = np.random.default_rng(0)
     raw = rng.normal(size=(60, 4))

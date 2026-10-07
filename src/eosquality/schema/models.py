@@ -8,10 +8,7 @@ class ColumnSpec:
     """Specification for a single input column."""
 
     name: str
-    kind: str  # "numeric" in v0.1; future: "binary", "categorical", "count", "vector"
-    weight: float = 1.0
-    missing_policy: str = "ignore"
-    block: str | None = None
+    kind: str  # always "numeric" today
 
 
 @dataclass

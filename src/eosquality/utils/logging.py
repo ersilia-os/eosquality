@@ -296,15 +296,5 @@ class Logger:
         """
         self.logger.opt(depth=1).error(text)
 
-    def exception(self, text: str) -> None:
-        """Log an error with the active exception's traceback (in the log file).
-
-        Parameters
-        ----------
-        text : str
-            Message.
-        """
-        self.logger.opt(depth=1, exception=True).error(text)
-
 
 logger = Logger()
