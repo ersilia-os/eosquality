@@ -51,9 +51,7 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
 ## `eosquality setup`
 
-Sets eosquality up: fetches the canonical reference library from the public S3 bucket into the user cache:
-- the library folder (SMILES, metadata, match keys) → `~/.eosquality/indices/<library>/`
-- the source CSV → `~/.eosquality/libraries/<library>.csv`
+Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
 
 This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
 
