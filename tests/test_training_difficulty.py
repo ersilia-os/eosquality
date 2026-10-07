@@ -11,7 +11,9 @@ from eosquality.training.folds import scaffold_folds
 
 @pytest.fixture(scope="module")
 def fitted(training_dir):
-    return ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    return ErsiliaQuality().fit(
+        eos_id="eos0aaa", training_sets=training_dir, include=["trn_difficulty"]
+    )
 
 
 def test_fitted_only_on_labelled_columns(fitted):
@@ -29,12 +31,8 @@ def test_scores_and_metadata(fitted, query):
     assert ((score > 0) & (score <= 1)).all()
     assert set(res.metadata["trn_difficulty_spearman"]) == {"mw", "aromatic"}
     details = res.training_details
-    assert list(details.columns[2:6]) == [
-        "trn_distance",
-        "trn_distance_raw",
-        "trn_difficulty",
-        "trn_in_training",
-    ]
+    assert "trn_difficulty" in details.columns
+    assert "trn_in_training" in details.columns
     np.testing.assert_allclose(details.trn_difficulty, score)
 
 
@@ -61,7 +59,9 @@ def test_no_labels_no_difficulty(tmp_path, smiles):
     folder = tmp_path / "training_eos0aaa_v1"
     folder.mkdir()
     pd.DataFrame({"smiles": smiles[:200]}).to_csv(folder / "mw.csv", index=False)
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
+    eq = ErsiliaQuality().fit(
+        eos_id="eos0aaa", training_sets=folder, include=["trn_difficulty"]
+    )
     assert eq.training_difficulty is None
     assert "trn_difficulty" not in eq.run(pd.DataFrame({"input": smiles[:5]})).scores
 
@@ -78,7 +78,9 @@ def test_noisy_region_ranks_harder(tmp_path, smiles):
     pd.DataFrame({"smiles": smiles[:600], "y": y[:600]}).to_csv(
         folder / "mw.csv", index=False
     )
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)
+    eq = ErsiliaQuality().fit(
+        eos_id="eos0aaa", training_sets=folder, include=["trn_difficulty"]
+    )
     # The four inputs say how far and how uncertain, never which chemotype, so
     # a noisy region defined by a substructure is only partly recoverable: the
     # surrogate's own variance rises there, but nothing names sulfur. With the
@@ -150,7 +152,9 @@ def test_congeneric_series_falls_back_to_random_folds(tmp_path):
     folder.mkdir()
     y = np.random.default_rng(0).normal(size=len(smi))
     pd.DataFrame({"smiles": smi, "y": y}).to_csv(folder / "mw.csv", index=False)
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=folder)  # no crash
+    eq = ErsiliaQuality().fit(
+        eos_id="eos0aaa", training_sets=folder, include=["trn_difficulty"]
+    )  # no crash
     assert eq.training_difficulty.models_["mw"].cv == "random"
 
 
@@ -172,7 +176,9 @@ def test_error_models_fit_on_at_most_max_fit_molecules(training_dir, monkeypatch
     from eosquality.scores import _error_model
 
     monkeypatch.setattr(_error_model, "MAX_FIT_MOLECULES", 120)
-    eq = ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+    eq = ErsiliaQuality().fit(
+        eos_id="eos0aaa", training_sets=training_dir, include=["trn_difficulty"]
+    )
     model = eq.training_difficulty.models_["mw"]
     column, vi = eq._training.columns["mw"], eq._training.indices["mw"]
     assert model.n_fit == 120 and model.n_labelled == column.n > 120
@@ -192,5 +198,7 @@ def test_weak_error_model_is_reported(training_dir, tmp_path, monkeypatch):
     monkeypatch.setattr(td, "WEAK_SPEARMAN", 0.999)  # every model counts as weak
     path = tmp_path / "fit.log"
     with logger.log_file(path):
-        ErsiliaQuality().fit(eos_id="eos0aaa", training_sets=training_dir)
+        ErsiliaQuality().fit(
+            eos_id="eos0aaa", training_sets=training_dir, include=["trn_difficulty"]
+        )
     assert "barely predictable" in path.read_text()

@@ -46,7 +46,15 @@ SUBFOLDER = "training_sets"
 #    ensemble_variance, surrogate_score); the MACCS data features and the
 #    three KDE log-densities are gone, so density.joblib is no longer written
 #    and scores/_density.py was deleted.
-TRAINING_FORMAT_VERSION = 6
+# 7: adds training_physchem (mean distance to the 5 nearest training
+#    molecules over standardised physchem descriptors), saved under
+#    training_physchem/c000/.
+# 8: adds training_match (connectivity layers of the training molecules and
+#    their Murcko scaffolds) under training_match/; training_distance is
+#    published as trn_tanimoto.
+# 9: training_physchem scales with the reference library's shipped scaler,
+#    clipped to +/-10, instead of the training set's own statistics.
+TRAINING_FORMAT_VERSION = 9
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

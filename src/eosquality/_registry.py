@@ -26,7 +26,12 @@ SCORE_ORDER: tuple[str, ...] = (
     "signal",
 )
 # Training-modality components (present iff training sets were fit).
-TRAINING_ORDER: tuple[str, ...] = ("training_distance", "training_difficulty")
+TRAINING_ORDER: tuple[str, ...] = (
+    "training_distance",
+    "training_physchem",
+    "training_match",
+    "training_difficulty",
+)
 
 # Component → public score name (and output column prefix).
 SCORE_NAMES: dict[str, str] = {
@@ -35,15 +40,18 @@ SCORE_NAMES: dict[str, str] = {
     "support": "ref_support",
     "consistency": "ref_consistency",
     "signal": "ref_signal",
-    "training_distance": "trn_distance",
+    "training_distance": "trn_tanimoto",
+    "training_physchem": "trn_physchem",
+    "training_match": "trn_match",
     "training_difficulty": "trn_difficulty",
 }
+# Scores that are not fitted unless asked for (``fit(include=...)``): the error
+# model is parked for now; its code and artifacts format stay in place.
+DEFAULT_OFF: tuple[str, ...] = ("trn_difficulty",)
 COMPONENTS: dict[str, str] = {score: comp for comp, score in SCORE_NAMES.items()}
 REFERENCE_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in SCORE_ORDER)
 TRAINING_SCORES: tuple[str, ...] = tuple(SCORE_NAMES[c] for c in TRAINING_ORDER)
 ALL_SCORES: tuple[str, ...] = REFERENCE_SCORES + TRAINING_SCORES
-# Flag set when the query is itself a training molecule of some column.
-IN_TRAINING_COLUMN = "trn_in_training"
 
 # Scores that need the vector index at fit time (Signal reads the library's
 # descriptor matrices from the index folder; it never queries the index).

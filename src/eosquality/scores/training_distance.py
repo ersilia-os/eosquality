@@ -12,7 +12,7 @@ from the output columns' training sets without pooling them:
   column's own leave-one-out raw values (each training molecule vs its k
   nearest *other* training molecules): ~0.5 for a query as close as a typical
   training molecule, near 1 when farther than almost all of them.
-- **Whole model.** ``trn_distance`` and ``trn_distance_raw`` are
+- **Whole model.** ``trn_tanimoto_pct`` and ``trn_tanimoto_raw`` are
   the 66th percentile across columns of the calibrated and the raw values:
   at least two-thirds of the columns are this close or closer. Calibrated
   values are percentiles of each column's own training set, so columns of
@@ -55,14 +55,14 @@ LOO_FILE = "loo_mean_distances.npz"
 K_NEIGHBORS = 5
 
 # The training details table, one row per query. ``trn_difficulty`` is
-# inserted after ``trn_distance_raw`` when fitted. ``nn_*`` describe the
+# inserted after ``trn_tanimoto_raw`` when fitted. ``nn_*`` describe the
 # K_NEIGHBORS nearest training molecules over all columns, closest first,
 # "|"-separated (``nn_columns``: ";" between the columns of one molecule).
 DETAIL_COLUMNS = [
     "key",
     "input",
-    "trn_distance",
-    "trn_distance_raw",
+    "trn_tanimoto_pct",
+    "trn_tanimoto_raw",
     "trn_in_training",
     "nn1_similarity",
     "nn_smiles",
@@ -170,8 +170,8 @@ class TrainingDistance(ScoreComponent):
             {
                 "key": keys,
                 "input": query["input"].tolist(),
-                "trn_distance": score,
-                "trn_distance_raw": score_raw,
+                "trn_tanimoto_pct": score,
+                "trn_tanimoto_raw": score_raw,
                 "trn_in_training": in_train.any(axis=1),
             },
             index=idx,
@@ -186,8 +186,8 @@ class TrainingDistance(ScoreComponent):
         details = details[DETAIL_COLUMNS].reset_index(drop=True)
         details["nn1_similarity"] = details["nn1_similarity"].astype(float)
         return TrainingDistanceRunResult(
-            score=pd.Series(score, index=idx, name="trn_distance"),
-            score_raw=pd.Series(score_raw, index=idx, name="trn_distance_raw"),
+            score=pd.Series(score, index=idx, name="trn_tanimoto_pct"),
+            score_raw=pd.Series(score_raw, index=idx, name="trn_tanimoto_raw"),
             in_training=pd.Series(
                 in_train.any(axis=1), index=idx, name="trn_in_training"
             ),

@@ -68,8 +68,9 @@ Reference-modality scores compare a query against the model's own predictions on
 | **Support** (`ref_support`) | Does the reference library contain a close analogue of the molecule? |
 | **Consistency** (`ref_consistency`) | Do the predictions agree with those for chemically similar reference molecules, given how similar they are? |
 | **Signal** (`ref_signal`, provisional) | Is the prediction driven by a few chemical descriptors? |
-| **Training distance** (`trn_distance`) | How far is the molecule from the model's training molecules, compared with how close they are to each other? One value for the whole model. |
-| **Training difficulty** (`trn_difficulty`, needs labels) | How hard is the molecule to predict, judging by where a learned error model finds the training data hard? One value for the whole model. |
+| **Training similarity** (`trn_tanimoto`) | How far is the molecule from the model's training molecules, compared with how close they are to each other? Raw and as a percentile of the training set's own distances. |
+| **Training physchem** (`trn_physchem`) | The same question in physicochemical descriptor space. |
+| **Training match** (`trn_match`, `trn_scaffold`) | Is the same structure, or the same Murcko scaffold, in a training set? 1 or 0. |
 
 ## Documentation
 

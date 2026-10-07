@@ -22,8 +22,8 @@ stylia.set_format("slide")
 stylia.set_style("ersilia")
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-SCORES = ["trn_distance", "trn_difficulty"]
-SCORE_LABELS = {"trn_distance": "Distance", "trn_difficulty": "Difficulty"}
+SCORES = ["trn_tanimoto_pct", "trn_difficulty"]
+SCORE_LABELS = {"trn_tanimoto_pct": "Distance", "trn_difficulty": "Difficulty"}
 BOX_LABELS = {
     "rf_morgan": "RF Morgan\n(same family as surrogate)",
     "xgb_physchem": "XGBoost physchem",

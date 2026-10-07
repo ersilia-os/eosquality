@@ -19,7 +19,7 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 | `fit` gets | Scores |
 |---|---|
 | `-r/--reference` (predictions on the reference library) | `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal` |
-| `-t/--training-sets` (per-output-column training sets) | `trn_distance`, and `trn_difficulty` for columns with labels |
+| `-t/--training-sets` (per-output-column training sets) | `trn_tanimoto`, `trn_physchem`, `trn_match` and `trn_scaffold` (the error model `trn_difficulty` is parked and off by default) |
 | both | both, on the same columns (below) |
 
 ```bash
@@ -28,7 +28,7 @@ eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                 
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_signal     # skip a score
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give `trn_distance` (calibrated and raw) and the nearest training neighbours. Labels `y` (at least 50 in some column) add `trn_difficulty`, a learned error model, together with its four inputs as columns of their own (`trn_nn1_tanimoto`, `trn_nn5_tanimoto`, `trn_ensemble_variance`, `trn_surrogate_score`); the fit log reports, per column, how well it ranks held-out errors.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES alone give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file. The error model `trn_difficulty` (needs labels `y`, at least 50 in some column) is parked: it is off by default.
 
 **Common behaviour:**
 - **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
@@ -88,7 +88,7 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
 | `--artifacts`, `-a DIR` | required | new artifacts folder |
-| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_distance`, `trn_difficulty` |
+| `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_support`, `ref_consistency`, `ref_signal`, `trn_tanimoto`, `trn_physchem`, `trn_match`, `trn_difficulty` |
 | `--verbose`, `-v` | off | |
 
 At least one of `-r` and `-t` is required.
@@ -113,9 +113,9 @@ The artifacts folder and the output must be named for the same model, which must
 The output CSV contains:
 - the query's `key` and `input` (or `smiles`) columns, if present;
 - for each fitted reference score, a calibrated column and a `*_raw` column (plus `ref_support_log`);
-- for the training modality, `trn_distance`, `trn_distance_raw`, `trn_difficulty` (when fitted) and `trn_in_training` (see [api.md](api.md#runresult)).
+- for the training modality, `trn_tanimoto_pct`, `trn_tanimoto_raw`, `trn_physchem_pct`, `trn_physchem_raw` (a similarity, 1 = identical, 0 = no closer than a random library pair), `trn_match` and `trn_scaffold` (see [api.md](api.md#runresult)). `trn_match` and `trn_scaffold` are 1 / 0, and `trn_scaffold` is empty for a query with no scaffold.
 
-If the artifacts hold `trn_distance`, a second CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
+If the artifacts hold training scores, a second CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
 
 For a training-only artifact, the query only needs SMILES, in an `input` or `smiles` column (`key` is optional).
 

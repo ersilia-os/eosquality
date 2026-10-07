@@ -185,6 +185,37 @@ def fit_scaler(raw: np.ndarray) -> dict:
     }
 
 
+def canonical_scaler() -> dict:
+    """The reference library's physchem scaler, shipped with the package.
+
+    ``physchem_scaler.json`` next to this module is a copy of the file
+    ``eosquality build`` wrote for the canonical library (impute medians,
+    means and scales over its 1.35M molecules). It lets the training modality
+    place every model in the same descriptor space without the library
+    installed.
+
+    Returns
+    -------
+    dict
+        ``descriptor_names``, ``median``, ``mean``, ``scale`` and the versions
+        it was fitted with.
+
+    Raises
+    ------
+    RuntimeError
+        If the installed RDKit's descriptor list differs from the scaler's.
+    """
+    import json
+    from importlib import resources
+
+    with (
+        resources.files("eosquality.library").joinpath(PHYSCHEM_SCALER_FILE).open() as f
+    ):
+        params = json.load(f)
+    check_descriptor_names(params)
+    return params
+
+
 def check_descriptor_names(scaler_params: dict) -> None:
     """Raise if the installed RDKit's descriptor list differs from the fitted one.
 

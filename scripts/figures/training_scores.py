@@ -1,6 +1,6 @@
 """Training-score distributions per query set (rows) and model (violins).
 
-Left column: ``trn_distance`` (calibrated, 0–1). Middle: ``trn_distance_raw``
+Left column: ``trn_tanimoto_pct`` (calibrated, 0–1). Middle: ``trn_tanimoto_raw``
 (1 − mean Tanimoto to the 5 nearest training molecules). Right:
 ``trn_difficulty``. Only models fitted with training sets appear.
 
@@ -27,8 +27,8 @@ stylia.set_format("slide")
 stylia.set_style("ersilia")
 
 PANELS = [
-    ("trn_distance", "Distance (calibrated)", (0.0, 1.0)),
-    ("trn_distance_raw", "Distance (raw, 1 − Tanimoto)", (0.0, 1.0)),
+    ("trn_tanimoto_pct", "Distance (calibrated)", (0.0, 1.0)),
+    ("trn_tanimoto_raw", "Distance (raw, 1 − Tanimoto)", (0.0, 1.0)),
     ("trn_difficulty", "Difficulty (calibrated)", (0.0, 1.0)),
 ]
 
@@ -58,7 +58,7 @@ def main():
                 for m in with_training
             ]
             plot_violins(ax, values, colors, lo, hi)
-            if column != "trn_distance_raw":
+            if column != "trn_tanimoto_raw":
                 ax.axvline(0.5, color="black", lw=0.6, ls="--", alpha=0.5)
             ax.set_yticklabels(
                 [MODEL_LABELS.get(m, m) for m in with_training] if j == 0 else []

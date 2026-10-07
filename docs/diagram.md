@@ -47,7 +47,7 @@ flowchart LR
     TQ --> TDR["Training distance<br/>per column → 66th percentile"]
     TQ --> TDF["Training difficulty<br/>error model per column → 66th percentile"]
     TDR & TDF --> DET["&lt;output&gt;.training_details.csv<br/>one row per query · 5 nearest training molecules"]
-    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log, trn_in_training)"]
+    TYP & EXT & SUP & CON & SIG & TDR & TDF --> OUT["&lt;output&gt;.csv<br/>ref_* and trn_* columns: score + score_raw<br/>(+ ref_support_log; trn_match and trn_scaffold flags)"]
 ```
 
 ## Save layout
@@ -75,8 +75,10 @@ One subfolder per modality; either or both may be present.
       metadata.json                       # training_format_version, eos_id, version, columns
       columns.json  arrays.npz            # per column: n, y_kind, ids, y, predictions
       indices/c000/ …                     # one VectorIndex per output column
-    training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_distance
-    training_difficulty/  state.json  metadata.json  # trn_difficulty; iff some column has ≥ 50 labels
+    training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_tanimoto
+    training_physchem/  c000/ …  # trn_physchem
+    training_match/  connectivity_keys.npz  metadata.json  # trn_match, trn_scaffold
+    training_difficulty/  state.json  metadata.json  # trn_difficulty; off by default (include=)
       c000/ …           surrogate.joblib  density.joblib  error_model.joblib
                         arrays.npz  state.json      # one folder per labelled column
 ```

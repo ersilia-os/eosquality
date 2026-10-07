@@ -303,6 +303,12 @@ Training modality:
       cap cost at most 0.02 out-of-fold Spearman on eos42ez, but it has not
       been checked on a set much larger than 39,000.
 - [ ] Conformal expected-error intervals (stage 4 above).
+- [ ] Error model (`trn_difficulty`, and its four inputs `nn1_tanimoto`,
+      `nn5_tanimoto`, `ensemble_variance`, `surrogate_score`): parked. It is off
+      by default (`_registry.DEFAULT_OFF`; `fit(include=["trn_difficulty"])` turns
+      it on) and not written to the scores CSV. The code, tests and artifact
+      format stay in place; revisit once the similarity and physchem domain
+      columns are settled.
 
 New:
 

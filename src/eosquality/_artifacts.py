@@ -17,6 +17,8 @@ from eosquality.scores.signal import SIGNAL_FORMULA_VERSION, Signal
 from eosquality.scores.support import Support
 from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
+from eosquality.scores.training_match import TrainingMatch
+from eosquality.scores.training_physchem import TrainingPhyschem
 from eosquality.scores.typicality import Typicality
 from eosquality.shared.load import load_shared
 from eosquality.shared.save import save_shared
@@ -201,7 +203,12 @@ def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
     if has_training:
         root = folder / TRAINING_DIR
         instance._training = load_training_state(root)
-        for cls in (TrainingDistance, TrainingDifficulty):
+        for cls in (
+            TrainingDistance,
+            TrainingPhyschem,
+            TrainingMatch,
+            TrainingDifficulty,
+        ):
             if (root / cls.NAME).is_dir():
                 setattr(
                     instance,

@@ -8,18 +8,47 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from eosquality._registry import IN_TRAINING_COLUMN, score_name
+from eosquality._registry import TRAINING_ORDER, score_name
 from eosquality.scores._error_model import MIN_LABELLED
 from eosquality.scores._training_helpers import TrainingQuery
 from eosquality.scores.training_difficulty import TrainingDifficulty
 from eosquality.scores.training_distance import TrainingDistance
+from eosquality.scores.training_match import TrainingMatch
+from eosquality.scores.training_physchem import TrainingPhyschem
 from eosquality.shared.feature_selection import select_by_shared_molecules
 from eosquality.training.data import load_training
 from eosquality.training.state import fit_training
 from eosquality.utils import console
 from eosquality.utils.logging import logger
+
+# Column order of the training details table; columns of an unfitted score are
+# simply absent. The scores CSV carries the pct / raw pairs and the two flags;
+# the nearest-neighbour table and the error model's inputs stay in this table.
+_DETAILS_ORDER = (
+    "key",
+    "input",
+    "trn_tanimoto_pct",
+    "trn_tanimoto_raw",
+    "trn_physchem_pct",
+    "trn_physchem_raw",
+    "trn_physchem_dist",
+    "trn_match",
+    "trn_scaffold",
+    "trn_difficulty",
+    "trn_nn1_tanimoto",
+    "trn_nn5_tanimoto",
+    "trn_ensemble_variance",
+    "trn_surrogate_score",
+    "trn_in_training",
+    "nn1_similarity",
+    "nn_smiles",
+    "nn_keys",
+    "nn_similarities",
+    "nn_columns",
+)
 
 
 def load_training_sets(training_sets, output_columns=None) -> dict:
@@ -151,8 +180,12 @@ def fit_training_modality(
         for difficulty).
     """
     want_distance = "training_distance" not in skip
+    want_physchem = "training_physchem" not in skip
+    want_match = "training_match" not in skip
     want_difficulty = "training_difficulty" not in skip
-    steps = console.Steps(1 + want_distance + want_difficulty)
+    steps = console.Steps(
+        1 + want_distance + want_physchem + want_match + want_difficulty
+    )
     with console.section("Training modality") as section:
         if n_loaded is not None and n_loaded > len(columns):
             console.detail(
@@ -173,13 +206,44 @@ def fit_training_modality(
                     training=eq._training, shared=eq._shared
                 )
                 st.summary = "leave-one-out tables for 5-NN distances"
+        eq.training_physchem = None
+        if want_physchem:
+            with steps(f"Score: {score_name('training_physchem')}") as st:
+                eq.training_physchem = TrainingPhyschem().fit(
+                    training=eq._training, shared=eq._shared
+                )
+                sizes = {d.n_train for d in eq.training_physchem.domains_.values()}
+                st.summary = (
+                    f"{len(eq.training_physchem.domains_)} physchem domain(s) · "
+                    f"{min(sizes):,}-{max(sizes):,} molecules"
+                    if len(sizes) > 1
+                    else f"physchem domain on {sizes.pop():,} molecules"
+                )
+        eq.training_match = None
+        if want_match:
+            with steps(f"Score: {score_name('training_match')}") as st:
+                eq.training_match = TrainingMatch().fit(
+                    training=eq._training, shared=eq._shared
+                )
+                st.summary = (
+                    f"{len(eq.training_match._molecules):,} structures · "
+                    f"{len(eq.training_match._scaffolds):,} scaffolds"
+                )
         eq.training_difficulty = None
         if want_difficulty:
             _fit_difficulty(eq, steps)
-        if eq.training_distance is None and eq.training_difficulty is None:
+        if not any(
+            getattr(eq, name) is not None
+            for name in (
+                "training_distance",
+                "training_physchem",
+                "training_match",
+                "training_difficulty",
+            )
+        ):
             raise ValueError(
-                "Nothing to fit for the training sets: trn_distance is excluded "
-                f"and no column has >= {MIN_LABELLED} labels for trn_difficulty."
+                "Nothing to fit for the training sets: every training score is "
+                f"excluded or off (trn_difficulty also needs >= {MIN_LABELLED} labels)."
             )
         section.summary = f"{len(columns)} column(s)"
 
@@ -214,10 +278,64 @@ def _fit_difficulty(eq, steps) -> None:
     )
 
 
+def _assemble_details(
+    query: pd.DataFrame, details: pd.DataFrame | None, extras: dict[str, Any]
+) -> pd.DataFrame | None:
+    """Add the per-query values kept out of the scores CSV to the details table.
+
+    Parameters
+    ----------
+    query : pandas.DataFrame
+        The query, in row order (used for ``key`` / ``input`` when training
+        distance, which normally supplies them, is not fitted).
+    details : pandas.DataFrame or None
+        The training distance details, or None when it is not fitted.
+    extras : dict
+        Column name to per-query values (aligned with ``query``).
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        The table in ``_DETAILS_ORDER``; None when there is nothing to report.
+    """
+    if details is None:
+        if not extras:
+            return None
+        keys = (
+            query["key"].astype(str).tolist()
+            if "key" in query.columns
+            else [str(i) for i in query.index]
+        )
+        details = pd.DataFrame({"key": keys, "input": query["input"].tolist()})
+    for name, values in extras.items():
+        details[name] = np.asarray(values)
+    ordered = [c for c in _DETAILS_ORDER if c in details.columns]
+    return details[ordered + [c for c in details.columns if c not in ordered]]
+
+
+def _emit(columns: dict, extras: dict, *series: pd.Series) -> None:
+    """Put each Series in the scores columns and in the details extras."""
+    for ser in series:
+        columns[ser.name] = ser
+        extras[ser.name] = ser.to_numpy()
+
+
+def _share(flags: pd.Series) -> str:
+    """Console summary of a 1 / 0 flag column: the share of ones."""
+    known = flags.dropna()
+    return f"{known.mean():.0%} of {len(known):,}" if len(known) else "no valid rows"
+
+
 def run_training(
     eq, query: pd.DataFrame, columns: dict[str, pd.Series], metadata: dict[str, Any]
 ) -> pd.DataFrame | None:
     """Run the fitted training components, filling ``columns`` and ``metadata``.
+
+    ``columns`` receives ``trn_tanimoto_pct`` / ``_raw``, ``trn_physchem_pct`` /
+    ``_raw``, ``trn_match``, ``trn_scaffold`` and (when fitted)
+    ``trn_difficulty``. The returned details table repeats them, and adds
+    ``trn_physchem_dist``, the nearest training molecules, ``trn_in_training`` and the error model's
+    inputs.
 
     Parameters
     ----------
@@ -233,14 +351,19 @@ def run_training(
     Returns
     -------
     pandas.DataFrame or None
-        The training details table (one row per query), or None when
-        training distance is not fitted.
+        The training details table (one row per query), or None when no
+        training score is fitted.
     """
-    distance, difficulty = eq.training_distance, eq.training_difficulty
-    if distance is None and difficulty is None:
+    fitted = [
+        (name, getattr(eq, name))
+        for name in TRAINING_ORDER
+        if getattr(eq, name) is not None
+    ]
+    if not fitted:
         return None
-    steps = console.Steps((distance is not None) + (difficulty is not None))
+    steps = console.Steps(len(fitted))
     details = None
+    extras: dict[str, Any] = {}
     features = TrainingQuery.from_frame(query)
     n_bad = features.n_rows - len(features.smiles)
     if n_bad and eq._shared is None:  # the reference modality already warned
@@ -249,29 +372,29 @@ def run_training(
             "training scores are NaN."
         )
     with console.section("Training modality"):
-        if distance is not None:
-            name = score_name("training_distance")
+        for component, instance in fitted:
+            name = score_name(component)
             with steps(f"Score: {name}") as st:
-                result = distance.run(query, features)
-                st.summary = console.median_summary(result.score)
-            columns[name] = result.score
-            columns[f"{name}_raw"] = result.score_raw
+                result = instance.run(query, features)
+                st.summary = (
+                    _share(result.match)
+                    if component == "training_match"
+                    else console.median_summary(result.score)
+                )
             metadata.update({f"{name}_{k}": v for k, v in result.metadata.items()})
-            details = result.details
-        if difficulty is not None:
-            name = score_name("training_difficulty")
-            with steps(f"Score: {name}") as st:
-                scored = difficulty.run(query, features)
-                st.summary = console.median_summary(scored.score)
-            columns[name] = scored.score
-            if scored.inputs is not None:
-                # The error model's own inputs, so they can be inspected or
-                # modelled directly; prefixed like every other output column.
-                for feature in scored.inputs.columns:
-                    columns[f"trn_{feature}"] = scored.inputs[feature]
-            metadata.update({f"{name}_{k}": v for k, v in scored.metadata.items()})
-            if details is not None:
-                details.insert(4, name, scored.score.to_numpy())
-    if distance is not None:
-        columns[IN_TRAINING_COLUMN] = result.in_training
-    return details
+            if component == "training_match":
+                _emit(columns, extras, result.match, result.scaffold)
+            elif component == "training_difficulty":
+                _emit(columns, extras, result.score)
+                if result.inputs is not None:
+                    # The error model's own inputs, so they can be inspected
+                    # or modelled directly; details file only.
+                    for feature in result.inputs.columns:
+                        extras[f"trn_{feature}"] = result.inputs[feature].to_numpy()
+            elif component == "training_physchem":
+                _emit(columns, extras, result.score, result.score_raw)
+                extras[result.distance.name] = result.distance.to_numpy()
+            else:
+                _emit(columns, extras, result.score, result.score_raw)
+                details = result.details
+    return _assemble_details(query, details, extras)
