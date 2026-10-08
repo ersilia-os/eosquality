@@ -96,7 +96,7 @@ def map_rows(
         # Before the progress bar's thread exists: a forked worker must not
         # inherit a lock that thread holds.
         with _single_threaded_workers():
-            pool = mp.Pool(processes=n_jobs)  # workers inherit the environment
+            pool = _make_pool(n_jobs)  # workers inherit the environment
     progress = (
         console.progress(label)
         if (show_progress is None and parallel) or show_progress
@@ -115,6 +115,16 @@ def map_rows(
         if progress is not None:
             progress.stop()
     return out
+
+
+def _make_pool(n_jobs: int):
+    """A process pool that spawns its workers on every platform.
+
+    ``fork`` would copy a parent that already runs threads (BLAS, the progress
+    bar) and can deadlock a child on a lock held at that moment; Python warns
+    about it and is moving away from it.
+    """
+    return mp.get_context("spawn").Pool(processes=n_jobs)
 
 
 @contextmanager

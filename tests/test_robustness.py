@@ -106,7 +106,7 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
     def no_pool(*args, **kwargs):
         raise AssertionError("process pool started without n_jobs")
 
-    monkeypatch.setattr(parallel.mp, "Pool", no_pool)
+    monkeypatch.setattr(parallel, "_make_pool", no_pool)
     smiles = ["CCO"] * 300
     assert len(compute_physchem_raw(smiles)) == len(smiles)
     assert np.array_equal(
@@ -124,7 +124,7 @@ def test_workers_context_lets_the_cli_use_a_pool(monkeypatch):
     def no_pool(*args, **kwargs):
         raise AssertionError("pool requested")
 
-    monkeypatch.setattr(parallel.mp, "Pool", no_pool)
+    monkeypatch.setattr(parallel, "_make_pool", no_pool)
     smiles = ["CCO"] * 300
     assert len(compute_physchem_raw(smiles)) == 300  # outside: in-process
     with parallel.workers(2), pytest.raises(AssertionError, match="pool requested"):
@@ -180,7 +180,7 @@ def test_the_pool_pins_blas_threads_for_its_workers_and_restores_the_environment
         def imap(self, fn, items, chunksize):
             return map(fn, items)
 
-    monkeypatch.setattr(parallel.mp, "Pool", FakePool)
+    monkeypatch.setattr(parallel, "_make_pool", FakePool)
     monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
     monkeypatch.setenv("OPENBLAS_NUM_THREADS", "4")  # a user's choice is respected
     out = __import__("numpy").zeros((300, 1))
