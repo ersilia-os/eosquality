@@ -58,7 +58,7 @@ The query sets, and how many of their molecules the reference library holds (`re
   anyway. `trn_*` answers "how does this molecule relate to the data in this
   folder", not "was this model trained well".
 
-## Training modality (in progress)
+## Training modality
 
 Each output column can have its own training set. It is fitted with
 `-t/--training-sets`, alone or together with `-r/--reference`; with both, the
@@ -76,12 +76,6 @@ the calibrated score with little resolution once everything is "far", which
 is why `trn_tanimoto_raw` is reported alongside it.
 Drugs are the closest set for eos4e40 (E. coli), whose training data is a
 drug-like screen; the synthetic set is the farthest for every model.
-
-| Stage | Adds | Needs | Status |
-|---|---|---|---|
-| 1 | Training data loader (standardisation, duplicate merging) | SMILES | done |
-| 2 | `trn_tanimoto`: one whole-model value per molecule, the Q66 across columns of the mean Morgan distance to the 5 nearest training molecules, published as similarities (`_raw`, and `_pct` calibrated on each column's leave-one-out values; no cutoff) + nearest training molecules | SMILES | done |
-| 2b | `trn_physchem` (the same in library-scaled physchem space), `trn_match` and `trn_scaffold` (connectivity-layer lookups) | SMILES | done |
 
 ## Open items
 
