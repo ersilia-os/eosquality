@@ -69,7 +69,8 @@ for FIT_INPUT in "${FIT_FILES[@]}"; do
         eosquality run \
             -i "$QUERY_INPUT" \
             -a "$ARTIFACTS" \
-            -o "$OUTPUT"
+            -o "$OUTPUT" \
+            --details
     done
 done
 

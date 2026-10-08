@@ -64,6 +64,7 @@ def test_fit_with_training_and_details(files, query, training_dir):
     assert _run([*fit, "-a", files["artifacts"], "--exclude", "ref_match"]) == 0
     run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
     assert _run(run) == 0
+    assert not list(files["tmp"].glob("*details.csv"))  # opt-in
     columns = pd.read_csv(files["output"]).columns
     assert [c for c in columns if c.startswith("trn_")] == [
         "trn_tanimoto_pct",
@@ -73,10 +74,13 @@ def test_fit_with_training_and_details(files, query, training_dir):
         "trn_match",
         "trn_scaffold",
     ]
-    details = pd.read_csv(files["tmp"] / "quality_eos0aaa_v1.training_details.csv")
+    out = str(files["tmp"] / "withdetails_eos0aaa_v1.csv")
+    with_details = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", out]
+    assert _run([*with_details, "--details"]) == 0
+    details = pd.read_csv(files["tmp"] / "withdetails_eos0aaa_v1.training_details.csv")
     assert len(details) == len(query)  # one row per query, not per column
     reference_details = pd.read_csv(
-        files["tmp"] / "quality_eos0aaa_v1.reference_details.csv"
+        files["tmp"] / "withdetails_eos0aaa_v1.reference_details.csv"
     )
     assert len(reference_details) == len(query)
     assert any(c.endswith("_extremity_pct") for c in reference_details.columns)
