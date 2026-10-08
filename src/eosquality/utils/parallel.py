@@ -91,6 +91,12 @@ def map_rows(
         n_jobs = min(os.cpu_count() or 1, MAX_AUTO_WORKERS)
     n_jobs = max(1, min(n_jobs or 1, n))
     parallel = n_jobs > 1 and n >= min_items
+    pool = None
+    if parallel:
+        # Before the progress bar's thread exists: a forked worker must not
+        # inherit a lock that thread holds.
+        with _single_threaded_workers():
+            pool = mp.Pool(processes=n_jobs)  # workers inherit the environment
     progress = (
         console.progress(label)
         if (show_progress is None and parallel) or show_progress
@@ -100,9 +106,7 @@ def map_rows(
     if progress is not None:
         progress.start()
     try:
-        if parallel:
-            with _single_threaded_workers():
-                pool = mp.Pool(processes=n_jobs)  # workers inherit the environment
+        if pool is not None:
             with pool:
                 _fill(out, pool.imap(fn, items, chunksize=chunksize), progress, task_id)
         else:
