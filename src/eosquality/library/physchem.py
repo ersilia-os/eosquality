@@ -2,7 +2,7 @@
 
 The full set of RDKit descriptors (``rdkit.Chem.Descriptors._descList``,
 ~200) is computed for a molecule by :func:`compute_physchem_raw`, and put on
-the reference library's scale by :func:`apply_scaler`.
+the reference library's scale by ``scores/_physchem_domain.py``.
 
 ``physchem_scaler.json`` (shipped with the package, loaded by
 :func:`canonical_scaler`) bundles both the imputer parameters (``median`` per
@@ -12,7 +12,7 @@ used. It was fitted on the whole reference library by
 ``scripts/fit_physchem_scaler.py``; everything needed to apply the identical impute-then-standardize transform
 to a new molecule lives here.
 
-The same :func:`compute_physchem_raw` + :func:`apply_scaler` pair computes
+The same :func:`compute_physchem_raw` computes
 query rows at run time, so reference and query descriptors match exactly.
 Large inputs (library builds) are computed with a process pool; small ones
 (run-time queries) in-process.
@@ -97,7 +97,7 @@ def compute_physchem_raw(
     """Compute the ``(n, N_DESCRIPTORS)`` raw float32 descriptor matrix.
 
     Rows are in input order. Raw values may include NaN; imputation happens
-    in the scaler fit and :func:`apply_scaler`, not here.
+    in the scaler fit and in the domain, not here.
 
     Parameters
     ----------
@@ -187,32 +187,3 @@ def check_descriptor_names(scaler_params: dict) -> None:
             f"{N_DESCRIPTORS} (RDKit {_RDKIT_VERSION}). Install the RDKit "
             "version the library was built with."
         )
-
-
-def apply_scaler(raw: np.ndarray, scaler_params: dict) -> np.ndarray:
-    """Apply impute → standard-scale using persisted parameters.
-
-    Mirrors ``scripts/fit_physchem_scaler.py``: non-finite entries replaced by
-    ``scaler_params["median"]``, then ``(x - mean) / scale``. Columns
-    whose ``scale`` is 0 (constant in the reference) are divided by 1
-    to avoid division-by-zero, matching scikit-learn's internal
-    ``_handle_zeros_in_scale`` convention. Returns float32.
-
-    Parameters
-    ----------
-    raw : numpy.ndarray
-        ``(n, N_DESCRIPTORS)`` raw descriptors.
-    scaler_params : dict
-        Parameters from ``scripts/fit_physchem_scaler.py``.
-
-    Returns
-    -------
-    numpy.ndarray
-        Imputed, standard-scaled float32 matrix.
-    """
-    median = np.asarray(scaler_params["median"], dtype=np.float64)
-    mean = np.asarray(scaler_params["mean"], dtype=np.float64)
-    scale = np.asarray(scaler_params["scale"], dtype=np.float64)
-    safe_scale = np.where(scale > 0, scale, 1.0)
-    imputed = np.where(np.isfinite(raw), raw.astype(np.float64), median[None, :])
-    return ((imputed - mean[None, :]) / safe_scale[None, :]).astype(np.float32)

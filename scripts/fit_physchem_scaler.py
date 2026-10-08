@@ -31,7 +31,7 @@ def fit_scaler(raw: np.ndarray) -> dict:
     Non-finite entries (``NaN``, ``±inf``) are replaced with the
     per-column median (computed over finite values). StandardScaler is
     then fit on the imputed matrix. Returns a JSON-serialisable dict
-    with every parameter needed by :func:`apply_scaler`.
+    with every parameter the physchem domain needs.
 
     Parameters
     ----------
@@ -48,7 +48,7 @@ def fit_scaler(raw: np.ndarray) -> dict:
     finite = np.where(np.isfinite(raw), raw.astype(np.float64), np.nan)
     median = np.nanmedian(finite, axis=0)
     # Columns that are entirely non-finite have median=NaN — fall back to 0
-    # so apply_scaler is well-defined.
+    # so the scaling is well-defined.
     all_nan = np.isnan(median)
     if all_nan.any():
         bad = [DESCRIPTOR_NAMES[i] for i in np.flatnonzero(all_nan)]
