@@ -73,7 +73,7 @@ The keys are computed once per library by `eosquality build` and shipped with it
 
 ## Training modality
 
-Each output column of a model may have its own training set: SMILES. Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each column gets its own Morgan fingerprint index (radius 2, 2048 bits).
+Each output column of a model may have its own training set: SMILES. Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each distinct training set gets a Morgan fingerprint index (radius 2, 2048 bits); columns measured on the same molecules, such as one screening panel, share it.
 
 ### Training distance
 
