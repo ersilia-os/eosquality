@@ -34,7 +34,7 @@ The training modality is versioned separately: `training_mode/training_sets/meta
 
 When an artifact is fit on the canonical library, only its identity is stored, not a path, so the artifact is portable between machines. The library is resolved again at run time (see [cli.md](cli.md#the-reference-library)).
 
-When an artifact is fit against a custom library (`library=` in the Python API), the absolute path of that library folder is stored, and the folder must still exist when `run` is called: `ref_match` reads its keys from it. A typicality/extremity-only artifact does not need the library at run time.
+When an artifact is fit against a custom library (`library=` in the Python API, or any library whose name is not the canonical id, such as one found through `EOSQUALITY_REFERENCE_LIBRARY_PATH`), the absolute path of that library folder is stored, and the folder must still exist when `run` is called: `ref_match` reads its keys from it. A typicality/extremity-only artifact does not need the library at run time.
 
 ## Library folder contents
 

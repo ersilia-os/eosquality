@@ -1,4 +1,5 @@
 import json
+import pathlib
 
 import pandas as pd
 import pytest
@@ -267,6 +268,8 @@ def test_the_maintainer_workflow_build_then_fit_then_run(
         _run(["run", "-i", str(tmp_path / "query.csv"), "-a", art, "-o", str(out)]) == 0
     )
     scores = pd.read_csv(out)
+    meta = pathlib.Path(art) / "reference_mode/shared/metadata.json"
+    assert json.loads(meta.read_text())["library_path"] == ""  # canonical: by identity
     assert {"ref_match", "ref_scaffold", "ref_typicality_pct"} <= set(scores.columns)
     assert scores["ref_match"].tail(40).eq(1).all()  # the 40 reference rows
 
@@ -278,3 +281,14 @@ def test_fit_and_run_use_a_pool_for_the_descriptors_when_asked(files, training_d
     out = str(files["tmp"] / "pooled_eos0aaa_v1.csv")
     assert _run(["run", "-i", files["query"], "-a", only, "-o", out, "-j", "2"]) == 0
     assert "trn_physchem_pct" in pd.read_csv(out).columns
+
+
+def test_a_custom_library_found_through_the_environment_is_recorded_by_path(files):
+    """Not the canonical id: the artifacts must find it again at run time."""
+    fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
+    assert _run(fit) == 0  # every reference score, ref_match included
+    shared = pathlib.Path(files["artifacts"]) / "reference_mode/shared/metadata.json"
+    meta = json.loads(shared.read_text())
+    assert meta["library_id"] == "test_library" and meta["library_path"]
+    run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
+    assert _run(run) == 0

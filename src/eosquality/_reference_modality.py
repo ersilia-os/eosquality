@@ -14,6 +14,7 @@ import pandas as pd
 
 from eosquality._registry import SCORE_ORDER, score_name
 from eosquality.exceptions import SchemaError
+from eosquality.library.identity import LIBRARY_ID
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._helpers import _make_query_repr
@@ -76,7 +77,9 @@ def fit_reference(
                 eos_id=eos_id,
                 version=version,
                 library_id=lib.library_name,
-                library_path=str(lib.path.resolve()) if library else "",
+                library_path=""
+                if _is_canonical(lib, library)
+                else str(lib.path.resolve()),
                 max_features=max_features,
             )
             st.summary = (
@@ -91,6 +94,15 @@ def fit_reference(
                 anchor = getattr(getattr(eq, name), "anchor_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
         section.summary = f"{len(requested)} score(s) fitted"
+
+
+def _is_canonical(lib: ReferenceLibrary, requested) -> bool:
+    """Whether ``lib`` is this install's canonical library, found by its identity.
+
+    A library passed explicitly, or one of another name (an environment-variable
+    override), is recorded by its path instead, so ``run`` finds it again.
+    """
+    return requested is None and lib.library_name == LIBRARY_ID
 
 
 def _fitters(reference, shared, library):
