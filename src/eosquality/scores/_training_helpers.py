@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from eosquality.scores._helpers import _row_nanquantile, _standardize
+from eosquality.scores._helpers import _row_nanquantile, _standardize_all
 from eosquality.vectorindex import VectorIndex
 
 # Quantile across output columns for the whole-model value (the column
@@ -71,7 +71,7 @@ class TrainingQuery:
         """
         if "input" not in query.columns:
             raise ValueError("The training scores need an 'input' SMILES column.")
-        std = [_standardize(s) for s in query["input"]]
+        std = _standardize_all(list(query["input"]))
         rows = np.flatnonzero([s is not None for s in std])
         return cls([std[i] for i in rows], rows, len(query))
 

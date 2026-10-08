@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from eosquality.exceptions import SchemaError
-from eosquality.scores._helpers import _standardize
+from eosquality.scores._helpers import _standardize_all
 from eosquality.utils.logging import logger
 
 # Columns with fewer training molecules than this are skipped: their
@@ -119,12 +119,11 @@ def load_training(
             f"(columns: {order})."
         )
 
+    frames = {name: pd.read_csv(files[name]) for name in order if name in files}
+    standardized = _standardize_files(frames)  # panels repeat molecules: once each
     columns: dict[str, TrainingColumn] = {}
-    standardized: dict[str, str | None] = {}  # shared: panels repeat molecules
-    for name in order:
-        if name not in files:
-            continue
-        column = _load_column(name, pd.read_csv(files[name]), standardized)
+    for name, frame in frames.items():
+        column = _load_column(name, frame, standardized)
         if column.n < MIN_TRAINING_MOLECULES:
             logger.warning(
                 f"training | column {name!r}: only {column.n} usable molecules "
@@ -144,19 +143,29 @@ def load_training(
     return columns
 
 
-def _load_column(
-    name: str, df: pd.DataFrame, standardized: dict[str, str | None] | None = None
-) -> TrainingColumn:
-    smiles_col = next((c for c in _SMILES_COLUMNS if c in df.columns), None)
-    if smiles_col is None:
+def _smiles_column(name: str, df: pd.DataFrame) -> str:
+    """The SMILES column of a training file (``smiles`` or ``input``)."""
+    column = next((c for c in _SMILES_COLUMNS if c in df.columns), None)
+    if column is None:
         raise SchemaError(
             f"Training file for column {name!r} needs a 'smiles' column "
             f"(found {list(df.columns)})."
         )
-    cache = {} if standardized is None else standardized
-    std = df[smiles_col].map(
-        lambda s: cache[s] if s in cache else cache.setdefault(s, _standardize(s))
+    return column
+
+
+def _standardize_files(frames: dict[str, pd.DataFrame]) -> dict[str, str | None]:
+    """Standardise every distinct SMILES of the training files, once."""
+    distinct = pd.unique(
+        pd.concat([df[_smiles_column(name, df)] for name, df in frames.items()])
     )
+    return dict(zip(distinct, _standardize_all(distinct), strict=True))
+
+
+def _load_column(
+    name: str, df: pd.DataFrame, standardized: dict[str, str | None]
+) -> TrainingColumn:
+    std = df[_smiles_column(name, df)].map(standardized)
     n_bad = int(std.isna().sum())
     if n_bad:
         logger.info(f"training | column {name!r}: {n_bad} unparsable SMILES dropped")

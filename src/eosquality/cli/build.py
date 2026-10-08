@@ -149,14 +149,12 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
     import shutil
     import tempfile
 
-    import numpy as np
     import pandas as pd
     from rdkit import __version__ as rdkit_version
 
     from eosquality.library.reference import KEYS_FILE, METADATA_FILE, SMILES_FILE
-    from eosquality.scores._helpers import _standardize
+    from eosquality.scores._helpers import _standardize_all
     from eosquality.scores._match_keys import _layers, save_keys, unique_keys
-    from eosquality.utils.parallel import map_rows
 
     final = pathlib.Path(output)
     if final.exists() and (not final.is_dir() or any(final.iterdir())):
@@ -165,9 +163,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
     work = pathlib.Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=final.parent))
     try:
         pd.DataFrame({"smiles": smiles}).to_csv(work / SMILES_FILE, index=False)
-        cleaned = np.empty(len(smiles), dtype=object)
-        map_rows(_standardize, smiles, cleaned, label="standardise", show_progress=True)
-        standardised = [s for s in cleaned if s]
+        standardised = [s for s in _standardize_all(smiles) if s]
         molecules, scaffolds = _layers(standardised, "library InChIKey layers")
         molecule_keys, scaffold_keys = unique_keys(molecules), unique_keys(scaffolds)
         save_keys(work / KEYS_FILE, molecule_keys, scaffold_keys)

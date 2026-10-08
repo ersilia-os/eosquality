@@ -7,6 +7,8 @@ avoids one score owning a helper that others also use.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from rdkit import Chem, rdBase
@@ -15,6 +17,7 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
+from eosquality.utils.parallel import map_rows
 
 # ---------------------------------------------------------------------------
 # Aggregation + calibration shared by typicality and extremity
@@ -230,6 +233,10 @@ def _resolve_shared(
 # Standardisation
 # ---------------------------------------------------------------------------
 
+# Below this many molecules a process pool costs more than it saves (each worker
+# imports RDKit); ``standardize_all`` spreads larger lists inside ``parallel.workers``.
+_STANDARDIZE_MIN_PARALLEL = 20_000
+
 
 def _standardize(smiles: str) -> str | None:
     """Largest fragment, then RDKit canonical isomeric SMILES; ``None`` if unparsable.
@@ -247,3 +254,26 @@ def _standardize(smiles: str) -> str | None:
         if len(frags) > 1:
             mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
         return Chem.MolToSmiles(mol)
+
+
+def _standardize_all(smiles: Sequence) -> list[str | None]:
+    """:func:`_standardize` of every SMILES, in order (parallel inside ``workers``).
+
+    Parameters
+    ----------
+    smiles : sequence
+        SMILES strings (anything else standardises to ``None``).
+
+    Returns
+    -------
+    list of str or None
+    """
+    out = np.empty(len(smiles), dtype=object)
+    map_rows(
+        _standardize,
+        smiles,
+        out,
+        label="standardise",
+        min_items=_STANDARDIZE_MIN_PARALLEL,
+    )
+    return out.tolist()

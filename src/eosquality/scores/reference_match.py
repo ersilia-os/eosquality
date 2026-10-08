@@ -32,7 +32,7 @@ import pandas as pd
 
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.scores._base import ScoreComponent, read_json
-from eosquality.scores._helpers import _standardize
+from eosquality.scores._helpers import _standardize_all
 from eosquality.scores._match_keys import _flags, _layers
 from eosquality.shared.state import SharedFitState
 
@@ -105,7 +105,7 @@ class ReferenceMatch(ScoreComponent):
         """
         self._check_fitted()
         molecules_known, scaffolds_known = self._resolve_library().match_keys()
-        smiles = [_standardize(s) for s in query["input"]]
+        smiles = _standardize_all(list(query["input"]))
         rows = np.array([i for i, s in enumerate(smiles) if s], dtype=int)
         standardised = [smiles[i] for i in rows]
         molecules, scaffolds = _layers(standardised, "query InChIKey layers")
