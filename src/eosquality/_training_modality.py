@@ -164,11 +164,6 @@ def fit_training_modality(
         Training components not to fit (``TRAINING_ORDER`` names).
     n_loaded : int, optional
         Number of usable columns before selection, for the console.
-
-    Raises
-    ------
-    ValueError
-        If nothing is left to fit (every training score excluded).
     """
     scores = {name: cls for name, cls in _PLAIN_SCORES.items() if name not in skip}
     steps = console.Steps(1 + len(scores))
@@ -194,10 +189,6 @@ def fit_training_modality(
                 component = cls().fit(training=eq._training, shared=eq._shared)
                 setattr(eq, name, component)
                 st.summary = component.fit_summary
-        if all(getattr(eq, name) is None for name in TRAINING_ORDER):
-            raise ValueError(
-                "Nothing to fit for the training sets: every training score is excluded."
-            )
         section.summary = f"{len(columns)} column(s)"
 
 
