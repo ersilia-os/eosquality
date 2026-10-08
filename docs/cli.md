@@ -47,7 +47,8 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
   Variable values are never written into tracebacks, so SMILES don't leak into logs.
 - **Exit status.** Errors print as `✖ error: …` and exit with status 1; success exits with 0.
 - **Invalid molecules.** Query rows whose `input` SMILES is missing or does not parse are not an error. Their structure-based scores (`ref_match`, `ref_scaffold` and the `trn_` scores) are NaN, and a warning names the rows. The output-based scores, `ref_typicality` and `ref_extremity`, are still computed.
-- `fit` and `run` refuse to overwrite an existing output path.
+- **Cores.** `fit`, `run` and `build` spread the RDKit work (descriptors, standardisation, structure keys) over every core, and over none with `-j 1`. A pool starts only for a few hundred molecules or more.
+- `fit`, `run` and `build` refuse to overwrite an existing output path.
 
 ## `eosquality setup`
 
