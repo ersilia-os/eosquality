@@ -30,7 +30,7 @@ Two columns are published for the whole model:
   ``per_feature`` and ``per_feature_pct``.
 
 A column's percentile table is the mid-rank of the density among the
-reference's own densities, kept as a 4096-bin histogram of them
+reference's own densities, kept as a 65536-bin histogram of them
 (:func:`density_histograms`, saved); the table is derived from it
 (:func:`percentile_tables`). Densities that are exactly equal (a binary or
 constant column) fall in one bin and tie at half weight, as before.
@@ -50,7 +50,7 @@ from eosquality.scores._percentile_score import PercentileScore
 _INT8_MAX_VAL = 127
 _LUT_SIZE = 256
 _LUT_OFFSET = 128  # lut index = int8 + offset; the slot at index 0 is the NaN sentinel
-_N_BINS = 4096  # bins of the density histogram behind the percentile tables
+_N_BINS = 65536  # bins of the density histogram behind the percentile tables
 SUBFOLDER = "typicality"
 COUNT_LUTS_FILE = "count_luts.npy"
 DENSITY_HIST_FILE = "density_hist.npy"
@@ -64,9 +64,9 @@ class Typicality(PercentileScore):
 
     - per-column int8 count LUTs, ``(256, n_features)``: reference counts per
       level per column, built at fit time (saved);
-    - per-column histogram of the reference's densities, ``(4096, n_features)``
+    - per-column histogram of the reference's densities, ``(65536, n_features)``
       (saved);
-    - ``pct_tables_`` — ``(4096, n_features)`` per-column percentile of each
+    - ``pct_tables_`` — ``(65536, n_features)`` per-column percentile of each
       density bin, derived from the histogram (not saved).
 
     Depends only on :class:`SharedFitState` — no reference library required.
@@ -78,8 +78,8 @@ class Typicality(PercentileScore):
     def __init__(self) -> None:
         super().__init__()
         self._count_luts: np.ndarray | None = None  # (256, n_features)
-        self._density_hist: np.ndarray | None = None  # (4096, n_features)
-        self._pct_tables: np.ndarray | None = None  # (4096, n_features), derived
+        self._density_hist: np.ndarray | None = None  # (65536, n_features)
+        self._pct_tables: np.ndarray | None = None  # (65536, n_features), derived
 
     def _per_feature(self, scaled: np.ndarray) -> np.ndarray:
         assert self._count_luts is not None
@@ -117,7 +117,7 @@ class Typicality(PercentileScore):
         Returns
         -------
         numpy.ndarray
-            ``(4096, n_features)``.
+            ``(65536, n_features)``.
         """
         self._check_fitted()
         assert self._pct_tables is not None
@@ -249,12 +249,12 @@ def density_histograms(
     Returns
     -------
     numpy.ndarray
-        ``(4096, n_features)`` int64: how many reference values have a
-        density (``count / max_count``, interpolated) in each of 4096 equal
+        ``(65536, n_features)`` int32: how many reference values have a
+        density (``count / max_count``, interpolated) in each of 65536 equal
         bins of ``[0, 1]``. NaN values are not counted.
     """
     n_features = scaled_reference.shape[1]
-    hist = np.zeros((_N_BINS, n_features), dtype=np.int64)
+    hist = np.zeros((_N_BINS, n_features), dtype=np.int32)
     for j in range(n_features):
         density = compute_typicality(scaled_reference[:, [j]], count_luts[:, [j]])[0]
         valid = np.isfinite(density[:, 0])
@@ -273,12 +273,12 @@ def percentile_tables(density_hist: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     density_hist : numpy.ndarray
-        ``(4096, n_features)`` counts, as returned by :func:`density_histograms`.
+        ``(65536, n_features)`` counts, as returned by :func:`density_histograms`.
 
     Returns
     -------
     numpy.ndarray
-        ``(4096, n_features)`` percentiles in ``(0, 1]``.
+        ``(65536, n_features)`` percentiles in ``(0, 1]``.
     """
     counts = np.asarray(density_hist, dtype=np.float64)
     n = counts.sum(axis=0)
@@ -295,7 +295,7 @@ def lookup_percentiles(per_feature: np.ndarray, pct_tables: np.ndarray) -> np.nd
     per_feature : numpy.ndarray
         ``(n, n_features)`` densities from :func:`compute_typicality`.
     pct_tables : numpy.ndarray
-        ``(4096, n_features)`` from :func:`percentile_tables`.
+        ``(65536, n_features)`` from :func:`percentile_tables`.
 
     Returns
     -------
