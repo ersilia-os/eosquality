@@ -59,7 +59,7 @@ One subfolder per modality; either or both may be present.
       schema.json  scaler.json
       metadata.json                       # n_samples, library_id, library_path, format_version, …
       selected_columns.json
-    typicality/   state.json  count_luts.npy  reference_self_aggregates.npy  metadata.json
+    typicality/   state.json  count_luts.npy  density_hist.npy  reference_self_aggregates.npy  metadata.json
     extremity/    state.json  column_tables.npz  reference_self_aggregates.npy  metadata.json
     match/        state.json  metadata.json        # counts only; the keys live in the library folder
   training_mode/                          # iff fitted with -t/--training-sets

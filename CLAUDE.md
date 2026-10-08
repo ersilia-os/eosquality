@@ -54,7 +54,7 @@ Subclasses implement `fit`, `run`, `_save_own`, `_load_own` and `is_fitted_`. Cl
 Scores are described in `docs/concepts.md`; what to know about the code:
 
 - **`scores/_percentile_score.py`** — `PercentileScore`, the base of typicality and extremity: fit (each column's reference distribution via `_fit_columns`, the Q66 of the per-column percentiles, the reference CDF table and its anchor), run (validate and scale once, per-feature values, per-column percentiles, calibration, `PercentileRunResult`) and the common files (`state.json`, `reference_self_aggregates.npy`). A subclass defines `_per_feature`, `_percentiles`, `_fit_columns` and how its columns are saved. `anchor_` is the reference mean (~0.5). Needs only `SharedFitState`.
-  - **`typicality.py`** — per-column int8 count LUTs (`count_luts.npy`); the percentile table `pct_luts_` is derived by `percentile_luts` and not saved.
+  - **`typicality.py`** — per-column int8 count LUTs (`count_luts.npy`), linearly interpolated between levels so the density is continuous in the value; a 4096-bin histogram of the reference's own densities (`density_hist.npy`) gives the percentile table `pct_tables_` (derived by `percentile_tables`, not saved).
   - **`extremity.py`** — `min(|scaled|, 1)`; per-column float32 reference tables (`column_tables.npz`).
   - Per-column raw values and percentiles are `per_feature` / `per_feature_pct`, written to `reference_details`.
 - **`scores/reference_match.py`** — `ReferenceMatch` (`ref_match` + `ref_scaffold`, `Int64` 1 / 0). The InChIKey connectivity layer of the standardised query, and of its Murcko scaffold, looked up in the **reference library's** keys. The keys are library-level: `eosquality build` writes `connectivity_keys.npz` into the library folder; `library/reference.ReferenceLibrary.match_keys` reads them and refuses an RDKit other than the recorded `rdkit_version`; the artifact keeps only the counts (`state.json`) and finds the library again through `shared.metadata` (`library_id`, `library_path` for a custom one). No calibration, no `_raw`.
@@ -74,7 +74,7 @@ Scores are described in `docs/concepts.md`; what to know about the code:
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
   - **Contents.** schema, eosframes scaler params, metadata and selected_columns. `ref_repr` (the scaled, feature-selected reference matrix) and `reference_ids` (its row labels) exist at fit time only and are not saved.
-  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `library_path` (custom libraries only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 11). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `library_path` (custom libraries only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 12). `load_shared` rejects other format versions with `ArtifactVersionError`.
 
 ### Orchestrator + flat infrastructure modules
 
