@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from eosquality import ErsiliaQuality, Typicality
-from eosquality.exceptions import ArtifactVersionError
+from eosquality.exceptions import ArtifactVersionError, IncompatibleArtifactsError
 
 REFERENCE = ["typicality", "extremity", "match"]
 PCT_SCORES = ("typicality", "extremity")
@@ -148,3 +148,31 @@ def test_saving_over_existing_artifacts_is_refused(fitted, tmp_path):
     fitted.save(tmp_path / "art")
     with pytest.raises(FileExistsError, match="already holds artifacts"):
         fitted.save(tmp_path / "art")
+
+
+def test_loading_something_that_is_not_artifacts_is_a_clear_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No artifacts folder"):
+        ErsiliaQuality.load(tmp_path / "nope")
+    (tmp_path / "file.txt").write_text("x")
+    with pytest.raises(ValueError, match="Expected a directory"):
+        ErsiliaQuality.load(tmp_path / "file.txt")
+    with pytest.raises(FileNotFoundError, match="nothing to load"):
+        ErsiliaQuality.load(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        ({"library_id": "another_library", "library_path": ""}, "another_library"),
+        ({"eosquality_version": "9.9.9"}, "major=9"),
+    ],
+)
+def test_artifacts_of_another_library_or_major_are_refused(
+    fitted, tmp_path, edit, message
+):
+    fitted.save(tmp_path / "art")
+    meta_path = tmp_path / "art/reference_mode/shared/metadata.json"
+    meta = json.loads(meta_path.read_text())
+    meta_path.write_text(json.dumps({**meta, **edit}))
+    with pytest.raises(IncompatibleArtifactsError, match=message):
+        ErsiliaQuality.load(tmp_path / "art")
