@@ -187,6 +187,8 @@ def test_build_writes_exactly_the_library_files(tmp_path, smiles):
     assert sorted(p.name for p in out.iterdir()) == [
         "connectivity_keys.npz",
         "metadata.json",
+        "physchem_hashes.npy",
+        "physchem_raw.npy",
         "smiles.csv",
     ]
     meta = json.loads((out / "metadata.json").read_text())

@@ -6,7 +6,7 @@
 flowchart LR
     subgraph inputs[Inputs]
         REF["Model predictions on the<br/>reference library<br/><i>key, input, outputs…</i>"]
-        LIB[("Reference library folder<br/>smiles.csv · metadata.json<br/>connectivity_keys.npz")]
+        LIB[("Reference library folder<br/>smiles.csv · metadata.json<br/>connectivity_keys.npz<br/>physchem cache")]
     end
 
     REF --> SH["<b>shared/</b><br/>schema · eosframes scaler<br/>feature selection (≤10 medoids)"]

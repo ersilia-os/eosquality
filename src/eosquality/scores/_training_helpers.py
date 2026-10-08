@@ -84,9 +84,9 @@ class TrainingQuery:
         numpy.ndarray
         """
         if self._physchem is None:
-            from eosquality.library.physchem import compute_physchem_raw
+            from eosquality.library.physchem_cache import describe
 
-            self._physchem = compute_physchem_raw(
+            self._physchem = describe(
                 self.smiles,
                 show_progress=len(self.smiles) >= PROGRESS_MIN_MOLECULES,
                 label="query physchem descriptors",
