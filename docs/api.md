@@ -36,7 +36,7 @@ eq.fit(
 - **Training sets.** The folder holds one CSV per output column (`smiles`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 - **Both inputs.** The training sets are loaded first. The reference modality is then fitted only on the output columns that have a usable training set (at least 20 valid molecules), and `max_features` selects among those; the training modality is then fitted on the selected columns only, so both modalities cover the same columns. A training-only fit applies `max_features` too, keeping the largest training set of each cluster on `1 − Jaccard` overlap of the training molecules. There is no way to add training sets to a fitted instance or to saved artifacts: fit both together.
 
-**Score names.** `ALL_SCORES` lists the eight public names above, reference scores first.
+**Score names.** `ALL_SCORES` lists the six public names above, reference scores first.
 
 ### `run`
 
