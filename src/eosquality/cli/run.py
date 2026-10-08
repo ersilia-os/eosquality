@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+import zipfile
 import zlib
 from typing import TYPE_CHECKING
 
@@ -61,6 +62,11 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
     except json.JSONDecodeError as exc:
         raise CliError(
             f"artifact at '{path}' has a malformed JSON file: {exc}"
+        ) from exc
+    except (ValueError, EOFError, zipfile.BadZipFile) as exc:  # truncated .npy / .npz
+        raise CliError(
+            f"artifact at '{path}' has an unreadable array file — refit may be "
+            f"required: {exc}"
         ) from exc
 
 

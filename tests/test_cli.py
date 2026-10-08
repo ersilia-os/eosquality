@@ -393,6 +393,14 @@ def test_run_reports_unusable_artifacts(files, capsys):
     art.rmdir()
     assert _run([*fit, "--exclude", "ref_match"]) == 0
     capsys.readouterr()
-    (art / "reference_mode" / "shared" / "metadata.json").write_text("{not json")
+    meta = art / "reference_mode" / "shared" / "metadata.json"
+    intact = meta.read_text()
+    meta.write_text("{not json")
     assert _run(run) == 1
     assert "malformedJSON" in _err(capsys)
+    # ... or whose array file was cut short
+    meta.write_text(intact)
+    npy = next(art.rglob("*.npy"))
+    npy.write_bytes(npy.read_bytes()[:50])
+    assert _run(run) == 1
+    assert "unreadablearrayfile" in _err(capsys)
