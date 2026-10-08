@@ -425,3 +425,18 @@ def test_columns_with_the_same_molecules_share_one_index(tmp_path, smiles, query
     loaded = ErsiliaQuality.load(tmp_path / "art")
     assert loaded._training.indices["a"] is loaded._training.indices["b"]
     pd.testing.assert_frame_equal(eq.run(q).scores, loaded.run(q).scores)
+
+
+def test_training_artifacts_of_another_format_are_rejected(training_dir, tmp_path):
+    import json
+
+    from eosquality.exceptions import ArtifactVersionError
+
+    eq = ErsiliaQuality().fit(training_sets=training_dir, eos_id="eos0aaa")
+    eq.save(tmp_path / "art")
+    meta_path = tmp_path / "art/training_mode/training_sets/metadata.json"
+    meta = json.loads(meta_path.read_text())
+    meta["training_format_version"] = 1
+    meta_path.write_text(json.dumps(meta))
+    with pytest.raises(ArtifactVersionError, match="training format 1"):
+        ErsiliaQuality.load(tmp_path / "art")
