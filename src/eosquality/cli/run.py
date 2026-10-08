@@ -128,10 +128,34 @@ def run(
     )
 
 
-def _run(input_path, artifacts, output, details) -> None:
-    """Body of ``eosquality run`` (see :func:`run`)."""
+def _read_query(input_path: str):
+    """The query CSV, or a :class:`CliError` when it cannot be read or is empty."""
     import pandas as pd
 
+    try:
+        query = pd.read_csv(input_path)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        pd.errors.ParserError,
+        pd.errors.EmptyDataError,
+    ) as exc:
+        raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
+    if query.empty:
+        raise CliError(f"query CSV '{input_path}' has no rows.")
+    return query
+
+
+def _check_details_paths(eq, details_path, reference_details) -> None:
+    """Refuse to overwrite a details file this run would write."""
+    if "training" in eq.modalities_:
+        require_new_path(details_path, "training details path")
+    if eq.typicality is not None or eq.extremity is not None:
+        require_new_path(reference_details, "reference details path")
+
+
+def _run(input_path, artifacts, output, details) -> None:
+    """Body of ``eosquality run`` (see :func:`run`)."""
     try:
         named = model_from_names({"--artifacts": artifacts, "--output": output})
     except ValueError as exc:
@@ -147,12 +171,7 @@ def _run(input_path, artifacts, output, details) -> None:
     log_path = sibling_path(output, ".log")
     with logger.log_file(log_path):
         logger.info(f"run | {input_path} against {artifacts} → {output}")
-        try:
-            query = pd.read_csv(input_path)
-        except Exception as exc:
-            raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
-        if query.empty:
-            raise CliError(f"query CSV '{input_path}' has no rows.")
+        query = _read_query(input_path)
         eq = _load_artifacts(artifacts)
         eos_id, version = eq._model_id()
         if (eos_id, version) != named:
@@ -160,10 +179,8 @@ def _run(input_path, artifacts, output, details) -> None:
                 f"the names say {named[0]} {named[1]}, but the artifacts in "
                 f"'{artifacts}' were fitted for {eos_id} {version}."
             )
-        if details and "training" in eq.modalities_:  # fail before the scoring work
-            require_new_path(details_path, "training details path")
-        if details and (eq.typicality is not None or eq.extremity is not None):
-            require_new_path(reference_details, "reference details path")
+        if details:  # fail before the scoring work
+            _check_details_paths(eq, details_path, reference_details)
         console.summary_panel(
             "eosquality · run",
             [

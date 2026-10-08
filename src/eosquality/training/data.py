@@ -224,6 +224,19 @@ def _fingerprints(smiles: set[str]) -> dict[str, bytes]:
     return dict(zip(distinct, out.tolist(), strict=True))
 
 
+def _first_of_each_fingerprint(
+    smiles: list[str], fingerprints: dict[str, bytes]
+) -> list[int]:
+    """Positions of the first molecule of every distinct fingerprint, in order."""
+    seen: set[bytes] = set()
+    keep = []
+    for i, smi in enumerate(smiles):
+        if fingerprints[smi] not in seen:
+            seen.add(fingerprints[smi])
+            keep.append(i)
+    return keep
+
+
 def _load_column(
     name: str,
     df: pd.DataFrame,
@@ -248,12 +261,7 @@ def _load_column(
     n_dupes = len(table) - len(all_smiles)
     if n_dupes:
         logger.info(f"training | column {name!r}: {n_dupes} duplicate rows merged")
-    seen: set[bytes] = set()
-    keep = [
-        i
-        for i, smi in enumerate(all_smiles)
-        if not (fingerprints[smi] in seen or seen.add(fingerprints[smi]))
-    ]
+    keep = _first_of_each_fingerprint(all_smiles, fingerprints)
     if len(keep) < len(all_smiles):
         logger.info(
             f"training | column {name!r}: {len(all_smiles):,} molecules, "
