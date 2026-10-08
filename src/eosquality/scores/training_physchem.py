@@ -92,10 +92,8 @@ class TrainingPhyschem(ScoreComponent):
         TrainingPhyschem
             ``self``, fitted.
         """
-        from eosquality.library.physchem import (
-            canonical_scaler,
-            compute_physchem_raw,
-        )
+        from eosquality.library.physchem import canonical_scaler
+        from eosquality.library.physchem_cache import describe
 
         scaler = canonical_scaler()
         t0 = time.perf_counter()
@@ -105,9 +103,7 @@ class TrainingPhyschem(ScoreComponent):
         # The columns of one panel share most molecules: describe each once.
         union = sorted({s for n in names for s in training.columns[n].smiles})
         row_of = {smi: i for i, smi in enumerate(union)}
-        raw_all = compute_physchem_raw(
-            union, show_progress=True, label="physchem descriptors"
-        )
+        raw_all = describe(union, show_progress=True, label="physchem descriptors")
         by_set: dict[str, PhyschemDomain] = {}  # a panel's columns share a domain
         for name in console.track(names, "physchem, columns"):
             column = training.columns[name]

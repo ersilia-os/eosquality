@@ -52,7 +52,7 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
 ## `eosquality setup`
 
-Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
+Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys and the physchem descriptor cache, about 1.3 GB) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
 
 This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
 
@@ -139,8 +139,9 @@ Builds a reference-library folder from a SMILES CSV that has a `smiles` column. 
 - `smiles.csv`
 - `metadata.json` (the library's identity, `library_name`)
 - `connectivity_keys.npz` (the sorted unique connectivity layers of the molecules and of their scaffolds)
+- `physchem_hashes.npy` and `physchem_raw.npy` (the raw physchem descriptors of the standardised molecules, a cache that the training scores read instead of recomputing the descriptors of molecules the library already holds; about 1.2 GB)
 
-The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes a few minutes on several cores (about 15 minutes on one) for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
+The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). The descriptors dominate the time: about 6 ms per molecule, so the 1.35M-molecule library takes about 30 minutes on this machine's cores (a few hours on one). See [reference-library.md](reference-library.md).
 
 | flag | default | |
 |---|---|---|

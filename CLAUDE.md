@@ -14,7 +14,7 @@ conda activate eosquality
 pip install -e ".[dev]"        # add ",viz" for the figure scripts (stylia)
 ```
 
-The canonical library folder (`smiles.csv`, `metadata.json`, `connectivity_keys.npz`) lives under `data/indices/ersilia_reference_library_v0/` (gitignored, via eosvc) or `~/.eosquality/` (`eosquality setup`). Library resolution looks in `./data/indices/` relative to the **current working directory**. When running from elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH`.
+The canonical library folder (`smiles.csv`, `metadata.json`, `connectivity_keys.npz`, and the optional physchem cache `physchem_hashes.npy` + `physchem_raw.npy`) lives under `data/indices/ersilia_reference_library_v0/` (gitignored, via eosvc) or `~/.eosquality/` (`eosquality setup`). Library resolution looks in `./data/indices/` relative to the **current working directory**. When running from elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH`.
 
 ## Common Commands
 
@@ -94,6 +94,7 @@ Scores are described in `docs/concepts.md`; what to know about the code:
   - `download.py` is used only by `eosquality setup`.
   - `reference.py`: `ReferenceLibrary` (the folder's SMILES, metadata, `validate_smiles` and `match_keys`).
   - `physchem.py` holds the RDKit descriptor functions and the shipped physchem scaler (`trn_physchem`).
+  - `physchem_cache.py`: the library's raw descriptors as a cache (`write_cache` at `build`; `describe(smiles)` reads the cached rows and computes the rest, so values are identical either way). `describe` is what the training scores call; it finds the canonical library with `default_cache()`, which never raises or downloads, and ignores a cache from another RDKit or descriptor set.
 - **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`. Subcommands: `setup`, `fit`, `run` and (maintainers) `build`. `_common.run_command(fn, verbose=, command=)` turns the curated console on in the command's colour and prints failures as `✖ error:` lines. Each command opens with a `summary_panel` header and ends with a summary panel. `fit` stages its log into `<artifacts>/eosquality.log` (`staged_log`); `run` writes `<output>.log`.
   - `fit -r CSV -t DIR -a DIR --exclude SCORES -j N -v`. `-a` must be a new folder.
   - `run -i CSV -a DIR -o CSV --details -j N -v`; with `--details`, the training details go to `<output stem>.training_details.csv` and the per-column typicality and extremity (when fitted) to `<output stem>.reference_details.csv`; without it only the scores CSV (and the log) is written.

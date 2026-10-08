@@ -6,8 +6,9 @@ replacement library for the next release, or a non-canonical library for
 internal testing (point ``EOSQUALITY_REFERENCE_LIBRARY_PATH`` at the result,
 or pass it as ``library=`` to ``ErsiliaQuality.fit``).
 
-The folder holds the library SMILES, a ``metadata.json`` with its identity, and
-the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
+The folder holds the library SMILES, a ``metadata.json`` with its identity, the
+connectivity keys that ``ref_match`` / ``ref_scaffold`` look up, and the raw
+physchem descriptors of its molecules (a cache for the training scores).
 """
 
 import json
@@ -71,7 +72,7 @@ def build(
     jobs: int,
     verbose: bool,
 ) -> None:
-    """Build the library folder: SMILES, metadata and connectivity keys.
+    """Build the library folder: SMILES, metadata, connectivity keys, physchem cache.
 
     Parameters
     ----------
@@ -125,7 +126,7 @@ def _package_version() -> str:
 
 
 def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> None:
-    """Write a library folder: ``smiles.csv``, ``metadata.json``, the match keys.
+    """Write a library folder: SMILES, metadata, match keys and physchem cache.
 
     The SMILES are standardised (largest fragment, canonical isomeric) before
     their connectivity layers are taken, exactly as a query's are at run time.
@@ -153,6 +154,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
     import pandas as pd
     from rdkit import __version__ as rdkit_version
 
+    from eosquality.library.physchem_cache import write_cache
     from eosquality.library.reference import KEYS_FILE, METADATA_FILE, SMILES_FILE
     from eosquality.scores._helpers import _standardize_all
     from eosquality.scores._match_keys import _layers, save_keys, unique_keys
@@ -171,6 +173,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
         molecules, scaffolds = _layers(standardised, "library InChIKey layers")
         molecule_keys, scaffold_keys = unique_keys(molecules), unique_keys(scaffolds)
         save_keys(work / KEYS_FILE, molecule_keys, scaffold_keys)
+        n_physchem = write_cache(work, standardised)
         with open(work / METADATA_FILE, "w") as f:
             json.dump(
                 {
@@ -178,6 +181,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
                     "n_unparsable": len(smiles) - len(standardised),
                     "n_molecule_keys": int(len(molecule_keys)),
                     "n_scaffold_keys": int(len(scaffold_keys)),
+                    "n_physchem": n_physchem,
                     "rdkit_version": rdkit_version,
                     "eosquality_version": _package_version(),
                     "build_timestamp": datetime.now(tz=UTC).isoformat(),
@@ -232,7 +236,7 @@ def _build(
     steps = console.Steps(1)
     with console.section("Build") as section:
         try:
-            with steps("Connectivity keys of the molecules and their scaffolds") as st:
+            with steps("Connectivity keys and physchem descriptors") as st:
                 build_library(smiles, output, library_name)
                 st.summary = f"{len(smiles):,} molecules"
         except Exception as exc:

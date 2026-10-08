@@ -139,6 +139,8 @@ def test_an_interrupted_build_leaves_nothing_behind(tmp_path, smiles, monkeypatc
     assert sorted(p.name for p in out.iterdir()) == [
         "connectivity_keys.npz",
         "metadata.json",
+        "physchem_hashes.npy",
+        "physchem_raw.npy",
         "smiles.csv",
     ]
 

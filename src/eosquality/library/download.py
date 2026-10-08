@@ -37,6 +37,8 @@ _LIBRARY_FILES: tuple[str, ...] = (
     "metadata.json",
     "connectivity_keys.npz",
 )
+# Fetched too, but optional at run time: a library without them still works.
+_CACHE_FILES: tuple[str, ...] = ("physchem_hashes.npy", "physchem_raw.npy")
 
 _CHUNK_BYTES = 256 * 1024
 # Per-socket-operation timeout; a stalled connection fails instead of hanging.
@@ -111,7 +113,7 @@ def _fetch_verified(url: str, tmp_dir: pathlib.Path, expected_library_id: str) -
         console=console.console,
         transient=True,
     ) as progress:
-        for filename in _LIBRARY_FILES:
+        for filename in (*_LIBRARY_FILES, *_CACHE_FILES):
             total += _download_one(f"{url}/{filename}", tmp_dir / filename, progress)
     fetched_id = _read_library_name(tmp_dir / "metadata.json")
     if fetched_id != expected_library_id:
