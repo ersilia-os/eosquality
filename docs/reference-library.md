@@ -54,7 +54,7 @@ When an artifact is fit against a custom library (`library=` in the Python API),
    eosquality build --input data/libraries/ersilia_reference_library_v1.csv \
                     --output data/indices/ersilia_reference_library_v1/
    ```
-   The connectivity keys take tens of minutes for the 1.35M molecules.
+   The connectivity keys take a few minutes on several cores for the 1.35M molecules.
 3. Upload the CSV and the folder with [eosvc](https://github.com/ersilia-os/eosvc). The repo's `access.json` routes `data/` to the public bucket:
    ```bash
    eosvc upload --path data/libraries/ersilia_reference_library_v1.csv

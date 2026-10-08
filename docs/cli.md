@@ -138,13 +138,14 @@ Builds a reference-library folder from a SMILES CSV that has a `smiles` column. 
 - `metadata.json` (the library's identity, `library_name`)
 - `connectivity_keys.npz` (the sorted unique connectivity layers of the molecules and of their scaffolds)
 
-The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes tens of minutes for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
+The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes a few minutes on several cores (about 15 minutes on one) for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
 
 | flag | default | |
 |---|---|---|
 | `--input`, `-i PATH` | required | library CSV |
 | `--output`, `-o PATH` | required | new library folder |
 | `--name NAME` | CSV file stem | library identity (`library_name`) |
+| `--jobs`, `-j N` | -1 | worker processes for the standardisation and the keys (every core by default) |
 | `--max-samples N` | all | truncate the input (testing) |
 | `--verbose`, `-v` | off | |
 

@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._base import require_file
-from eosquality.utils import console
+from eosquality.utils.parallel import map_rows
 
 KEYS_FILE = "connectivity_keys.npz"
 # Characters of an InChIKey that form its connectivity layer (first block).
@@ -73,10 +73,18 @@ def _scaffold(smiles: str) -> str:
             return ""
 
 
+def _layer_pair(smiles: str) -> tuple[str, str]:
+    """Connectivity layers of a molecule and of its Murcko scaffold (picklable)."""
+    return connectivity_layer(smiles), connectivity_layer(_scaffold(smiles))
+
+
 def _layers(
     smiles: list[str], label: str = "InChIKey layers"
 ) -> tuple[np.ndarray, np.ndarray]:
     """Connectivity layers of the molecules and of their Murcko scaffolds.
+
+    Spread over processes inside ``parallel.workers`` (the CLI); in-process
+    otherwise.
 
     Parameters
     ----------
@@ -91,15 +99,12 @@ def _layers(
         ``(molecule layers, scaffold layers)``, both length ``len(smiles)``;
         ``""`` where there is none.
     """
-    molecules = np.empty(len(smiles), dtype=object)
-    scaffolds = np.empty(len(smiles), dtype=object)
-    with console.progress(label) as bar:
-        task = bar.add_task(label, total=len(smiles))
-        for i, s in enumerate(smiles):
-            molecules[i] = connectivity_layer(s)
-            scaffolds[i] = connectivity_layer(_scaffold(s))
-            bar.advance(task)
-    return molecules, scaffolds
+    pairs = np.empty(len(smiles), dtype=object)
+    map_rows(_layer_pair, smiles, pairs, label=label, show_progress=True)
+    return (
+        np.array([m for m, _ in pairs], dtype=object),
+        np.array([c for _, c in pairs], dtype=object),
+    )
 
 
 def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:

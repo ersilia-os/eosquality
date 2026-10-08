@@ -166,9 +166,9 @@ def test_run_output_must_be_csv(files, capsys):
     assert "mustbea.csvfile" in _err(capsys)
 
 
-def _library_csv(tmp_path, smiles, name):
+def _library_csv(tmp_path, smiles, name, n=30):
     path = tmp_path / name
-    pd.DataFrame({"smiles": smiles[:30]}).to_csv(path, index=False)
+    pd.DataFrame({"smiles": smiles[:n]}).to_csv(path, index=False)
     return str(path)
 
 
@@ -243,3 +243,26 @@ def test_setup_reports_a_library_it_cannot_fetch(served_library, monkeypatch, ca
     monkeypatch.setenv("EOSQUALITY_REFERENCE_BASE_URL", "file:///nonexistent/")
     assert _run(["setup"]) == 1
     assert "couldnotfetchthereferencelibrary" in _err(capsys)
+
+
+def test_the_maintainer_workflow_build_then_fit_then_run(
+    tmp_path, smiles, reference, query, monkeypatch
+):
+    """``build`` makes a library that ``fit`` and ``run`` then use."""
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v0.csv", n=600)
+    lib = tmp_path / "lib"
+    assert _run(["build", "-i", csv, "-o", str(lib), "-j", "1"]) == 0
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_LIBRARY_PATH", str(lib))
+    reference.to_csv(tmp_path / "reference_eos0aaa_v1.csv", index=False)
+    query.to_csv(tmp_path / "query.csv", index=False)
+    art = str(tmp_path / "artifacts_eos0aaa_v1")
+    assert (
+        _run(["fit", "-r", str(tmp_path / "reference_eos0aaa_v1.csv"), "-a", art]) == 0
+    )
+    out = tmp_path / "quality_eos0aaa_v1.csv"
+    assert (
+        _run(["run", "-i", str(tmp_path / "query.csv"), "-a", art, "-o", str(out)]) == 0
+    )
+    scores = pd.read_csv(out)
+    assert {"ref_match", "ref_scaffold", "ref_typicality_pct"} <= set(scores.columns)
+    assert scores["ref_match"].tail(40).eq(1).all()  # the 40 reference rows
