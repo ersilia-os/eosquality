@@ -174,7 +174,6 @@ def _make_pipeline(shared: SharedFitState) -> PreprocessPipeline:
         {
             "schema": shared.schema,
             "scaler_params": shared.scaler_params,
-            "binary_class_freq": shared.binary_class_freq,
         }
     )
 

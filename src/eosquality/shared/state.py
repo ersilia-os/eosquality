@@ -13,8 +13,7 @@ from eosquality.shared.metadata import FitMetadata
 
 @dataclass
 class SharedFitState:
-    """Schema + eosframes scaler + binary class freqs + metadata + reference ids
-    + selected feature subset.
+    """Schema + eosframes scaler + metadata + selected feature subset.
 
     Computed once per fit pass (by :func:`fit_shared`) and consumed by every
     score component. Persisted under ``<root>/shared/``.
@@ -35,7 +34,6 @@ class SharedFitState:
 
     schema: Schema
     scaler_params: dict[str, Any]
-    binary_class_freq: dict[str, float]
     metadata: FitMetadata
     selected_columns: list[str] = field(default_factory=list)
     reference_ids: list[Any] = field(default_factory=list)

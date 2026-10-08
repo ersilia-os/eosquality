@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 10, training format 11. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 11, training format 11. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
 
 ## Example results
 
@@ -57,7 +57,6 @@ The query sets, and how many of their molecules the reference library holds (`re
   which is not actually the model's training data will be scored against
   anyway. `trn_*` answers "how does this molecule relate to the data in this
   folder", not "was this model trained well".
-- `binary_class_freq` is computed and saved, but no score reads it.
 
 ## Training modality (in progress)
 

@@ -22,7 +22,7 @@ The library's `vN` must equal the package's major version. Importing a release w
 Saved artifacts record the following in `reference_mode/shared/metadata.json`:
 - `library_id`
 - `eosquality_version`
-- `format_version` (the on-disk layout and score semantics; currently 10)
+- `format_version` (the on-disk layout and score semantics; currently 11)
 - `library_path` (for custom libraries)
 
 The training modality is versioned separately: `training_mode/training_sets/metadata.json` holds `training_format_version` (currently 11). Adding or changing the training modality therefore never invalidates reference artifacts.

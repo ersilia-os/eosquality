@@ -73,8 +73,8 @@ Scores are described in `docs/concepts.md`; what to know about the code:
   - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.
-  - **Contents.** schema, eosframes scaler params, binary_class_freq, metadata and selected_columns. `ref_repr` (the scaled, feature-selected reference matrix) and `reference_ids` (its row labels) exist at fit time only and are not saved.
-  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `library_path` (custom libraries only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 10). `load_shared` rejects other format versions with `ArtifactVersionError`.
+  - **Contents.** schema, eosframes scaler params, metadata and selected_columns. `ref_repr` (the scaled, feature-selected reference matrix) and `reference_ids` (its row labels) exist at fit time only and are not saved.
+  - **`metadata.py`.** Defines `FitMetadata`, which carries `library_id`, `library_path` (custom libraries only) and `format_version` (`ARTIFACT_FORMAT_VERSION`, currently 11). `load_shared` rejects other format versions with `ArtifactVersionError`.
 
 ### Orchestrator + flat infrastructure modules
 

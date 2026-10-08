@@ -48,8 +48,6 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
         schema = Schema(columns=[ColumnSpec(**c) for c in json.load(f)["columns"]])
     with open(folder / "scaler.json") as f:
         scaler_params = json.load(f)
-    with open(folder / "binary_class_freq.json") as f:
-        binary_class_freq = json.load(f)
     with open(folder / "selected_columns.json") as f:
         selected_columns = list(json.load(f)["selected_columns"])
 
@@ -59,7 +57,6 @@ def load_shared(root: str | pathlib.Path) -> SharedFitState:
     return SharedFitState(
         schema=schema,
         scaler_params=scaler_params,
-        binary_class_freq=binary_class_freq,
         metadata=metadata,
         selected_columns=selected_columns,
     )

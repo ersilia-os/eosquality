@@ -56,7 +56,7 @@ One subfolder per modality; either or both may be present.
   manifest.json                           # informational: eos_id, version, modalities, scores
   reference_mode/                         # iff fitted with -r/--reference
     shared/
-      schema.json  scaler.json  binary_class_freq.json
+      schema.json  scaler.json
       metadata.json                       # n_samples, library_id, library_path, format_version, …
       selected_columns.json
     typicality/   state.json  count_luts.npy  reference_self_aggregates.npy  metadata.json
