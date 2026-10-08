@@ -39,7 +39,7 @@ _MIN_PARALLEL = 200
 # RDKit's canonical descriptor list — (name, callable) tuples. Captured
 # at import time so every worker (under multiprocessing 'spawn') sees
 # the same ordering after re-importing this module.
-_POLY: dict = {"mol": None, "poly": None}  # the last molecule's polynomial
+_POLY: tuple = (None, None)  # the last molecule and its polynomial, swapped whole
 
 
 def _characteristic_poly(mol) -> np.ndarray:
@@ -49,13 +49,19 @@ def _characteristic_poly(mol) -> np.ndarray:
     RDKit would compute it twice. Same computation as
     ``rdkit.Chem.GraphDescriptors.Ipc``.
     """
-    if _POLY["mol"] is not mol:
+    global _POLY
+    last, poly = _POLY
+    if last is not mol:
         adjacency = np.equal(Chem.GetDistanceMatrix(mol, 0), 1)
-        _POLY["mol"], _POLY["poly"] = (
-            mol,
-            abs(Graphs.CharacteristicPolynomial(mol, adjacency)),
-        )
-    return _POLY["poly"]
+        poly = abs(Graphs.CharacteristicPolynomial(mol, adjacency))
+        _POLY = (mol, poly)
+    return poly
+
+
+def _drop_memo() -> None:
+    """Forget the last molecule (so none is kept alive between calls)."""
+    global _POLY
+    _POLY = (None, None)
 
 
 def _ipc(mol) -> float:
@@ -97,7 +103,7 @@ def _compute_one(smi: str) -> np.ndarray:
     (and emitting a numpy RuntimeWarning).
     """
     row = np.full(N_DESCRIPTORS, np.nan, dtype=np.float32)
-    _POLY["mol"] = _POLY["poly"] = None
+    _drop_memo()
     try:
         with rdBase.BlockLogs():
             mol = Chem.MolFromSmiles(smi)
@@ -113,6 +119,7 @@ def _compute_one(smi: str) -> np.ndarray:
         if not np.isfinite(value) or abs(value) > _F32_MAX:
             continue  # NaN-impute downstream rather than store ±inf
         row[i] = value
+    _drop_memo()
     return row
 
 

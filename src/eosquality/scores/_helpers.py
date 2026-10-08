@@ -123,13 +123,14 @@ def _search_both(sorted_self: np.ndarray, values: np.ndarray):
             np.searchsorted(sorted_self, values, side="left"),
             np.searchsorted(sorted_self, values, side="right"),
         )
+    shape, values = values.shape, values.ravel()
     order = np.argsort(values)
     needles = values[order]
     below = np.empty(values.size, dtype=np.intp)
     at_or_below = np.empty(values.size, dtype=np.intp)
     below[order] = np.searchsorted(sorted_self, needles, side="left")
     at_or_below[order] = np.searchsorted(sorted_self, needles, side="right")
-    return below, at_or_below
+    return below.reshape(shape), at_or_below.reshape(shape)
 
 
 def _cdf_score(values: np.ndarray, sorted_self: np.ndarray) -> np.ndarray:

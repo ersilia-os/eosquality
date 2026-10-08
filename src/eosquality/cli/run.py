@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+import zlib
 from typing import TYPE_CHECKING
 
 import click
@@ -136,10 +137,10 @@ def _read_query(input_path: str):
         query = pd.read_csv(input_path)
     except (
         OSError,
-        UnicodeDecodeError,
-        pd.errors.ParserError,
-        pd.errors.EmptyDataError,
-    ) as exc:
+        EOFError,
+        ValueError,
+        zlib.error,
+    ) as exc:  # pandas errors are ValueErrors
         raise CliError(f"could not read query CSV '{input_path}': {exc}") from exc
     if query.empty:
         raise CliError(f"query CSV '{input_path}' has no rows.")

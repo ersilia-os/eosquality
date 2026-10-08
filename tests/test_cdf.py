@@ -49,6 +49,7 @@ def test_large_inputs_give_the_same_scores_as_small_ones(monkeypatch):
     reference = np.sort(rng.integers(0, 50, 400).astype(float))  # many ties
     values = rng.normal(25, 20, 3000)
     values[::50] = np.nan
+    values = values.reshape(30, 100)  # any shape, not only 1-D
     plain = _helpers._cdf_score(values, reference)
     monkeypatch.setattr(_helpers, "_SORT_NEEDLES_MIN", 100)
     np.testing.assert_array_equal(_helpers._cdf_score(values, reference), plain)
