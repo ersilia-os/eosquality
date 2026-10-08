@@ -22,8 +22,8 @@ The canonical library folder (`smiles.csv`, `metadata.json`, `connectivity_keys.
 ruff check src tests scripts     # lint (org config + bugbear/pyupgrade)
 ruff format src tests scripts    # formatting: ruff format only, no black
 pre-commit install               # runs ruff-check and ruff-format on commit
-pytest -q                        # ~2 min; builds a tiny custom library from tests/fixtures/
-bash scripts/run_all_scores.sh   # refit + score the 5 example models into output/
+pytest -q                        # ~1 min; builds a tiny custom library from tests/fixtures/
+bash scripts/run_all_scores.sh   # refit + score the 5 example models into output/ (~20 min)
 conda run -n stylia python scripts/figures/<figure>.py   # writes docs/figures/
 ```
 
