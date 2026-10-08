@@ -120,3 +120,16 @@ def test_the_training_scores_read_the_canonical_librarys_cache(
     without_cache, expected = physchem_scores(False)
     assert with_cache and not without_cache
     pd.testing.assert_frame_equal(scores, expected)
+
+
+def test_a_huge_molecule_skips_the_polynomial_descriptors_quickly():
+    import time
+
+    from eosquality.library.physchem import DESCRIPTOR_NAMES, _compute_one
+
+    started = time.perf_counter()
+    row = _compute_one("C" * 400)
+    assert time.perf_counter() - started < 5
+    for name in ("Ipc", "AvgIpc"):
+        assert np.isnan(row[DESCRIPTOR_NAMES.index(name)])
+    assert np.isfinite(row[DESCRIPTOR_NAMES.index("MolWt")])

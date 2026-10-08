@@ -246,9 +246,14 @@ def _standardize(smiles: str) -> str | None:
     """Largest fragment, then RDKit canonical isomeric SMILES; ``None`` if unparsable.
 
     Used to match training molecules with queries: salt and solvent forms of
-    the same parent molecule map to one standardised SMILES.
+    the same parent molecule map to one standardised SMILES. Surrounding
+    whitespace is ignored; a SMILES with whitespace inside is rejected (RDKit
+    would read what follows as the molecule's name and keep a fragment).
     """
-    if not isinstance(smiles, str) or not smiles:
+    if not isinstance(smiles, str):
+        return None
+    smiles = smiles.strip()
+    if not smiles or len(smiles.split()) > 1:
         return None
     with rdBase.BlockLogs():  # RDKit's sanitisation notes are not actionable here
         mol = Chem.MolFromSmiles(smiles)

@@ -190,3 +190,13 @@ def test_the_pool_pins_blas_threads_for_its_workers_and_restores_the_environment
     assert seen == {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "4"}
     assert "OMP_NUM_THREADS" not in os.environ
     assert os.environ["OPENBLAS_NUM_THREADS"] == "4"
+
+
+def test_standardise_ignores_edges_and_rejects_inner_whitespace():
+    from eosquality.scores._helpers import _standardize
+
+    assert _standardize("  CCO\n") == "CCO"
+    assert _standardize("CCO ethanol") is None  # RDKit would read "ethanol" as a name
+    assert _standardize("C C") is None
+    assert _standardize("   ") is None
+    assert _standardize(None) is None

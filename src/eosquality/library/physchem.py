@@ -41,17 +41,25 @@ _MIN_PARALLEL = 200
 # the same ordering after re-importing this module.
 _POLY: tuple = (None, None)  # the last molecule and its polynomial, swapped whole
 
+# ``Ipc`` / ``AvgIpc`` cost seconds from ~150 atoms on (the polynomial is
+# O(n^4) and its coefficients overflow), and a value above float32's range is
+# stored as NaN anyway. The library's largest molecule has 52 atoms.
+_MAX_POLY_ATOMS = 128
+
 
 def _characteristic_poly(mol) -> np.ndarray:
     """|Characteristic polynomial| of the molecule's adjacency matrix, kept for reuse.
 
     ``Ipc`` and ``AvgIpc`` both need it, and it is the costliest step of either;
     RDKit would compute it twice. Same computation as
-    ``rdkit.Chem.GraphDescriptors.Ipc``.
+    ``rdkit.Chem.GraphDescriptors.Ipc``. Raises ``ValueError`` above
+    ``_MAX_POLY_ATOMS`` atoms (the descriptor is then NaN).
     """
     global _POLY
     last, poly = _POLY
     if last is not mol:
+        if mol.GetNumAtoms() > _MAX_POLY_ATOMS:
+            raise ValueError("molecule too large for the characteristic polynomial")
         adjacency = np.equal(Chem.GetDistanceMatrix(mol, 0), 1)
         poly = abs(Graphs.CharacteristicPolynomial(mol, adjacency))
         _POLY = (mol, poly)
