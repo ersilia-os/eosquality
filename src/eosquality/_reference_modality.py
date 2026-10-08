@@ -17,7 +17,8 @@ from eosquality.exceptions import SchemaError
 from eosquality.library.identity import LIBRARY_ID
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.schema.infer import validate_against_schema
-from eosquality.scores._helpers import _make_query_repr
+from eosquality.scores._helpers import _make_query_repr, query_keys
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.reference_match import ReferenceMatch
 from eosquality.scores.typicality import Typicality
@@ -131,6 +132,7 @@ def run_reference(
     components: dict[str, Any],
     columns: dict[str, pd.Series],
     metadata: dict[str, Any],
+    features: QueryFeatures | None = None,
 ) -> pd.DataFrame | None:
     """Run the reference-modality components, filling ``columns``/``metadata``.
 
@@ -146,6 +148,8 @@ def run_reference(
         Output score columns; filled in place.
     metadata : dict
         Run metadata; filled in place.
+    features : QueryFeatures, optional
+        The query's SMILES features, shared with the training scores.
 
     Returns
     -------
@@ -167,7 +171,7 @@ def run_reference(
         for name, component in components.items():
             column = score_name(name)
             with steps(f"Score: {column}") as st:
-                result = _run_component(name, component, query, query_repr)
+                result = _run_component(name, component, query, query_repr, features)
                 st.summary = (
                     console.share_summary(result.match)
                     if name == "match"
@@ -205,12 +209,7 @@ def _reference_details(query: pd.DataFrame, results: dict[str, Any]) -> pd.DataF
         ``key``, ``input`` (when given), then per score and column the raw
         value and the percentile on that column's reference distribution.
     """
-    keys = (
-        query["key"].astype(str).tolist()
-        if "key" in query.columns
-        else [str(i) for i in query.index]
-    )
-    parts = {"key": keys}
+    parts = {"key": query_keys(query)}
     if "input" in query.columns:
         parts["input"] = query["input"].tolist()
     for name, result in results.items():
@@ -220,11 +219,11 @@ def _reference_details(query: pd.DataFrame, results: dict[str, Any]) -> pd.DataF
     return pd.DataFrame(parts)
 
 
-def _run_component(name, component, query, query_repr):
+def _run_component(name, component, query, query_repr, features):
     """Run one reference component with the precomputed shared inputs."""
     if name in ("typicality", "extremity"):
         return component.run(query, query_repr=query_repr)
-    return component.run(query)
+    return component.run(query, features)
 
 
 def validate_input_column(reference: pd.DataFrame) -> None:

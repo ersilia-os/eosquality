@@ -25,7 +25,9 @@ from collections.abc import Iterable
 import numpy as np
 from rdkit import Chem, rdBase
 from rdkit import __version__ as _RDKIT_VERSION
-from rdkit.Chem import Descriptors
+from rdkit.Chem import Descriptors, Graphs
+from rdkit.ML.InfoTheory import entropy
+from threadpoolctl import threadpool_limits
 
 from eosquality.utils.parallel import map_rows
 
@@ -37,7 +39,38 @@ _MIN_PARALLEL = 200
 # RDKit's canonical descriptor list — (name, callable) tuples. Captured
 # at import time so every worker (under multiprocessing 'spawn') sees
 # the same ordering after re-importing this module.
-DESCRIPTOR_FNS: list[tuple[str, callable]] = list(Descriptors._descList)
+_POLY: dict = {"mol": None, "poly": None}  # the last molecule's polynomial
+
+
+def _characteristic_poly(mol) -> np.ndarray:
+    """|Characteristic polynomial| of the molecule's adjacency matrix, kept for reuse.
+
+    ``Ipc`` and ``AvgIpc`` both need it, and it is the costliest step of either;
+    RDKit would compute it twice. Same computation as
+    ``rdkit.Chem.GraphDescriptors.Ipc``.
+    """
+    if _POLY["mol"] is not mol:
+        adjacency = np.equal(Chem.GetDistanceMatrix(mol, 0), 1)
+        _POLY["mol"], _POLY["poly"] = (
+            mol,
+            abs(Graphs.CharacteristicPolynomial(mol, adjacency)),
+        )
+    return _POLY["poly"]
+
+
+def _ipc(mol) -> float:
+    poly = _characteristic_poly(mol)
+    return sum(poly) * entropy.InfoEntropy(poly)
+
+
+def _avg_ipc(mol) -> float:
+    return entropy.InfoEntropy(_characteristic_poly(mol))
+
+
+_SHARED_POLY = {"Ipc": _ipc, "AvgIpc": _avg_ipc}
+DESCRIPTOR_FNS: list[tuple[str, callable]] = [
+    (name, _SHARED_POLY.get(name, fn)) for name, fn in Descriptors._descList
+]
 DESCRIPTOR_NAMES: list[str] = [name for name, _ in DESCRIPTOR_FNS]
 N_DESCRIPTORS: int = len(DESCRIPTOR_FNS)
 
@@ -64,6 +97,7 @@ def _compute_one(smi: str) -> np.ndarray:
     (and emitting a numpy RuntimeWarning).
     """
     row = np.full(N_DESCRIPTORS, np.nan, dtype=np.float32)
+    _POLY["mol"] = _POLY["poly"] = None
     try:
         with rdBase.BlockLogs():
             mol = Chem.MolFromSmiles(smi)
@@ -117,16 +151,19 @@ def compute_physchem_raw(
     """
     smiles_list = list(smiles)
     out = np.empty((len(smiles_list), N_DESCRIPTORS), dtype=np.float32)
-    return map_rows(
-        _compute_one,
-        smiles_list,
-        out,
-        label=label,
-        n_jobs=n_jobs,
-        chunksize=256,
-        min_items=_MIN_PARALLEL,
-        show_progress=show_progress,
-    )
+    # One BLAS thread, as in the pool workers: RDKit's small matrix work gains
+    # nothing from threads, and this keeps a value the same in-process and in a pool.
+    with threadpool_limits(1):
+        return map_rows(
+            _compute_one,
+            smiles_list,
+            out,
+            label=label,
+            n_jobs=n_jobs,
+            chunksize=256,
+            min_items=_MIN_PARALLEL,
+            show_progress=show_progress,
+        )
 
 
 # ---------------------------------------------------------------------------

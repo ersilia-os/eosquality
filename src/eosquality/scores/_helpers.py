@@ -109,6 +109,29 @@ def _row_nanquantile_block(values: np.ndarray, q: float) -> np.ndarray:
     return np.where(has_values, out, np.nan)
 
 
+_SORT_NEEDLES_MIN = 50_000  # above this, sorted lookups beat random ones
+
+
+def _search_both(sorted_self: np.ndarray, values: np.ndarray):
+    """``searchsorted`` of ``values`` on both sides (NaN last, as numpy sorts it).
+
+    Large inputs are looked up in sorted order, which is much more cache
+    friendly; the result is the same.
+    """
+    if values.size < _SORT_NEEDLES_MIN:
+        return (
+            np.searchsorted(sorted_self, values, side="left"),
+            np.searchsorted(sorted_self, values, side="right"),
+        )
+    order = np.argsort(values)
+    needles = values[order]
+    below = np.empty(values.size, dtype=np.intp)
+    at_or_below = np.empty(values.size, dtype=np.intp)
+    below[order] = np.searchsorted(sorted_self, needles, side="left")
+    at_or_below[order] = np.searchsorted(sorted_self, needles, side="right")
+    return below, at_or_below
+
+
 def _cdf_score(values: np.ndarray, sorted_self: np.ndarray) -> np.ndarray:
     """Map per-row values to calibrated scores via the reference CDF.
 
@@ -129,8 +152,7 @@ def _cdf_score(values: np.ndarray, sorted_self: np.ndarray) -> np.ndarray:
     if n == 0:
         raise ValueError("Cannot calibrate against an empty reference distribution.")
     values = np.asarray(values, dtype=np.float64)
-    below = np.searchsorted(sorted_self, values, side="left")
-    at_or_below = np.searchsorted(sorted_self, values, side="right")
+    below, at_or_below = _search_both(sorted_self, values)
     cdf = (below + at_or_below) / (2.0 * n)
     out = np.clip(cdf, 1.0 / (2.0 * n), 1.0)
     return np.where(np.isnan(values), np.nan, out)
@@ -235,6 +257,23 @@ def _standardize(smiles: str) -> str | None:
         if len(frags) > 1:
             mol = max(frags, key=lambda m: (m.GetNumHeavyAtoms(), Chem.MolToSmiles(m)))
         return Chem.MolToSmiles(mol)
+
+
+def query_keys(query: pd.DataFrame) -> list[str]:
+    """The query's ``key`` column as strings, or its index when it has none.
+
+    Parameters
+    ----------
+    query : pandas.DataFrame
+        Query rows.
+
+    Returns
+    -------
+    list of str
+    """
+    if "key" in query.columns:
+        return query["key"].astype(str).tolist()
+    return [str(i) for i in query.index]
 
 
 def _standardize_all(smiles: Sequence) -> list[str | None]:
