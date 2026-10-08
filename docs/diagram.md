@@ -22,7 +22,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
+    TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates<br/>one point per Morgan fingerprint"]
     LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
     SEL --> IDX["<b>training/</b><br/>a Morgan index per distinct training set<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b> (trn_tanimoto)<br/>mean Morgan distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (pct + raw)"]

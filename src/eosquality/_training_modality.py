@@ -121,7 +121,7 @@ def select_training_columns(columns: dict, shared, max_features) -> dict:
         names = [n for n in columns if n in keep]
     else:
         names = select_by_shared_molecules(
-            {n: set(c.smiles) for n, c in columns.items()}, max_features
+            {n: set(c.all_smiles) for n, c in columns.items()}, max_features
         )
     if len(names) < len(columns):
         logger.info(

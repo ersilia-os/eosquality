@@ -30,11 +30,20 @@ _SMILES_COLUMNS = ("smiles", "input")
 
 @dataclass
 class TrainingColumn:
-    """The standardised training set of one model output column."""
+    """The standardised training set of one model output column.
+
+    Molecules with the same Morgan fingerprint (stereoisomers, charge states)
+    are one point to the distance scores: ``smiles`` keeps the first of each
+    (sorted order) and the indices are built on those, because a training set
+    that holds many copies of a fingerprint has leave-one-out distances of
+    zero for the copies. ``all_smiles`` keeps every molecule for the exact
+    matches.
+    """
 
     name: str
-    smiles: list[str]  # standardised, unique, sorted
-    ids: list[str]  # the file's `key` per molecule, or "<column>:<row>"
+    smiles: list[str]  # one molecule per distinct Morgan fingerprint, sorted
+    ids: list[str]  # the file's `key` per `smiles` entry, or "<column>:<row>"
+    all_smiles: list[str]  # every standardised, unique training molecule, sorted
     n_unparsable: int = 0  # file rows dropped: SMILES missing or unparsable
 
     @property
@@ -57,6 +66,26 @@ class TrainingColumn:
             A digest of the (sorted) standardised SMILES.
         """
         return hashlib.sha1("\n".join(self.smiles).encode()).hexdigest()
+
+    @cached_property
+    def _members(self) -> frozenset[str]:
+        return frozenset(self.all_smiles)
+
+    def contains(self, smiles: list[str]) -> np.ndarray:
+        """Whether each standardised SMILES is a training molecule of this column.
+
+        Parameters
+        ----------
+        smiles : list of str
+            Standardised SMILES.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(len(smiles),)`` bool; looks at every training molecule, not
+            only the representatives in ``smiles``.
+        """
+        return np.fromiter((s in self._members for s in smiles), bool, len(smiles))
 
     @cached_property
     def _position(self) -> dict[str, int]:
@@ -121,9 +150,10 @@ def load_training(
 
     frames = {name: pd.read_csv(files[name]) for name in order if name in files}
     standardized = _standardize_files(frames)  # panels repeat molecules: once each
+    fingerprints = _fingerprints(set(standardized.values()) - {None})
     columns: dict[str, TrainingColumn] = {}
     for name, frame in frames.items():
-        column = _load_column(name, frame, standardized)
+        column = _load_column(name, frame, standardized, fingerprints)
         if column.n < MIN_TRAINING_MOLECULES:
             logger.warning(
                 f"training | column {name!r}: only {column.n} usable molecules "
@@ -162,8 +192,28 @@ def _standardize_files(frames: dict[str, pd.DataFrame]) -> dict[str, str | None]
     return dict(zip(distinct, _standardize_all(distinct), strict=True))
 
 
+def _fingerprints(smiles: set[str]) -> dict[str, bytes]:
+    """The Morgan fingerprint (the index's radius and size) of each SMILES."""
+    from rdkit import Chem
+    from rdkit.Chem import rdFingerprintGenerator
+
+    from eosquality.vectorindex import N_BITS_DEFAULT, RADIUS_DEFAULT
+
+    generator = rdFingerprintGenerator.GetMorganGenerator(
+        radius=RADIUS_DEFAULT, fpSize=N_BITS_DEFAULT
+    )
+    out = {}
+    for smi in smiles:
+        mol = Chem.MolFromSmiles(smi)
+        out[smi] = generator.GetFingerprint(mol).ToBinary() if mol else smi.encode()
+    return out
+
+
 def _load_column(
-    name: str, df: pd.DataFrame, standardized: dict[str, str | None]
+    name: str,
+    df: pd.DataFrame,
+    standardized: dict[str, str | None],
+    fingerprints: dict[str, bytes],
 ) -> TrainingColumn:
     std = df[_smiles_column(name, df)].map(standardized)
     n_bad = int(std.isna().sum())
@@ -178,14 +228,26 @@ def _load_column(
     table = table[table["smiles"].notna()]
 
     grouped = table.groupby("smiles", sort=True)
-    smiles = list(grouped.groups.keys())
-    first_ids = grouped["id"].first().reindex(smiles).tolist()
-    n_dupes = len(table) - len(smiles)
+    all_smiles = list(grouped.groups.keys())
+    first_ids = grouped["id"].first().reindex(all_smiles).tolist()
+    n_dupes = len(table) - len(all_smiles)
     if n_dupes:
         logger.info(f"training | column {name!r}: {n_dupes} duplicate rows merged")
+    seen: set[bytes] = set()
+    keep = [
+        i
+        for i, smi in enumerate(all_smiles)
+        if not (fingerprints[smi] in seen or seen.add(fingerprints[smi]))
+    ]
+    if len(keep) < len(all_smiles):
+        logger.info(
+            f"training | column {name!r}: {len(all_smiles):,} molecules, "
+            f"{len(keep):,} distinct Morgan fingerprints"
+        )
     return TrainingColumn(
         name=name,
-        smiles=smiles,
-        ids=first_ids,
+        smiles=[all_smiles[i] for i in keep],
+        ids=[first_ids[i] for i in keep],
+        all_smiles=all_smiles,
         n_unparsable=n_bad,
     )

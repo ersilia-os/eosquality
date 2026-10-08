@@ -75,7 +75,7 @@ Other columns, such as labels, are ignored.
 
 When `-r` is also given, every file must name one of its output columns. Columns without a file simply have no training scores.
 
-Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped and duplicate molecules are merged. Columns with fewer than 20 molecules are skipped. The fit prints a table of the loaded columns (molecules, rows dropped as unparsable) and warns once with the total.
+Training SMILES are standardised: largest fragment, then canonical isomeric SMILES. Unparsable SMILES are dropped, duplicate molecules are merged, and molecules with the same Morgan fingerprint count once in the distance scores. Columns with fewer than 20 molecules are skipped. The fit prints a table of the loaded columns (molecules, rows dropped as unparsable) and warns once with the total.
 
 **Both inputs.** With both `-r` and `-t`, the reference modality uses only the output columns that have a usable training set (at least 20 valid molecules); the other columns are left out of every score. Feature selection then keeps at most 10 of the remaining columns, and both modalities use those same columns: the training scores are fitted on the selected columns only. So `trn_in_training` means "a training molecule of one of the selected columns". Training sets cannot be added to existing artifacts later: fit both together.
 
