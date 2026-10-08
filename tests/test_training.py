@@ -402,7 +402,7 @@ def test_match_roundtrip(both, query, tmp_path):
 
 def test_columns_with_the_same_molecules_share_one_index(tmp_path, smiles, query):
     """A screening panel's columns cover the same molecules, in any order."""
-    from eosquality.scores._training_helpers import TrainingQuery
+    from eosquality.scores._training_helpers import QueryFeatures
 
     folder = tmp_path / "training_eos0aaa_v1"
     folder.mkdir()
@@ -415,7 +415,7 @@ def test_columns_with_the_same_molecules_share_one_index(tmp_path, smiles, query
     assert domains["a"] is domains["b"] and domains["a"] is not domains["c"]
 
     q = query[["key", "input"]]
-    raw = eq.training_distance._per_column(TrainingQuery.from_frame(q))[0]
+    raw = eq.training_distance._per_column(QueryFeatures.from_frame(q))[0]
     np.testing.assert_array_equal(raw[:, 0], raw[:, 1])  # the same set, the same value
 
     eq.save(tmp_path / "art")
@@ -481,3 +481,12 @@ def test_copies_do_not_zero_the_loo_table(stereo_dir, tmp_path):
     res = loaded.run(both_forms)
     assert res.scores.trn_match.tolist() == [1, 1]  # exact lookups keep every form
     assert res.training_details.trn_in_training.all()  # also the dropped copy
+
+
+def test_reference_properties_of_a_training_only_fit_are_a_clear_error(training_dir):
+    from eosquality.exceptions import NotFittedError
+
+    eq = ErsiliaQuality().fit(training_sets=training_dir, eos_id="eos0aaa")
+    for name in ("schema_", "metadata_", "shared_"):
+        with pytest.raises(NotFittedError, match="reference modality"):
+            getattr(eq, name)

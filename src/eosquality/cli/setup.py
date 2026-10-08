@@ -12,7 +12,6 @@ import time
 import click
 
 from eosquality.cli._common import CliError, run_command, verbose_option
-from eosquality.library.download import ensure_library_downloaded
 from eosquality.library.identity import (
     LIBRARY_ID,
     library_dirname,
@@ -60,6 +59,8 @@ def setup(force: bool, verbose: bool) -> None:
             ],
             icon="◆",
         )
+        from eosquality.library.download import ensure_library_downloaded
+
         with console.section("Reference library") as section:
             try:
                 library = ensure_library_downloaded(

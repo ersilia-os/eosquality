@@ -54,7 +54,7 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
 Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys and the physchem descriptor cache, about 1.3 GB) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
 
-This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
+This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched. `EOSQUALITY_REFERENCE_BASE_URL` overrides the S3 source.
 
 | flag | default | |
 |---|---|---|

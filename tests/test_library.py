@@ -112,3 +112,13 @@ def test_a_folder_that_is_not_a_library_is_a_clear_error(tmp_path):
         _ = empty.metadata
     with pytest.raises(FileNotFoundError, match="not a reference library"):
         _ = empty.smiles
+
+
+def test_library_major_matches_the_package_major():
+    """``eosquality X.y.z`` ships exactly library ``vX``; a release must keep them together."""
+    import importlib.metadata
+
+    from packaging.version import Version
+
+    major = Version(importlib.metadata.version("eosquality")).major
+    assert identity.library_major() == major

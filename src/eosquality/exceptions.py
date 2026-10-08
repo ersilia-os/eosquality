@@ -1,3 +1,6 @@
+"""Exceptions raised by eosquality."""
+
+
 class NotFittedError(RuntimeError):
     """Raised when ErsiliaQuality methods are called before fit()."""
 

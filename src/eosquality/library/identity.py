@@ -34,9 +34,6 @@ import os
 import pathlib
 import re
 
-from eosquality.library.download import is_library_cached_and_valid
-from eosquality.utils.logging import logger
-
 LIBRARY_ID: str = "ersilia_reference_library_v0"
 
 _LIBRARY_ID_RE = re.compile(r"^ersilia_reference_library_v(\d+)$")
@@ -148,6 +145,9 @@ def reference_library_path() -> pathlib.Path:
     pathlib.Path
         Folder of the canonical reference library.
     """
+    from eosquality.library.download import is_library_cached_and_valid
+    from eosquality.utils.logging import logger
+
     override = os.environ.get("EOSQUALITY_REFERENCE_LIBRARY_PATH")
     if override:
         path = pathlib.Path(override).expanduser().resolve()

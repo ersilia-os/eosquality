@@ -120,7 +120,6 @@ def run(
     verbose : bool
         Print debug messages and diagnostic tables.
     """
-
     run_command(
         lambda: _run(input_path, artifacts, output, details),
         verbose=verbose,

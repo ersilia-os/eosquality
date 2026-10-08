@@ -207,4 +207,4 @@ family, not a demonstration that k-NN domains earn their keep.
 **Cost.** The standardised training matrix is kept with the artifact, because
 a nearest-neighbour domain needs the reference molecules themselves, not a
 summary of them: about 34 MB for a 39,000-molecule column. Computing the
-descriptors runs at 3–5 ms per molecule.
+descriptors runs at about 6 ms per molecule.

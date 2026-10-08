@@ -23,6 +23,7 @@ ABBREV = {
 
 def plot_heatmap(ax, corr, labels, cmap):
     """Draw an annotated correlation heatmap.
+
     Parameters
     ----------
     ax : matplotlib.axes.Axes

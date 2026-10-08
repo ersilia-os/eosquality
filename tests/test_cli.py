@@ -367,3 +367,32 @@ def test_the_built_folder_has_the_usual_permissions_not_a_private_temp_folder(
     umask = os.umask(0)
     os.umask(umask)
     assert stat.S_IMODE((tmp_path / "lib").stat().st_mode) == 0o777 & ~umask
+
+
+def test_run_reports_a_query_it_cannot_use(files, capsys):
+    art = pathlib.Path(files["artifacts"])
+    art.mkdir()
+    run = ["run", "-a", files["artifacts"], "-o", files["output"]]
+    assert _run([*run, "-i", str(files["tmp"] / "missing.csv")]) == 1
+    assert "could not read query CSV" in capsys.readouterr().err
+    empty = files["tmp"] / "empty.csv"
+    empty.write_text("key,input\n")
+    assert _run([*run, "-i", str(empty)]) == 1
+    assert "hasnorows" in _err(capsys)
+
+
+def test_run_reports_unusable_artifacts(files, capsys):
+    art = pathlib.Path(files["artifacts"])
+    art.mkdir()
+    run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
+    assert _run(run) == 1  # an empty folder
+    assert "isincomplete" in _err(capsys)
+    # A fitted model whose metadata is damaged
+    pathlib.Path(files["output"]).unlink(missing_ok=True)
+    fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
+    art.rmdir()
+    assert _run([*fit, "--exclude", "ref_match"]) == 0
+    capsys.readouterr()
+    (art / "reference_mode" / "shared" / "metadata.json").write_text("{not json")
+    assert _run(run) == 1
+    assert "malformedJSON" in _err(capsys)

@@ -6,10 +6,12 @@ import multiprocessing as mp
 import os
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 from eosquality.utils import console
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # A process pool is used only when the caller asks for it (``n_jobs > 1``, or
 # ``workers(n)`` around a command) and the input is large enough: spawning

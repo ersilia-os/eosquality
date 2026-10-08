@@ -88,22 +88,26 @@ def fit_training(
     workdir = tempfile.TemporaryDirectory(prefix="eosquality_training_")
     indices: dict[str, VectorIndex] = {}
     built: dict[str, VectorIndex] = {}  # molecule-set signature → index
-    for name in console.track(list(columns), "Morgan index, columns"):
-        column = columns[name]
-        if column.signature in built:
-            indices[name] = built[column.signature]
-            logger.info(f"training | column {name!r}: shares an index built before")
-            continue
-        t0 = time.perf_counter()
-        built[column.signature] = indices[name] = VectorIndex.build(
-            column.smiles,
-            pathlib.Path(workdir.name) / _folder(len(built)),
-            max_k=min(TRAINING_MAX_K, column.n - 2),
-        )
-        logger.info(
-            f"training | column {name!r}: index built | n={column.n:,} | "
-            f"{time.perf_counter() - t0:.1f}s"
-        )
+    try:
+        for name in console.track(list(columns), "Morgan index, columns"):
+            column = columns[name]
+            if column.signature in built:
+                indices[name] = built[column.signature]
+                logger.info(f"training | column {name!r}: shares an index built before")
+                continue
+            t0 = time.perf_counter()
+            built[column.signature] = indices[name] = VectorIndex.build(
+                column.smiles,
+                pathlib.Path(workdir.name) / _folder(len(built)),
+                max_k=min(TRAINING_MAX_K, column.n - 2),
+            )
+            logger.info(
+                f"training | column {name!r}: index built | n={column.n:,} | "
+                f"{time.perf_counter() - t0:.1f}s"
+            )
+    except BaseException:
+        workdir.cleanup()  # do not leave a half-built index folder behind
+        raise
     return TrainingFitState(
         columns=columns,
         indices=indices,

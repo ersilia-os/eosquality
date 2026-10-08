@@ -6,10 +6,8 @@ import sys
 HEAVY = ("pandas", "sklearn", "scipy", "rdkit", "FPSim2", "eosframes")
 
 
-def _loaded_heavy(code: str) -> list[str]:
-    probe = (
-        f"{code}\nimport sys\nprint(','.join(m for m in {HEAVY!r} if m in sys.modules))"
-    )
+def _loaded_heavy(code: str, modules: tuple[str, ...] = HEAVY) -> list[str]:
+    probe = f"{code}\nimport sys\nprint(','.join(m for m in {modules!r} if m in sys.modules))"
     out = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
@@ -22,6 +20,7 @@ def test_cli_start_up_is_light():
 
 def test_package_import_is_light_until_a_class_is_used():
     assert _loaded_heavy("import eosquality") == []
+    assert _loaded_heavy("import eosquality", ("loguru", "rich", "numpy")) == []
     assert "pandas" in _loaded_heavy("from eosquality import ErsiliaQuality")
 
 

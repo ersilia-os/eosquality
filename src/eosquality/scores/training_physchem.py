@@ -42,7 +42,7 @@ from eosquality.scores._helpers import _cdf_score
 from eosquality.scores._physchem_domain import PhyschemDomain
 from eosquality.scores._training_helpers import (
     SUMMARY_QUANTILE,
-    TrainingQuery,
+    QueryFeatures,
     _columns_summary,
 )
 from eosquality.shared.state import SharedFitState
@@ -119,7 +119,7 @@ class TrainingPhyschem(ScoreComponent):
         return self
 
     def run(
-        self, query: pd.DataFrame, features: TrainingQuery | None = None
+        self, query: pd.DataFrame, features: QueryFeatures | None = None
     ) -> TrainingPhyschemRunResult:
         """Physchem distance of each query to every column's training set.
 
@@ -127,7 +127,7 @@ class TrainingPhyschem(ScoreComponent):
         ----------
         query : pandas.DataFrame
             Needs an ``input`` SMILES column.
-        features : TrainingQuery, optional
+        features : QueryFeatures, optional
             The query's features, shared with the other training scores.
 
         Returns
@@ -137,7 +137,7 @@ class TrainingPhyschem(ScoreComponent):
         self._check_fitted()
         assert self._domains is not None and self._training is not None
         if features is None:
-            features = TrainingQuery.from_frame(query)
+            features = QueryFeatures.from_frame(query)
         rows, names = features.rows, list(self._domains)
         idx = list(query.index)
         shape = (len(query), len(names))
