@@ -1,11 +1,13 @@
 """Training-score distributions per query set (rows) and model (violins).
 
-Left column: ``trn_tanimoto_pct`` (calibrated, 0–1). Right: ``trn_tanimoto_raw``
-(mean Tanimoto to the 5 nearest training molecules). Only models fitted with
-training sets appear.
+Columns: ``trn_tanimoto_pct`` (calibrated, 0–1), ``trn_tanimoto_raw`` (mean
+Tanimoto to the 5 nearest training molecules) and ``trn_physchem_pct`` (the
+same calibrated distance in physicochemical descriptor space). Only models
+fitted with training sets appear.
 
-A query set drawn from the model's own training chemistry should sit near
-0.5 on the calibrated scales; sets of unrelated chemistry shift towards 1.
+Higher is closer. A query set drawn from the model's own training chemistry
+should sit near 0.5 (dashed line) on the calibrated scales; sets of unrelated
+chemistry shift towards 0.
 
     python scripts/figures/training_scores.py [--scores-dir output/]
 """
@@ -29,6 +31,7 @@ stylia.set_style("ersilia")
 PANELS = [
     ("trn_tanimoto_pct", "Similarity (percentile)", (0.0, 1.0)),
     ("trn_tanimoto_raw", "Similarity (raw, mean Tanimoto)", (0.0, 1.0)),
+    ("trn_physchem_pct", "Physchem similarity (percentile)", (0.0, 1.0)),
 ]
 
 
@@ -57,7 +60,7 @@ def main():
                 for m in with_training
             ]
             plot_violins(ax, values, colors, lo, hi)
-            if column != "trn_tanimoto_raw":
+            if column.endswith("_pct"):
                 ax.axvline(0.5, color="black", lw=0.6, ls="--", alpha=0.5)
             ax.set_yticklabels(
                 [MODEL_LABELS.get(m, m) for m in with_training] if j == 0 else []
