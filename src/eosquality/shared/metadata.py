@@ -13,7 +13,7 @@ from eosquality.schema.infer import ERSILIA_METADATA_COLUMNS
 # On-disk artifact format. Bump whenever saved files change meaning or
 # layout so older artifacts fail at load with a clear "refit" message
 # instead of producing silently different scores. History: git log.
-ARTIFACT_FORMAT_VERSION = 11
+ARTIFACT_FORMAT_VERSION = 12
 
 
 @dataclass

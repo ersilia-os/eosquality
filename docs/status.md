@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 11, training format 13. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 12, training format 13. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
 
 ## Example results
 
@@ -31,7 +31,7 @@ The query sets, and how many of their molecules the reference library holds (`re
 ![Reference calibration](figures/reference_calibration.png)
 ![Score distributions](figures/score_distributions.png)
 
-**Typicality steps.** Typicality's percentile moves in steps for the one-output models because a column's density has only about 130 distinct values across 1.35M molecules (int8 density levels). Ties cannot spread out into a uniform distribution. Mid-rank centres them rather than biasing them upward.
+**Typicality is smooth.** The density is interpolated between int8 levels, so the percentile varies continuously with the value (about 800 distinct values per 1,000 molecules for the one-output models, against about 130 when each value was rounded to a level). Exact ties remain where the outputs themselves tie (a binary or constant column).
 
 **Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.59 and −0.38).
 
@@ -48,7 +48,7 @@ The query sets, and how many of their molecules the reference library holds (`re
 - **Feature selection** keeps at most 10 outputs (10 of 49 for eos7m30). With
   training sets, the candidates are first restricted to the columns that have
   one (41 of eos7m30's 49), and both modalities then use the same 10.
-- **Typicality resolution** is limited by int8 quantisation for one-output models (about 130 levels).
+- **Typicality resolution** follows the int8 grid of the reference counts: a density between two levels is interpolated, not measured.
 - **The match flags** say a structure or scaffold is in the library (or a training set), not that the model's prediction for it is right. Their keys depend on the RDKit version the library was built with: a different installed RDKit is refused, not silently accepted.
 - **Library lookup** looks in `./data/indices/` relative to the current working directory. From elsewhere, set `EOSQUALITY_REFERENCE_LIBRARY_PATH` or run `eosquality setup`.
 - **Training-set quality is not assessed.** The loader standardises SMILES,
