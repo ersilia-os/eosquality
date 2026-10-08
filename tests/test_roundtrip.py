@@ -5,7 +5,12 @@ import pandas as pd
 import pytest
 
 from eosquality import ErsiliaQuality, Typicality
-from eosquality.exceptions import ArtifactVersionError, IncompatibleArtifactsError
+from eosquality.exceptions import (
+    ArtifactVersionError,
+    IncompatibleArtifactsError,
+    NotFittedError,
+    SchemaError,
+)
 
 REFERENCE = ["typicality", "extremity", "match"]
 PCT_SCORES = ("typicality", "extremity")
@@ -176,3 +181,36 @@ def test_artifacts_of_another_library_or_major_are_refused(
     meta_path.write_text(json.dumps({**meta, **edit}))
     with pytest.raises(IncompatibleArtifactsError, match=message):
         ErsiliaQuality.load(tmp_path / "art")
+
+
+def test_post_fit_attributes(fitted):
+    assert fitted.modalities_ == ["reference"]
+    assert fitted.metadata_.eos_id == "eos0aaa" and fitted.metadata_.n_samples == 600
+    assert fitted.schema_.column_names == fitted.shared_.schema.column_names
+
+
+def test_an_unfitted_instance_refuses_to_run(query):
+    eq = ErsiliaQuality()
+    with pytest.raises(NotFittedError, match="not fitted"):
+        eq.run(query)
+    with pytest.raises(NotFittedError):
+        _ = eq.reference_typicality_
+
+
+def test_an_anchor_needs_its_score_to_be_fitted(reference, library):
+    eq = ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", library=library, exclude=["ref_typicality"]
+    )
+    with pytest.raises(RuntimeError, match="only defined when typicality"):
+        _ = eq.reference_typicality_
+    assert eq.reference_extremity_ == pytest.approx(0.5, abs=0.02)
+
+
+def test_a_query_without_smiles_is_refused_when_ref_match_is_fitted(fitted, query):
+    with pytest.raises(SchemaError, match="'input' \\(or 'smiles'\\) column"):
+        fitted.run(query.drop(columns=["input"]))
+
+
+def test_smiles_is_accepted_as_the_input_column(fitted, query):
+    renamed = query.rename(columns={"input": "smiles"})
+    pd.testing.assert_frame_equal(fitted.run(renamed).scores, fitted.run(query).scores)
