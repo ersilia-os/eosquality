@@ -26,11 +26,11 @@ from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._base import ScoreComponent, read_json, require_file
 from eosquality.scores._helpers import (
     _aggregate_percentiles,
+    _cdf_score,
     _make_query_repr,
     _nan_aggregate,
     _reference_repr,
     _resolve_shared,
-    _score_from_aggregates,
     _sorted_finite,
 )
 from eosquality.shared.state import SharedFitState
@@ -127,7 +127,7 @@ class PercentileScore(ScoreComponent):
         )
         self._sorted_self_aggregates = _sorted_finite(aggregate, name)
         self._anchor = float(
-            np.nanmean(_score_from_aggregates(aggregate, self._sorted_self_aggregates))
+            np.nanmean(_cdf_score(aggregate, self._sorted_self_aggregates))
         )
         self._shared = shared
         self._finish_fit(t0)
@@ -162,7 +162,7 @@ class PercentileScore(ScoreComponent):
             query_repr = _make_query_repr(self._shared, query)
         per_feature = self._per_feature(query_repr)
         per_feature_pct = self._percentiles(query_repr, per_feature)
-        score = _score_from_aggregates(
+        score = _cdf_score(
             _aggregate_percentiles(per_feature_pct), self._sorted_self_aggregates
         )
         idx = list(query.index)

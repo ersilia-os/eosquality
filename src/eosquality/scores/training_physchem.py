@@ -158,9 +158,7 @@ class TrainingPhyschem(ScoreComponent):
                     )
                 distance = measured[id(domain)]
                 raw[rows, j] = distance
-                calibrated[rows, j] = _cdf_score(
-                    distance, domain.sorted_distances, higher_is_higher=True
-                )
+                calibrated[rows, j] = _cdf_score(distance, domain.sorted_distances)
         summary_distance = _columns_summary(raw)
         return TrainingPhyschemRunResult(
             score=pd.Series(

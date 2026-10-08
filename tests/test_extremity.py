@@ -46,7 +46,6 @@ def test_percentile_is_looked_up_on_the_columns_own_table(fitted, query):
     expected = _cdf_score(
         result.per_feature[name].to_numpy().astype(np.float32),
         table,
-        higher_is_higher=True,
     )
     np.testing.assert_allclose(result.per_feature_pct[name], expected)
     assert table.dtype == np.float32 and (np.diff(table) >= 0).all()

@@ -22,7 +22,7 @@ Two columns are published for the whole model:
   percentile, so columns with different shapes weigh equally; higher is
   more typical), the per-feature percentiles are aggregated at the same
   66th percentile, and that aggregate is mapped through the reference's own
-  sorted distribution of it (:func:`_score_from_aggregates`). The result is
+  sorted distribution of it (:func:`_cdf_score`). The result is
   uniform under the reference and comparable across models with different
   feature counts. The per-feature raw values and percentiles are returned as
   ``per_feature`` and ``per_feature_pct``.

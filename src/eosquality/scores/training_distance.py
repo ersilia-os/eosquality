@@ -225,9 +225,7 @@ class TrainingDistance(ScoreComponent):
                 self._training.indices[name], self._k[name]
             )
             raw[:, j] = dist.mean(axis=1)
-            calibrated[:, j] = _cdf_score(
-                raw[:, j], self._loo[name], higher_is_higher=True
-            )
+            calibrated[:, j] = _cdf_score(raw[:, j], self._loo[name])
             in_train[:, j] = hit
             neighbours.append((dist, nn_idx))
         return raw, calibrated, in_train, neighbours

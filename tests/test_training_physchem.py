@@ -38,7 +38,6 @@ def test_calibration_puts_training_molecules_near_a_half(fitted):
             compute_physchem_raw(column.smiles), column.rows_of(column.smiles)
         ),
         domain.sorted_distances,
-        higher_is_higher=True,
     )
     assert calibrated.mean() == pytest.approx(0.5, abs=0.05)
     assert ((calibrated > 0) & (calibrated <= 1)).all()

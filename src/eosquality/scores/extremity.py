@@ -174,7 +174,5 @@ def _per_column_percentiles(
     out = np.full(per_feature.shape, np.nan)
     for j, table in enumerate(tables.values()):
         if table.size:
-            out[:, j] = _cdf_score(
-                per_feature[:, j].astype(np.float32), table, higher_is_higher=True
-            )
+            out[:, j] = _cdf_score(per_feature[:, j].astype(np.float32), table)
     return out

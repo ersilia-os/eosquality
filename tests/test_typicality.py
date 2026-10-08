@@ -58,7 +58,7 @@ def test_percentile_table_is_the_mid_rank_of_the_density():
         density = luts[:, j].max()
         levels = np.round(scaled[:, j] * 127).astype(int) + 128
         per_value = luts[levels, j] / density
-        expected = _cdf_score(per_value, np.sort(per_value), higher_is_higher=True)
+        expected = _cdf_score(per_value, np.sort(per_value))
         np.testing.assert_allclose(pct[:, j], expected)
 
 

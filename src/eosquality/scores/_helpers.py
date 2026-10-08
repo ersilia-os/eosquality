@@ -109,22 +109,14 @@ def _row_nanquantile_block(values: np.ndarray, q: float) -> np.ndarray:
     return np.where(has_values, out, np.nan)
 
 
-def _cdf_score(
-    values: np.ndarray,
-    sorted_self: np.ndarray,
-    *,
-    higher_is_higher: bool,
-) -> np.ndarray:
+def _cdf_score(values: np.ndarray, sorted_self: np.ndarray) -> np.ndarray:
     """Map per-row values to calibrated scores via the reference CDF.
 
     Single source of truth for every CDF-calibrated score in the package.
     ``sorted_self`` is the ascending array of the same raw quantity computed
-    on the reference (finite values only).
-
-    - ``higher_is_higher=True`` (typicality, extremity): a value
-      above the reference median maps above 0.5.
-    - ``higher_is_higher=False`` (distances): a
-      *smaller* value maps above 0.5 via a ``1 − cdf`` flip.
+    on the reference (finite values only); a value above the reference
+    median maps above 0.5, so the score reads "higher = more of the raw
+    quantity".
 
     The CDF uses **mid-ranks**, ``cdf = (#{ref < v} + #{ref ≤ v}) / (2n)``,
     so a value tied with many reference rows sits in the middle of its tie
@@ -140,19 +132,8 @@ def _cdf_score(
     below = np.searchsorted(sorted_self, values, side="left")
     at_or_below = np.searchsorted(sorted_self, values, side="right")
     cdf = (below + at_or_below) / (2.0 * n)
-    out = np.clip(cdf if higher_is_higher else 1.0 - cdf, 1.0 / (2.0 * n), 1.0)
+    out = np.clip(cdf, 1.0 / (2.0 * n), 1.0)
     return np.where(np.isnan(values), np.nan, out)
-
-
-def _score_from_aggregates(
-    aggregates: np.ndarray, sorted_self_aggregates: np.ndarray
-) -> np.ndarray:
-    """``higher_is_higher=True`` wrapper around :func:`_cdf_score`.
-
-    Used by typicality / extremity, where the per-row aggregate
-    grows with the property being measured.
-    """
-    return _cdf_score(aggregates, sorted_self_aggregates, higher_is_higher=True)
 
 
 def _sorted_finite(values: np.ndarray, component: str) -> np.ndarray:
