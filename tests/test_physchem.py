@@ -12,7 +12,7 @@ from eosquality.library.physchem import (
 
 
 def test_descriptors_equal_rdkit_s_own(smiles):
-    """The shared Ipc/AvgIpc polynomial must not change a single value."""
+    """The row is exactly what RDKit's own descriptor functions return."""
     from rdkit import Chem
 
     for smi in smiles[:25]:
