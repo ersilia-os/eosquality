@@ -118,9 +118,18 @@ def staged_log(final_path: pathlib.Path):
             console.echo(f"[dim]log →[/] {console.path(tmp)}")
 
 
+def _check_jobs(ctx, param, value: int) -> int:
+    """Accept ``-1`` (every core) or a positive worker count."""
+    if value == 0:
+        raise click.BadParameter("use -1 for every core or a positive number.")
+    return value
+
+
 jobs_option = click.option(
     "--jobs",
     "-j",
+    type=click.IntRange(min=-1),
+    callback=_check_jobs,
     default=-1,
     show_default=True,
     metavar="N",
