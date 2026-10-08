@@ -97,8 +97,9 @@ def map_rows(
         progress.start()
     try:
         if parallel:
-            _single_threaded_workers()
-            with mp.Pool(processes=n_jobs) as pool:
+            with _single_threaded_workers():
+                pool = mp.Pool(processes=n_jobs)  # workers inherit the environment
+            with pool:
                 _fill(out, pool.imap(fn, items, chunksize=chunksize), progress, task_id)
         else:
             _fill(out, map(fn, items), progress, task_id)
@@ -108,20 +109,28 @@ def map_rows(
     return out
 
 
-def _single_threaded_workers() -> None:
-    """Make spawned workers inherit one BLAS thread each.
+@contextmanager
+def _single_threaded_workers():
+    """Make workers started inside the block inherit one BLAS thread each.
 
     RDKit descriptors call into numpy linear algebra; with every worker also
     running a multi-threaded BLAS the cores are oversubscribed and the pool
-    ends up slower than a single process.
+    ends up slower than a single process. The variables are restored on exit.
     """
-    for var in (
+    names = (
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
         "MKL_NUM_THREADS",
         "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ.setdefault(var, "1")
+    )
+    previous = {name: os.environ.get(name) for name in names}
+    os.environ.update({name: "1" for name in names if previous[name] is None})
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
 
 
 def _fill(out: np.ndarray, rows, progress, task_id) -> None:
