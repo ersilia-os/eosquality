@@ -121,7 +121,7 @@ jobs_option = click.option(
     default=-1,
     show_default=True,
     metavar="N",
-    help="Worker processes for the RDKit descriptors (-1: every core, 1: none).",
+    help="Worker processes for the RDKit descriptors (-1: every core, up to 16; 1: none).",
 )
 
 verbose_option = click.option(

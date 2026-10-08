@@ -19,6 +19,9 @@ from eosquality.utils import console
 # ``if __name__ == "__main__":`` guard re-executes that script in every worker.
 # The CLI, a proper entry point, opts in through :func:`workers`.
 PARALLEL_MIN_ITEMS = 5_000
+# ``-1`` means every core up to this many: each worker imports RDKit (~200 MB),
+# and past a handful of workers the spawn cost eats the gain.
+MAX_AUTO_WORKERS = 16
 _default_jobs: int | None = None
 
 
@@ -64,7 +67,8 @@ def map_rows(
         Progress-bar title.
     n_jobs : int, optional
         Worker processes. ``None`` takes the :func:`workers` setting (in-process
-        outside one); 1 runs in-process; ``-1`` uses every CPU.
+        outside one); 1 runs in-process; ``-1`` uses every CPU, up to
+        :data:`MAX_AUTO_WORKERS`.
     chunksize : int, optional
         Items per task sent to a worker.
     min_items : int, optional
@@ -84,7 +88,7 @@ def map_rows(
     if n_jobs is None:
         n_jobs = _default_jobs
     if n_jobs is not None and n_jobs < 0:
-        n_jobs = os.cpu_count() or 1
+        n_jobs = min(os.cpu_count() or 1, MAX_AUTO_WORKERS)
     n_jobs = max(1, min(n_jobs or 1, n))
     parallel = n_jobs > 1 and n >= min_items
     progress = (
