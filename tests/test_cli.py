@@ -7,6 +7,9 @@ from eosquality.cli import main
 
 
 def _run(argv):
+    """Run the CLI; ``fit`` / ``run`` stay in-process unless ``-j`` is given."""
+    if argv[0] in ("fit", "run") and "-j" not in argv:
+        argv = [*argv, "-j", "1"]
     with pytest.raises(SystemExit) as exc:
         main(argv)
     return exc.value.code
@@ -266,3 +269,12 @@ def test_the_maintainer_workflow_build_then_fit_then_run(
     scores = pd.read_csv(out)
     assert {"ref_match", "ref_scaffold", "ref_typicality_pct"} <= set(scores.columns)
     assert scores["ref_match"].tail(40).eq(1).all()  # the 40 reference rows
+
+
+def test_fit_and_run_use_a_pool_for_the_descriptors_when_asked(files, training_dir):
+    """The default ``-j -1`` path: a pool for a column of 200 or more molecules."""
+    only = str(files["tmp"] / "training_only_eos0aaa_v1")
+    assert _run(["fit", "-t", str(training_dir), "-a", only, "-j", "2"]) == 0
+    out = str(files["tmp"] / "pooled_eos0aaa_v1.csv")
+    assert _run(["run", "-i", files["query"], "-a", only, "-o", out, "-j", "2"]) == 0
+    assert "trn_physchem_pct" in pd.read_csv(out).columns
