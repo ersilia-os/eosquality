@@ -72,7 +72,7 @@ def load_training_sets(training_sets, output_columns=None) -> dict:
     with console.section("Training sets") as section:
         with steps("Load and standardise the training sets") as st:
             columns = load_training(training_sets, output_columns)
-            st.summary = f"{len(columns)} column(s)"
+            st.summary = console.plural(len(columns), "column")
         console.table(
             ("column", "molecules", "unparsable"),
             [
@@ -91,7 +91,7 @@ def load_training_sets(training_sets, output_columns=None) -> dict:
                     )
                 ]
             )
-        section.summary = f"{len(columns)} column(s)"
+        section.summary = console.plural(len(columns), "column")
     return columns
 
 
@@ -190,7 +190,7 @@ def fit_training_modality(
                 component = cls().fit(training=eq._training, shared=eq._shared)
                 setattr(eq, name, component)
                 st.summary = component.fit_summary
-        section.summary = f"{len(columns)} column(s)"
+        section.summary = console.plural(len(columns), "column")
 
 
 def _assemble_details(

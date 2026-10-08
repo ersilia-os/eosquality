@@ -228,4 +228,4 @@ def _write_outputs(
         if details and result.reference_details is not None:
             result.reference_details.to_csv(reference_details, index=False)
             console.success(f"reference details → {console.path(reference_details)}")
-        section.summary = f"{len(result.scores.columns)} column(s)"
+        section.summary = console.plural(len(result.scores.columns), "column")

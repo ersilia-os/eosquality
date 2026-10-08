@@ -3,7 +3,7 @@
 This is the **only** code path in eosquality that hits the network. It writes
 the library folder to ``~/.eosquality/indices/``. ``fit`` and the resolve
 helpers are local-only. No-op if a valid cached copy
-already exists (use ``--force`` to fetch again). Honors
+already exists (use ``--force`` to fetch again). Honours
 ``EOSQUALITY_REFERENCE_BASE_URL`` (staging bucket override).
 """
 
@@ -26,7 +26,7 @@ from eosquality.utils import console
     help=(
         "Set up eosquality: fetch the reference library for this release into "
         "~/.eosquality/. The only command that uses the network; a no-op if a "
-        "valid cached copy exists. Honors EOSQUALITY_REFERENCE_BASE_URL."
+        "valid cached copy exists. Honours EOSQUALITY_REFERENCE_BASE_URL."
     ),
     short_help="Fetch the canonical reference library into the local cache.",
 )

@@ -2,7 +2,7 @@
 
 # Quality of Ersilia predictions
 
-Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` tries to quantify, via multiple metrics, whether a given run output from Ersilia is "trustworthy". It does **not** estimate the probability that a prediction is correct. Per-column normalisation is done with [`eosframes`](https://github.com/ersilia-os/eosframes).
+Quality scoring for [Ersilia Model Hub](https://ersilia.io) predictions. `eosquality` describes how a model's output for a molecule compares with the same model's behaviour on a reference library and with its training sets. The scores are not ground truth: they do **not** estimate whether a prediction is correct. Per-column normalisation is done with [`eosframes`](https://github.com/ersilia-os/eosframes).
 
 ## Installation
 
@@ -18,7 +18,7 @@ The CLI is then available as `eosquality`. Start by setting it up, which fetches
 eosquality setup
 ```
 
-This will take a while. The library is stored under `~/.eosquality/`.
+This downloads about 1.3 GB and stores the library under `~/.eosquality/indices/`.
 
 ## Quick start
 

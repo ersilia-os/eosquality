@@ -33,7 +33,7 @@ The query sets, and how many of their molecules the reference library holds (`re
 
 **Typicality is smooth.** The density is interpolated between int8 levels, so the percentile varies continuously with the value (about 770–990 distinct values per 1,000 molecules for the one-output models, against about 130 when each value was rounded to a level). Exact ties remain where the outputs themselves tie (a binary or constant column).
 
-**Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.90 to −0.96: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.65 and −0.45).
+**Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95, over all query sets: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.60 and −0.36).
 
 ![Score correlations](figures/score_correlations.png)
 

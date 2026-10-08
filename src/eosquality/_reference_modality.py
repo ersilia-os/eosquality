@@ -61,7 +61,7 @@ def fit_reference(
     with console.section("Reference modality") as section:
         with steps("Validate reference predictions") as st:
             _validate_reference(reference)
-            st.summary = f"{len(reference):,} molecules · {len(requested)} score(s)"
+            st.summary = f"{len(reference):,} molecules · {console.plural(len(requested), 'score')}"
         logger.info(
             f"fit | eos_id={eos_id} version={version} scores=[{', '.join(requested)}]"
         )
@@ -84,7 +84,7 @@ def fit_reference(
                 max_features=max_features,
             )
             st.summary = (
-                f"{len(shared.schema.columns)} output(s) → "
+                f"{console.plural(len(shared.schema.columns), 'output')} → "
                 f"{len(shared.selected_columns)} selected"
             )
         eq._shared = shared
@@ -95,7 +95,7 @@ def fit_reference(
                 st.summary = getattr(getattr(eq, name), "fit_summary", None)
                 anchor = getattr(getattr(eq, name), "anchor_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
-        section.summary = f"{len(requested)} score(s) fitted"
+        section.summary = f"{console.plural(len(requested), 'score')} fitted"
 
 
 def _is_canonical(lib: ReferenceLibrary, requested) -> bool:
@@ -165,7 +165,8 @@ def run_reference(
             validate_against_schema(query, eq._shared.schema)
             query_repr = _make_query_repr(eq._shared, query)
             st.summary = (
-                f"{query_repr.shape[0]:,} molecules · {query_repr.shape[1]} feature(s)"
+                f"{query_repr.shape[0]:,} molecules · "
+                f"{console.plural(query_repr.shape[1], 'feature')}"
             )
         metadata["n_reference"] = eq._shared.metadata.n_samples
         for name, component in components.items():
@@ -189,7 +190,7 @@ def run_reference(
                     f"raw mean={float(result.score_raw.mean()):.4f}"
                 )
             metadata.update({f"{column}_{k}": v for k, v in result.metadata.items()})
-        section.summary = f"{len(components)} score(s)"
+        section.summary = console.plural(len(components), "score")
     return _reference_details(query, results) if results else None
 
 

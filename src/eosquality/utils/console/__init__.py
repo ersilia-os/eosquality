@@ -47,6 +47,7 @@ from eosquality.utils.console.fmt import (
     folder_size,
     path,
     plain,
+    plural,
     resources,
 )
 from eosquality.utils.console.steps import Steps, section
@@ -67,6 +68,7 @@ __all__ = [
     "median_summary",
     "path",
     "plain",
+    "plural",
     "progress",
     "resources",
     "rule",
