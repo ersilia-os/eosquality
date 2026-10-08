@@ -154,3 +154,17 @@ def test_build_only_writes_into_a_new_or_empty_folder(tmp_path, smiles):
     empty.mkdir()
     build_library(smiles[:10], empty, "x")
     assert (empty / "metadata.json").is_file()
+
+
+def test_the_fit_log_reports_the_library_keys(reference, library):
+    from eosquality.utils import console
+    from eosquality.utils.logging import logger
+
+    console.enable(False)
+    with console.console.capture() as capture:
+        ErsiliaQuality(verbose=True).fit(
+            reference, eos_id="eos0aaa", library=library, exclude=["ref_typicality"]
+        )
+    logger.set_verbosity(False)  # verbose=True turned DEBUG and the console on
+    console.enable(False)
+    assert "structures" in capture.get() and "scaffolds" in capture.get()

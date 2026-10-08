@@ -190,3 +190,13 @@ class ReferenceMatch(ScoreComponent):
         self._check_fitted()
         assert self._n_scaffolds is not None
         return self._n_scaffolds
+
+    @property
+    def fit_summary(self) -> str:
+        """One line for the fit log.
+
+        Returns
+        -------
+        str
+        """
+        return f"{self.n_molecules:,} structures · {self.n_scaffolds:,} scaffolds"
