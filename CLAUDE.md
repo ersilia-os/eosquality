@@ -69,7 +69,7 @@ Scores are described in `docs/concepts.md`; what to know about the code:
 
 - **`training/`** — the training-modality tier.
   - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None)`. One `<column>.csv` per output column (`smiles` or `input`, optional `key`; other columns are ignored). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicate molecules are merged. Columns with fewer than 20 molecules are skipped.
-  - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex`, `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
+  - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex` shared by columns with the same molecule set (`TrainingColumn.signature`; columns are stored sorted so a panel's columns coincide), `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
   - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
 
 - **`shared/`** — `SharedFitState` and its `fit_shared` / `save_shared` / `load_shared` functions.

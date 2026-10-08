@@ -108,10 +108,13 @@ class TrainingPhyschem(ScoreComponent):
         raw_all = compute_physchem_raw(
             union, show_progress=True, label="physchem descriptors"
         )
+        by_set: dict[str, PhyschemDomain] = {}  # a panel's columns share a domain
         for name in console.track(names, "physchem, columns"):
             column = training.columns[name]
-            rows = [row_of[smi] for smi in column.smiles]
-            self._domains[name] = PhyschemDomain.fit(raw_all[rows], scaler)
+            if column.signature not in by_set:
+                rows = [row_of[smi] for smi in column.smiles]
+                by_set[column.signature] = PhyschemDomain.fit(raw_all[rows], scaler)
+            self._domains[name] = by_set[column.signature]
             logger.debug(
                 f"physchem domain | column {name!r}: {column.n:,} molecules, "
                 f"k={self._domains[name].k}"
@@ -146,11 +149,14 @@ class TrainingPhyschem(ScoreComponent):
         calibrated = np.full(shape, np.nan)
         if len(features.smiles):
             physchem = features.physchem
+            measured: dict[int, np.ndarray] = {}  # columns sharing a domain
             for j, name in enumerate(names):
                 domain = self._domains[name]
-                distance = domain.measure(
-                    physchem, self._training.columns[name].rows_of(features.smiles)
-                )
+                if id(domain) not in measured:
+                    measured[id(domain)] = domain.measure(
+                        physchem, self._training.columns[name].rows_of(features.smiles)
+                    )
+                distance = measured[id(domain)]
                 raw[rows, j] = distance
                 calibrated[rows, j] = _cdf_score(
                     distance, domain.sorted_distances, higher_is_higher=True
@@ -177,25 +183,30 @@ class TrainingPhyschem(ScoreComponent):
 
     def _save_own(self, folder: pathlib.Path) -> None:
         assert self._domains is not None
-        names = list(self._domains)
-        for j, name in enumerate(names):
-            self._domains[name].save(folder / f"c{j:03d}")
+        saved: dict[int, str] = {}  # id of a domain → its folder
+        folders: dict[str, str] = {}
+        for name, domain in self._domains.items():
+            if id(domain) not in saved:
+                saved[id(domain)] = f"c{len(saved):03d}"
+                domain.save(folder / saved[id(domain)])
+            folders[name] = saved[id(domain)]
         with open(folder / STATE_FILE, "w") as f:
-            json.dump({"columns": names}, f, indent=2)
+            json.dump({"columns": list(self._domains), "folders": folders}, f, indent=2)
 
     def _load_own(self, folder: pathlib.Path) -> None:
         assert self._training is not None
-        names = read_json(folder / STATE_FILE, self.NAME)["columns"]
+        state = read_json(folder / STATE_FILE, self.NAME)
+        names = state["columns"]
         unknown = set(names) - set(self._training.column_names)
         if unknown:
             raise ValueError(
                 f"{SUBFOLDER}/state.json has columns {sorted(unknown)} that are not "
                 "in training_sets/metadata.json."
             )
-        self._domains = {
-            name: PhyschemDomain.load(folder / f"c{j:03d}")
-            for j, name in enumerate(names)
-        }
+        loaded: dict[str, PhyschemDomain] = {}
+        for sub in dict.fromkeys(state["folders"][name] for name in names):
+            loaded[sub] = PhyschemDomain.load(folder / sub)
+        self._domains = {name: loaded[state["folders"][name]] for name in names}
 
     @property
     def is_fitted_(self) -> bool:

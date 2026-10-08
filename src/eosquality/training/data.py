@@ -9,6 +9,7 @@ every file must name one of them.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 from dataclasses import dataclass
 from functools import cached_property
@@ -32,7 +33,7 @@ class TrainingColumn:
     """The standardised training set of one model output column."""
 
     name: str
-    smiles: list[str]  # standardised, unique, in file order of first occurrence
+    smiles: list[str]  # standardised, unique, sorted
     ids: list[str]  # the file's `key` per molecule, or "<column>:<row>"
     n_unparsable: int = 0  # file rows dropped: SMILES missing or unparsable
 
@@ -45,6 +46,17 @@ class TrainingColumn:
         int
         """
         return len(self.smiles)
+
+    @cached_property
+    def signature(self) -> str:
+        """Identity of the molecule set: columns with the same one share their index.
+
+        Returns
+        -------
+        str
+            A digest of the (sorted) standardised SMILES.
+        """
+        return hashlib.sha1("\n".join(self.smiles).encode()).hexdigest()
 
     @cached_property
     def _position(self) -> dict[str, int]:
@@ -156,7 +168,7 @@ def _load_column(
     table = pd.DataFrame({"smiles": std, "id": ids})
     table = table[table["smiles"].notna()]
 
-    grouped = table.groupby("smiles", sort=False)
+    grouped = table.groupby("smiles", sort=True)
     smiles = list(grouped.groups.keys())
     first_ids = grouped["id"].first().reindex(smiles).tolist()
     n_dupes = len(table) - len(smiles)

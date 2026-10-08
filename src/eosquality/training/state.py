@@ -1,15 +1,16 @@
-"""TrainingFitState: per-column training sets + one Morgan index per column.
+"""TrainingFitState: per-column training sets + a Morgan index per distinct set.
 
 Layout under ``<root>/training_sets/`` (``<root>`` is ``training_mode/`` in
 an :class:`~eosquality.quality.ErsiliaQuality` artifacts folder)::
 
     metadata.json        # training_format_version, column order
-    columns.json         # per column: folder, n
+    columns.json         # per column: its index folder, n
     arrays.npz           # per column: ids
-    indices/c000/ …      # one VectorIndex folder per column (vector_index.h5,
-                         # knn_*.npy, smiles.csv, metadata.json)
+    indices/c000/ …      # one VectorIndex folder per distinct molecule set
+                         # (vector_index.h5, knn_*.npy, smiles.csv, metadata.json)
 
-Each per-column index is built with :meth:`VectorIndex.build`, whose
+Columns measured on the same molecules (one screening panel) share an index.
+Each index is built with :meth:`VectorIndex.build`, whose
 identity-stripped self-kNN gives every training molecule its leave-one-out
 nearest-training similarity — the calibration table for training scores.
 """
@@ -35,7 +36,7 @@ SUBFOLDER = "training_sets"
 # Bump when the meaning or layout of training_sets/ changes. Independent of
 # ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected. History:
 # git log.
-TRAINING_FORMAT_VERSION = 11
+TRAINING_FORMAT_VERSION = 12
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 
@@ -65,7 +66,10 @@ class TrainingFitState:
 def fit_training(
     columns: dict[str, TrainingColumn], *, eos_id: str, version: str
 ) -> TrainingFitState:
-    """Build one Morgan :class:`VectorIndex` per training column (in a temp dir).
+    """Build a Morgan :class:`VectorIndex` per distinct training set (in a temp dir).
+
+    Columns measured on the same molecules (one screening panel) share one
+    index.
 
     Parameters
     ----------
@@ -80,12 +84,17 @@ def fit_training(
     """
     workdir = tempfile.TemporaryDirectory(prefix="eosquality_training_")
     indices: dict[str, VectorIndex] = {}
-    for i, name in enumerate(console.track(list(columns), "Morgan index, columns")):
+    built: dict[str, VectorIndex] = {}  # molecule-set signature → index
+    for name in console.track(list(columns), "Morgan index, columns"):
         column = columns[name]
+        if column.signature in built:
+            indices[name] = built[column.signature]
+            logger.info(f"training | column {name!r}: shares an index built before")
+            continue
         t0 = time.perf_counter()
-        indices[name] = VectorIndex.build(
+        built[column.signature] = indices[name] = VectorIndex.build(
             column.smiles,
-            pathlib.Path(workdir.name) / _folder(i),
+            pathlib.Path(workdir.name) / _folder(len(built)),
             max_k=min(TRAINING_MAX_K, column.n - 2),
         )
         logger.info(
@@ -121,19 +130,18 @@ def save_training_state(
     folder = pathlib.Path(root) / SUBFOLDER
     folder.mkdir(parents=True, exist_ok=True)
     meta_cols, arrays = {}, {}
+    saved: dict[str, str] = {}  # molecule-set signature → index folder
     for i, (name, column) in enumerate(state.columns.items()):
-        sub = _folder(i)
-        target = folder / "indices" / sub
-        source = state.indices[name].index_dir
-        if source.resolve() != target.resolve():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(source, target)
-        meta_cols[name] = {
-            "folder": sub,
-            "n": column.n,
-        }
-        arrays[f"{sub}__ids"] = np.asarray(column.ids, dtype=str)
+        if column.signature not in saved:
+            sub = saved[column.signature] = _folder(len(saved))
+            target = folder / "indices" / sub
+            source = state.indices[name].index_dir
+            if source.resolve() != target.resolve():
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(source, target)
+        meta_cols[name] = {"folder": saved[column.signature], "n": column.n}
+        arrays[f"{_folder(i)}__ids"] = np.asarray(column.ids, dtype=str)
     np.savez(folder / "arrays.npz", **arrays)
     with open(folder / "columns.json", "w") as f:
         json.dump(meta_cols, f, indent=2)
@@ -177,17 +185,18 @@ def load_training_state(root: str | pathlib.Path) -> TrainingFitState:
         meta_cols = json.load(f)
     columns: dict[str, TrainingColumn] = {}
     indices: dict[str, VectorIndex] = {}
+    loaded: dict[str, VectorIndex] = {}  # index folder → index, shared by columns
     with np.load(folder / "arrays.npz") as arrays:
-        for name in meta["columns"]:
-            info = meta_cols[name]
-            sub = info["folder"]
-            vi = VectorIndex.load(folder / "indices" / sub)
+        for i, name in enumerate(meta["columns"]):
+            sub = meta_cols[name]["folder"]
+            if sub not in loaded:
+                loaded[sub] = VectorIndex.load(folder / "indices" / sub)
             columns[name] = TrainingColumn(
                 name=name,
-                smiles=vi.smiles,
-                ids=arrays[f"{sub}__ids"].tolist(),
+                smiles=loaded[sub].smiles,
+                ids=arrays[f"{_folder(i)}__ids"].tolist(),
             )
-            indices[name] = vi
+            indices[name] = loaded[sub]
     return TrainingFitState(
         columns=columns,
         indices=indices,

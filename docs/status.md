@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 11, training format 11. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 11, training format 12. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
 
 ## Example results
 
@@ -37,7 +37,7 @@ The query sets, and how many of their molecules the reference library holds (`re
 
 ![Score correlations](figures/score_correlations.png)
 
-**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The artifacts are 25–180 MB per model, mostly the training sets (their indices and physchem matrices) and the reference CDF tables (11 MB each for typicality and extremity).
+**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The artifacts are 25–130 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (11 MB each for typicality and extremity).
 
 ## Decisions to review
 

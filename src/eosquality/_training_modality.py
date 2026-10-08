@@ -182,9 +182,11 @@ def fit_training_modality(
                     )
                 ]
             )
-        with steps("Build one Morgan index per column") as st:
+        with steps("Build a Morgan index per distinct training set") as st:
             eq._training = fit_training(columns, eos_id=eos_id, version=version)
-            st.summary = f"{len(columns)} index(es)"
+            st.summary = (
+                f"{len({id(v) for v in eq._training.indices.values()})} index(es)"
+            )
         for name in _PLAIN_SCORES:
             setattr(eq, name, None)
         for name, cls in scores.items():

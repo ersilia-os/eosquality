@@ -398,3 +398,30 @@ def test_match_roundtrip(both, query, tmp_path):
     after = ErsiliaQuality.load(tmp_path / "art").training_match.run(query)
     pd.testing.assert_series_equal(before.match, after.match)
     pd.testing.assert_series_equal(before.scaffold, after.scaffold)
+
+
+def test_columns_with_the_same_molecules_share_one_index(tmp_path, smiles, query):
+    """A screening panel's columns cover the same molecules, in any order."""
+    from eosquality.scores._training_helpers import TrainingQuery
+
+    folder = tmp_path / "training_eos0aaa_v1"
+    folder.mkdir()
+    pd.DataFrame({"smiles": smiles[:200]}).to_csv(folder / "a.csv", index=False)
+    pd.DataFrame({"smiles": smiles[:200][::-1]}).to_csv(folder / "b.csv", index=False)
+    pd.DataFrame({"smiles": smiles[200:400]}).to_csv(folder / "c.csv", index=False)
+    eq = ErsiliaQuality().fit(training_sets=folder, eos_id="eos0aaa", max_features=None)
+    indices, domains = eq._training.indices, eq.training_physchem.domains_
+    assert indices["a"] is indices["b"] and indices["a"] is not indices["c"]
+    assert domains["a"] is domains["b"] and domains["a"] is not domains["c"]
+
+    q = query[["key", "input"]]
+    raw = eq.training_distance._per_column(TrainingQuery.from_frame(q))[0]
+    np.testing.assert_array_equal(raw[:, 0], raw[:, 1])  # the same set, the same value
+
+    eq.save(tmp_path / "art")
+    saved = tmp_path / "art/training_mode/training_sets/indices"
+    assert sorted(p.name for p in saved.iterdir()) == ["c000", "c001"]
+    assert len(list((tmp_path / "art/training_mode/training_physchem").glob("c*"))) == 2
+    loaded = ErsiliaQuality.load(tmp_path / "art")
+    assert loaded._training.indices["a"] is loaded._training.indices["b"]
+    pd.testing.assert_frame_equal(eq.run(q).scores, loaded.run(q).scores)
