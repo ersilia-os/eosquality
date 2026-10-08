@@ -28,7 +28,7 @@ eosquality fit -t training_eos4e40_v1/ -a artifacts_eos4e40_v1/                 
 eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude ref_match      # skip a score
 ```
 
-**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file.
+**Depth of the training modality.** What each training file contains decides which training scores its column gets, with no flags involved. SMILES give four things: `trn_tanimoto` (distance to the 5 nearest training molecules over Morgan fingerprints, raw and as a percentile of the training set's own leave-one-out distances), `trn_physchem` (the same in standardised physicochemical descriptor space), `trn_match` (1 if the same structure, by InChIKey connectivity layer, is in a training set) and `trn_scaffold` (the same for the Murcko scaffold; empty for acyclic molecules), plus the nearest training neighbours in the details file (`run --details`).
 
 **Common behaviour:**
 - **Terminal output.** Every command prints curated progress to stderr, in the style of the other Ersilia tools (ZairaChem, Olinda). Each command has its own accent colour:
@@ -116,9 +116,9 @@ The output CSV contains:
 - for typicality and extremity, a `_pct` column and a `_raw` column; for `ref_match`, the `ref_match` and `ref_scaffold` flags (1 / 0, `ref_scaffold` empty for a query with no scaffold);
 - for the training modality, `trn_tanimoto_pct`, `trn_tanimoto_raw`, `trn_physchem_pct`, `trn_physchem_raw` (a similarity, 1 = identical, 0 = no closer than a random library pair), `trn_match` and `trn_scaffold` (see [api.md](api.md#runresult)). `trn_match` and `trn_scaffold` are 1 / 0, and `trn_scaffold` is empty for a query with no scaffold.
 
-If typicality or extremity is fitted, `<output stem>.reference_details.csv` is written next to the scores CSV: one row per query with `<column>_typicality_raw` / `_pct` and `<column>_extremity_raw` / `_pct` for every selected output column (see [api.md](api.md#reference_details)).
-
-If the artifacts hold training scores, a further CSV, `<output stem>.training_details.csv`, is written next to it, e.g. `quality_eos4e40_v1.training_details.csv`. It has one row per query: the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
+With `--details`, two more CSVs are written next to the scores CSV, each only when the artifacts have the matching scores:
+- `<output stem>.reference_details.csv` (typicality or extremity fitted): one row per query with `<column>_typicality_raw` / `_pct` and `<column>_extremity_raw` / `_pct` for every selected output column (see [api.md](api.md#reference_details)).
+- `<output stem>.training_details.csv` (training scores fitted), e.g. `quality_eos4e40_v1.training_details.csv`: one row per query with the query's `key` and `input`, its `trn_*` scores, and the 5 nearest training molecules over all output columns (SMILES, keys, similarities, and the columns each belongs to). See [api.md](api.md#training_details).
 
 For a training-only artifact, the query only needs SMILES, in an `input` or `smiles` column (`key` is optional).
 
@@ -126,7 +126,8 @@ For a training-only artifact, the query only needs SMILES, in an `input` or `smi
 |---|---|---|
 | `--input`, `-i PATH` | required | query CSV |
 | `--artifacts`, `-a PATH` | required | folder written by `fit` |
-| `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its details CSVs) |
+| `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; with `--details`, nor may its details CSVs) |
+| `--details` | off | also write the reference and training details CSVs |
 | `--jobs`, `-j N` | -1 | worker processes for the RDKit descriptors (every core up to 16 by default, 1 for none) |
 | `--verbose`, `-v` | off | |
 

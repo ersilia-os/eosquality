@@ -96,7 +96,7 @@ Scores are described in `docs/concepts.md`; what to know about the code:
   - `physchem.py` holds the RDKit descriptor functions and the shipped physchem scaler (`trn_physchem`).
 - **`cli/`** — the dispatcher is `cli/__init__.py:main(argv=None)`. Subcommands: `setup`, `fit`, `run` and (maintainers) `build`. `_common.run_command(fn, verbose=, command=)` turns the curated console on in the command's colour and prints failures as `✖ error:` lines. Each command opens with a `summary_panel` header and ends with a summary panel. `fit` stages its log into `<artifacts>/eosquality.log` (`staged_log`); `run` writes `<output>.log`.
   - `fit -r CSV -t DIR -a DIR --exclude SCORES -j N -v`. `-a` must be a new folder.
-  - `run -i CSV -a DIR -o CSV -j N -v`; training details always go to `<output stem>.training_details.csv`, and the per-column typicality and extremity (when fitted) to `<output stem>.reference_details.csv`.
+  - `run -i CSV -a DIR -o CSV --details -j N -v`; with `--details`, the training details go to `<output stem>.training_details.csv` and the per-column typicality and extremity (when fitted) to `<output stem>.reference_details.csv`; without it only the scores CSV (and the log) is written.
   - **Names carry the model.** There are no `--eos-id` / `--version` flags: the `-r` / `-t` / `-a` names (fit) and `-a` / `-o` names (run; the query `-i` can have any name) must each parse as `[prefix_]<eos_id>_<vN>` (eosframes' rule, `utils/identifiers._STEM_RE`) and agree (`model_from_names`); `run` also checks them against the artifacts' model.
 - **`utils/`**
   - Output is in two layers, as in ZairaChem and Olinda; both write through one shared stderr Rich console.

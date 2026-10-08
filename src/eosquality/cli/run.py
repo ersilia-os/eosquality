@@ -85,16 +85,25 @@ def _load_artifacts(path: str) -> ErsiliaQuality:
 @click.option(
     "--output", "-o", required=True, metavar="CSV", help="Scores CSV to write (.csv)."
 )
+@click.option(
+    "--details",
+    is_flag=True,
+    help=(
+        "Also write <output stem>.reference_details.csv and "
+        ".training_details.csv (per-column values, nearest training molecules)."
+    ),
+)
 @jobs_option
 @verbose_option
 def run(
     input_path: str,
     artifacts: str,
     output: str,
+    details: bool,
     jobs: int,
     verbose: bool,
 ) -> None:
-    """Score a query CSV and write the scores (and training details) CSVs.
+    """Score a query CSV and write the scores CSV (and, with ``details``, the details CSVs).
 
     Parameters
     ----------
@@ -104,6 +113,8 @@ def run(
         Fitted artifacts folder.
     output : str
         Scores CSV path (must not exist).
+    details : bool
+        Also write the reference and training details CSVs.
     jobs : int
         Worker processes for the descriptors.
     verbose : bool
@@ -111,14 +122,14 @@ def run(
     """
 
     run_command(
-        lambda: _run(input_path, artifacts, output),
+        lambda: _run(input_path, artifacts, output, details),
         verbose=verbose,
         command="run",
         jobs=jobs,
     )
 
 
-def _run(input_path, artifacts, output) -> None:
+def _run(input_path, artifacts, output, details) -> None:
     """Body of ``eosquality run`` (see :func:`run`)."""
     import pandas as pd
 
@@ -150,9 +161,9 @@ def _run(input_path, artifacts, output) -> None:
                 f"the names say {named[0]} {named[1]}, but the artifacts in "
                 f"'{artifacts}' were fitted for {eos_id} {version}."
             )
-        if "training" in eq.modalities_:  # fail before the scoring work
+        if details and "training" in eq.modalities_:  # fail before the scoring work
             require_new_path(details_path, "training details path")
-        if eq.typicality is not None or eq.extremity is not None:
+        if details and (eq.typicality is not None or eq.extremity is not None):
             require_new_path(reference_details, "reference details path")
         console.summary_panel(
             "eosquality · run",
@@ -166,11 +177,11 @@ def _run(input_path, artifacts, output) -> None:
             icon="◆",
         )
         result = eq.run(query)
-        _write_outputs(query, result, output, details_path, reference_details)
+        _write_outputs(query, result, output, details_path, reference_details, details)
     rows = [("queries", f"{len(query):,}"), ("scores", console.path(output))]
-    if result.training_details is not None:
+    if details and result.training_details is not None:
         rows.append(("training details", console.path(details_path)))
-    if result.reference_details is not None:
+    if details and result.reference_details is not None:
         rows.append(("reference details", console.path(reference_details)))
     rows += [
         ("log", console.path(log_path)),
@@ -179,8 +190,10 @@ def _run(input_path, artifacts, output) -> None:
     console.summary_panel("Run complete", rows, color="green", icon="✓")
 
 
-def _write_outputs(query, result, output, details_path, reference_details) -> None:
-    """Write the scores CSV (with ``key``/``input``) and the details CSVs."""
+def _write_outputs(
+    query, result, output, details_path, reference_details, details
+) -> None:
+    """Write the scores CSV (with ``key``/``input``) and, if asked, the details CSVs."""
     import pandas as pd
 
     with console.section("Write outputs") as section:
@@ -193,10 +206,10 @@ def _write_outputs(query, result, output, details_path, reference_details) -> No
             axis=1,
         ).to_csv(output, index=False)
         console.success(f"scores → {console.path(output)}")
-        if result.training_details is not None:
+        if details and result.training_details is not None:
             result.training_details.to_csv(details_path, index=False)
             console.success(f"training details → {console.path(details_path)}")
-        if result.reference_details is not None:
+        if details and result.reference_details is not None:
             result.reference_details.to_csv(reference_details, index=False)
             console.success(f"reference details → {console.path(reference_details)}")
         section.summary = f"{len(result.scores.columns)} column(s)"
