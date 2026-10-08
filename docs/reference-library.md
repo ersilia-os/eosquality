@@ -43,7 +43,7 @@ When an artifact is fit against a custom library (`library=` in the Python API, 
 | `smiles.csv` | the library SMILES, in order; a model's reference predictions must be for exactly these molecules, in this order |
 | `metadata.json` | `library_name` (the identity), `n_samples`, number of keys, `rdkit_version` (the RDKit the keys were built with), eosquality version, build timestamp |
 | `connectivity_keys.npz` | the sorted unique InChIKey connectivity layers of the (standardised) molecules and of their Murcko scaffolds, for `ref_match` / `ref_scaffold` |
-| `physchem_hashes.npy`, `physchem_raw.npy` | a cache: the raw RDKit physchem descriptors (float32) of the standardised molecules, keyed by a 64-bit hash of the SMILES. `trn_physchem` reads a molecule's row from it instead of computing it (about 6 ms per molecule); a training set or query typically shares a third to two thirds of its molecules with the library. Optional: without it, or with another RDKit than `rdkit_version`, the descriptors are computed and the scores are identical |
+| `physchem_hashes.npy`, `physchem_raw.npy` | a cache: the raw RDKit physchem descriptors (float32) of the standardised molecules, keyed by a 64-bit hash of the SMILES. `trn_physchem` reads a molecule's row from it instead of computing it (about 6 ms per molecule); a training set or query shares part of its molecules with the library (13% of eos42ez's, 43% of the example drugs, by exact standardised SMILES). Optional: without it, or with another RDKit than `rdkit_version`, the descriptors are computed and the scores are identical |
 
 **Version pinning.** The connectivity keys depend on the RDKit version (InChI generation and scaffold perception can change between releases). The build records the RDKit version in `metadata.json`, and reading the keys (at `fit` and at `run`) raises `IncompatibleArtifactsError` if the installed RDKit differs, rather than returning keys that may disagree. Install the recorded RDKit, rebuild the library, or exclude `ref_match`. Libraries built before the version was recorded are not checked.
 
@@ -55,7 +55,7 @@ When an artifact is fit against a custom library (`library=` in the Python API, 
    eosquality build --input data/libraries/ersilia_reference_library_v1.csv \
                     --output data/indices/ersilia_reference_library_v1/
    ```
-   The connectivity keys take a few minutes and the physchem descriptors about 15 minutes on 12 cores for the 1.35M molecules.
+   The connectivity keys take a few minutes and the physchem descriptors about 25 minutes for the 1.35M molecules.
 3. Upload the CSV and the folder with [eosvc](https://github.com/ersilia-os/eosvc). The repo's `access.json` routes `data/` to the public bucket:
    ```bash
    eosvc upload --path data/libraries/ersilia_reference_library_v1.csv
