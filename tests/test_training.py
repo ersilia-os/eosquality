@@ -440,3 +440,10 @@ def test_training_artifacts_of_another_format_are_rejected(training_dir, tmp_pat
     meta_path.write_text(json.dumps(meta))
     with pytest.raises(ArtifactVersionError, match="training format 1"):
         ErsiliaQuality.load(tmp_path / "art")
+
+
+def test_loader_reports_a_missing_folder_and_an_empty_one(tmp_path):
+    with pytest.raises(FileNotFoundError, match="not found"):
+        load_training(tmp_path / "nope")
+    with pytest.raises(SchemaError, match="No <column>.csv files"):
+        load_training(tmp_path)

@@ -292,3 +292,59 @@ def test_a_custom_library_found_through_the_environment_is_recorded_by_path(file
     assert meta["library_id"] == "test_library" and meta["library_path"]
     run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
     assert _run(run) == 0
+
+
+def test_fit_and_build_report_unreadable_inputs(tmp_path, capsys):
+    assert (
+        _run(
+            [
+                "fit",
+                "-r",
+                str(tmp_path / "reference_eos0aaa_v1.csv"),
+                "-a",
+                "a_eos0aaa_v1",
+            ]
+        )
+        == 1
+    )
+    assert "couldnotreadreferenceCSV" in _err(capsys)
+    assert (
+        _run(
+            [
+                "build",
+                "-i",
+                str(tmp_path / "ersilia_reference_library_v7.csv"),
+                "-o",
+                str(tmp_path / "o"),
+            ]
+        )
+        == 1
+    )
+    assert "couldnotreadlibraryfile" in _err(capsys)
+    wrong = tmp_path / "ersilia_reference_library_v8.csv"
+    pd.DataFrame({"molecule": ["CCO"]}).to_csv(wrong, index=False)
+    assert _run(["build", "-i", str(wrong), "-o", str(tmp_path / "o2")]) == 1
+    assert "mustcontaina'smiles'column" in _err(capsys)
+    assert not (tmp_path / "o2").exists()
+
+
+def test_build_can_truncate_the_library(tmp_path, smiles):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv", n=50)
+    assert (
+        _run(
+            [
+                "build",
+                "-i",
+                csv,
+                "-o",
+                str(tmp_path / "lib"),
+                "--max-samples",
+                "20",
+                "-j",
+                "1",
+            ]
+        )
+        == 0
+    )
+    meta = json.loads((tmp_path / "lib" / "metadata.json").read_text())
+    assert meta["n_samples"] == 20

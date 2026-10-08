@@ -100,3 +100,15 @@ def test_library_ids():
     assert not identity.is_library_id("ersilia_reference_library_v")
     assert not identity.is_library_id("mylib")
     assert identity.library_major() == int(identity.LIBRARY_ID.rsplit("_v", 1)[1])
+
+
+def test_a_folder_that_is_not_a_library_is_a_clear_error(tmp_path):
+    from eosquality.library.reference import ReferenceLibrary
+
+    with pytest.raises(FileNotFoundError, match="not found"):
+        ReferenceLibrary(tmp_path / "nope")
+    empty = ReferenceLibrary(tmp_path)
+    with pytest.raises(FileNotFoundError, match="not a reference library"):
+        _ = empty.metadata
+    with pytest.raises(FileNotFoundError, match="not a reference library"):
+        _ = empty.smiles
