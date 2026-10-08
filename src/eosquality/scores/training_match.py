@@ -86,7 +86,7 @@ class TrainingMatch(ScoreComponent):
         t0 = time.perf_counter()
         self._training = training
         smiles = sorted(
-            {s for n in training.column_names for s in training.columns[n].smiles}
+            {s for n in training.column_names for s in training.columns[n].all_smiles}
         )
         molecules, scaffolds = _layers(smiles)
         self._molecules, self._scaffolds = (

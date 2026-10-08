@@ -5,9 +5,12 @@ an :class:`~eosquality.quality.ErsiliaQuality` artifacts folder)::
 
     metadata.json        # training_format_version, column order
     columns.json         # per column: its index folder, n
-    arrays.npz           # per column: ids
+    arrays.npz           # per column: ids; per index: every training molecule (c000__all)
     indices/c000/ …      # one VectorIndex folder per distinct molecule set
                          # (vector_index.h5, knn_distances.npy, smiles.csv, metadata.json)
+
+A column's index holds one molecule per distinct Morgan fingerprint
+(``TrainingColumn.smiles``); ``all_smiles`` keeps the rest.
 
 Columns measured on the same molecules (one screening panel) share an index.
 Each index is built with :meth:`VectorIndex.build`, whose
@@ -36,7 +39,7 @@ SUBFOLDER = "training_sets"
 # Bump when the meaning or layout of training_sets/ changes. Independent of
 # ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected. History:
 # git log.
-TRAINING_FORMAT_VERSION = 13
+TRAINING_FORMAT_VERSION = 14
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 
@@ -142,6 +145,9 @@ def save_training_state(
                 shutil.copytree(source, target)
         meta_cols[name] = {"folder": saved[column.signature], "n": column.n}
         arrays[f"{_folder(i)}__ids"] = np.asarray(column.ids, dtype=str)
+        arrays[f"{saved[column.signature]}__all"] = np.asarray(
+            column.all_smiles, dtype=str
+        )
     np.savez(folder / "arrays.npz", **arrays)
     with open(folder / "columns.json", "w") as f:
         json.dump(meta_cols, f, indent=2)
@@ -195,6 +201,7 @@ def load_training_state(root: str | pathlib.Path) -> TrainingFitState:
                 name=name,
                 smiles=loaded[sub].smiles,
                 ids=arrays[f"{_folder(i)}__ids"].tolist(),
+                all_smiles=arrays[f"{sub}__all"].tolist(),
             )
             indices[name] = loaded[sub]
     return TrainingFitState(

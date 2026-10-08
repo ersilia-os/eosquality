@@ -68,7 +68,7 @@ Scores are described in `docs/concepts.md`; what to know about the code:
 ### Shared upstream layers
 
 - **`training/`** — the training-modality tier.
-  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None)`. One `<column>.csv` per output column (`smiles` or `input`, optional `key`; other columns are ignored). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicate molecules are merged. Columns with fewer than 20 molecules are skipped.
+  - `data.py`: `TrainingColumn` and `load_training(folder, output_columns=None)`. One `<column>.csv` per output column (`smiles` or `input`, optional `key`; other columns are ignored). Standardisation via `scores/_helpers._standardize` (largest fragment, canonical isomeric). Duplicate molecules are merged, and `TrainingColumn.smiles` keeps one molecule per distinct Morgan fingerprint (the index and the physchem domain are built on these; a set with many stereoisomer copies would otherwise have leave-one-out distances of 0), while `all_smiles` keeps every molecule for `trn_match` and `trn_in_training`. Columns with fewer than 20 molecules are skipped.
   - `state.py`: `TrainingFitState` (columns, a per-column `VectorIndex` shared by columns with the same molecule set (`TrainingColumn.signature`; columns are stored sorted so a panel's columns coincide), `eos_id`, `version`), plus `fit_training`, `save_training_state` and `load_training_state`.
   - Persisted under `<artifacts>/training_mode/training_sets/` with its own `TRAINING_FORMAT_VERSION` (independent of `ARTIFACT_FORMAT_VERSION`).
 

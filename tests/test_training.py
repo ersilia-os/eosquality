@@ -447,3 +447,37 @@ def test_loader_reports_a_missing_folder_and_an_empty_one(tmp_path):
         load_training(tmp_path / "nope")
     with pytest.raises(SchemaError, match="No <column>.csv files"):
         load_training(tmp_path)
+
+
+# ------------------------------------------------- identical fingerprints
+
+
+@pytest.fixture(scope="module")
+def stereo_dir(tmp_path_factory, training_dir):
+    """The ``mw`` set plus alanine in three stereo notations (two distinct molecules)."""
+    folder = tmp_path_factory.mktemp("stereo") / "training_eos0aaa_v1"
+    folder.mkdir()
+    mw = pd.read_csv(training_dir / "mw.csv")
+    twins = ["C[C@H](N)C(=O)O", "C[C@@H](N)C(=O)O", "N[C@@H](C)C(=O)O"]
+    pd.concat([mw, pd.DataFrame({"smiles": twins})]).to_csv(
+        folder / "mw.csv", index=False
+    )
+    return folder
+
+
+def test_identical_fingerprints_are_one_point_to_the_distance(stereo_dir):
+    column = load_training(stereo_dir)["mw"]
+    assert len(column.all_smiles) == column.n + 1  # two L/D forms, one fingerprint
+    assert set(column.smiles) <= set(column.all_smiles)
+    assert column.contains(["C[C@H](N)C(=O)O", "C[C@@H](N)C(=O)O"]).all()
+
+
+def test_copies_do_not_zero_the_loo_table(stereo_dir, tmp_path):
+    eq = ErsiliaQuality().fit(training_sets=stereo_dir, eos_id="eos0aaa")
+    assert (eq.training_distance._loo["mw"] > 0).all()
+    eq.save(tmp_path / "artifacts")
+    loaded = ErsiliaQuality.load(tmp_path / "artifacts")
+    both_forms = pd.DataFrame({"input": ["C[C@H](N)C(=O)O", "C[C@@H](N)C(=O)O"]})
+    res = loaded.run(both_forms)
+    assert res.scores.trn_match.tolist() == [1, 1]  # exact lookups keep every form
+    assert res.training_details.trn_in_training.all()  # also the dropped copy
