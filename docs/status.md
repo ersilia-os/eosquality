@@ -37,7 +37,7 @@ The query sets, and how many of their molecules the reference library holds (`re
 
 ![Score correlations](figures/score_correlations.png)
 
-**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The artifacts are 25–130 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (11 MB each for typicality and extremity).
+**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The artifacts are 25–115 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (11 MB each for typicality and extremity).
 
 ## Decisions to review
 
