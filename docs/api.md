@@ -53,7 +53,7 @@ eq.save("artifacts/")
 eq = ErsiliaQuality.load("artifacts/")
 ```
 
-`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). `load` reconstructs whichever modalities are present. It raises the following errors:
+`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). It refuses a folder that already holds artifacts (`FileExistsError`), as the CLI does. `load` reconstructs whichever modalities are present. It raises the following errors:
 - `ArtifactVersionError`: the artifacts were written in an older on-disk format. Refit them.
 - `IncompatibleArtifactsError`: the artifacts were fit against a different reference library or package major version.
 

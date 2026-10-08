@@ -47,15 +47,27 @@ def save(eq, path: str | pathlib.Path) -> pathlib.Path:
     eq : ErsiliaQuality
         A fitted orchestrator.
     path : str or pathlib.Path
-        Artifacts folder (created if needed).
+        Artifacts folder (created if needed). It must not already hold
+        artifacts: saving over them would mix the old and the new fit.
 
     Returns
     -------
     pathlib.Path
         The artifacts folder.
+
+    Raises
+    ------
+    FileExistsError
+        If ``path`` already holds a ``reference_mode/`` or ``training_mode/``.
     """
     eq._check_fitted()
     folder = pathlib.Path(path)
+    for mode in (REFERENCE_DIR, TRAINING_DIR):
+        if (folder / mode).exists():
+            raise FileExistsError(
+                f"{folder} already holds artifacts ({mode}/); delete it or save "
+                "to a new folder."
+            )
     folder.mkdir(parents=True, exist_ok=True)
     if eq._shared is not None:
         root = folder / REFERENCE_DIR

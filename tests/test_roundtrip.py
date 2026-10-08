@@ -142,3 +142,9 @@ def test_metadata_keys_are_stable(fitted, query):
         assert key.startswith(("ref_", "trn_")), key
         score = "_".join(key.split("_")[:2])
         assert not key[len(score) + 1 :].startswith(score.split("_")[1]), key
+
+
+def test_saving_over_existing_artifacts_is_refused(fitted, tmp_path):
+    fitted.save(tmp_path / "art")
+    with pytest.raises(FileExistsError, match="already holds artifacts"):
+        fitted.save(tmp_path / "art")
