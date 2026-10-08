@@ -61,7 +61,8 @@ def test_keys_are_library_level(library):
     assert len(set(molecules)) == len(molecules)
     assert 0 < len(scaffolds) <= len(molecules)
     assert lib.library_name == "test_library"
-    assert connectivity_layer(lib.smiles[0]) in set(molecules)
+    assert molecules.dtype == "S14"  # 14 ASCII characters, a quarter of U14
+    assert connectivity_layer(lib.smiles[0]).encode() in set(molecules)
 
 
 def test_missing_keys_give_a_clear_error(tmp_path, smiles):

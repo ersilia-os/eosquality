@@ -114,14 +114,17 @@ def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:
     binary search (``np.isin`` would sort the whole array on every call).
     """
     layers = np.asarray(layers, dtype=known.dtype)
-    present = layers != ""
+    present = np.char.str_len(layers) > 0
     at = np.minimum(np.searchsorted(known, layers), len(known) - 1)
     found = (known[at] == layers) if len(known) else np.zeros(len(layers), bool)
     return pd.Series(found.astype(int), dtype="Int64").mask(~present)
 
 
 def unique_keys(layers: np.ndarray) -> np.ndarray:
-    """Sorted unique non-empty layers, as a fixed-width string array.
+    """Sorted unique non-empty layers, as a fixed-width byte-string array.
+
+    A connectivity layer is 14 ASCII characters, so ``S14`` takes a quarter of
+    the memory and disk of the ``U14`` that ``astype(str)`` would give.
 
     Parameters
     ----------
@@ -132,7 +135,7 @@ def unique_keys(layers: np.ndarray) -> np.ndarray:
     -------
     numpy.ndarray
     """
-    return np.unique(layers[layers != ""]).astype(str)
+    return np.unique(layers[layers != ""]).astype(f"S{CONNECTIVITY_LENGTH}")
 
 
 def save_keys(path: pathlib.Path, molecules: np.ndarray, scaffolds: np.ndarray) -> None:
