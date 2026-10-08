@@ -135,6 +135,18 @@ Typicality.load("art/").run(query).score
 - **Anchors.** `Typicality` and `Extremity` expose `anchor_`, their mean over the reference (about 0.5); the orchestrator's `reference_typicality_` and `reference_extremity_` return them.
 - **Run results.** Typicality and extremity results have `score`, `score_raw`, `per_feature`, `per_feature_pct` and `metadata`; the match result has `match`, `scaffold` and `metadata`. The Series carry the public column names (`ref_typicality_pct`, `ref_match`), the same as the orchestrator's output columns.
 
+## Parallelism
+
+`fit` and `run` work in one process: a pool started from a library call would re-run an unguarded user script in every worker. The CLI is a proper entry point and spreads the RDKit descriptors over the cores (`-j/--jobs`). From Python, opt in inside a guarded script:
+
+```python
+from eosquality.utils import parallel
+
+if __name__ == "__main__":
+    with parallel.workers(-1):  # every core; a number for fewer
+        result = eq.run(query)
+```
+
 ## Logging
 
 As a library, `eosquality` is silent by default; only warnings are printed.
