@@ -214,3 +214,20 @@ def test_a_query_without_smiles_is_refused_when_ref_match_is_fitted(fitted, quer
 def test_smiles_is_accepted_as_the_input_column(fitted, query):
     renamed = query.rename(columns={"input": "smiles"})
     pd.testing.assert_frame_equal(fitted.run(renamed).scores, fitted.run(query).scores)
+
+
+def test_artifacts_without_ref_match_do_not_need_the_library_to_run(
+    reference, library, query, tmp_path
+):
+    """Only ref_match reads the library at run time."""
+    import shutil
+
+    copy = tmp_path / "lib"
+    shutil.copytree(library, copy)
+    eq = ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", library=copy, exclude=["ref_match"]
+    )
+    eq.save(tmp_path / "art")
+    shutil.rmtree(copy)  # the custom library is gone
+    scores = ErsiliaQuality.load(tmp_path / "art").run(query).scores
+    assert list(scores.columns)[0] == "ref_typicality_pct" and len(scores) == len(query)
