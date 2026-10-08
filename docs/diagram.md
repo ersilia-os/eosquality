@@ -68,7 +68,7 @@ One subfolder per modality; either or both may be present.
       columns.json  arrays.npz            # per column: n, ids
       indices/c000/ …                     # one VectorIndex per distinct training set
     training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_tanimoto
-    training_physchem/  c000/ …  # trn_physchem
+    training_physchem/  state.json  c000/ …  # trn_physchem: one domain per distinct training set
     training_match/  connectivity_keys.npz  metadata.json  # trn_match, trn_scaffold
 ```
 
