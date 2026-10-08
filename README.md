@@ -50,7 +50,7 @@ eosquality fit -r reference_eos4e40_v1.csv -t training_eos4e40_v1/ -a artifacts_
 
 ### Running against new samples
 
-At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. A training-only artifact needs nothing but SMILES, in an `input` or `smiles` column. The output CSV has `key`, `input`, and, for each score, a calibrated column in `(0, 1]` plus its `*_raw` value, named `ref_<score>` for the reference scores and `trn_<score>` for the training scores.
+At querying time, `run` loads a fitted artifacts folder and scores any query CSV containing Ersilia results for the same model. A training-only artifact needs nothing but SMILES, in an `input` or `smiles` column. The output CSV has `key`, `input`, and the columns of each fitted score (see below): percentiles in `(0, 1]` with their `*_raw` values, and 1 / 0 match flags. Reference scores are named `ref_…`, training scores `trn_…`.
 
 ```bash
 eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e40_v1.csv

@@ -22,10 +22,10 @@ The library's `vN` must equal the package's major version. Importing a release w
 Saved artifacts record the following in `reference_mode/shared/metadata.json`:
 - `library_id`
 - `eosquality_version`
-- `format_version` (the on-disk layout and score semantics; currently 8)
+- `format_version` (the on-disk layout and score semantics; currently 11)
 - `library_path` (for custom libraries)
 
-The training modality is versioned separately: `training_mode/training_sets/metadata.json` holds `training_format_version` (currently 11). Adding or changing the training modality therefore never invalidates reference artifacts.
+The training modality is versioned separately: `training_mode/training_sets/metadata.json` holds `training_format_version` (currently 13). Adding or changing the training modality therefore never invalidates reference artifacts.
 
 `ErsiliaQuality.load` rejects artifacts in these cases:
 - the format version is different, or the folder uses the old flat layout (no `reference_mode/` / `training_mode/`) → `ArtifactVersionError`; refit;
@@ -34,7 +34,7 @@ The training modality is versioned separately: `training_mode/training_sets/meta
 
 When an artifact is fit on the canonical library, only its identity is stored, not a path, so the artifact is portable between machines. The library is resolved again at run time (see [cli.md](cli.md#the-reference-library)).
 
-When an artifact is fit against a custom library (`library=` in the Python API), the absolute path of that library folder is stored, and the folder must still exist when `run` is called: `ref_match` reads its keys from it. A typicality/extremity-only artifact does not need the library at run time.
+When an artifact is fit against a custom library (`library=` in the Python API, or any library whose name is not the canonical id, such as one found through `EOSQUALITY_REFERENCE_LIBRARY_PATH`), the absolute path of that library folder is stored, and the folder must still exist when `run` is called: `ref_match` reads its keys from it. A typicality/extremity-only artifact does not need the library at run time.
 
 ## Library folder contents
 
@@ -54,7 +54,7 @@ When an artifact is fit against a custom library (`library=` in the Python API),
    eosquality build --input data/libraries/ersilia_reference_library_v1.csv \
                     --output data/indices/ersilia_reference_library_v1/
    ```
-   The connectivity keys take tens of minutes for the 1.35M molecules.
+   The connectivity keys take a few minutes on several cores for the 1.35M molecules.
 3. Upload the CSV and the folder with [eosvc](https://github.com/ersilia-os/eosvc). The repo's `access.json` routes `data/` to the public bucket:
    ```bash
    eosvc upload --path data/libraries/ersilia_reference_library_v1.csv

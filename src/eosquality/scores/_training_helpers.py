@@ -5,11 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from eosquality.scores._helpers import (
-    _query_fp_distances_valid,
-    _row_nanquantile,
-    _standardize,
-)
+from eosquality.scores._helpers import _row_nanquantile, _standardize_all
 from eosquality.vectorindex import VectorIndex
 
 # Quantile across output columns for the whole-model value (the column
@@ -18,6 +14,9 @@ SUMMARY_QUANTILE = 0.66
 # Nearest training neighbours averaged per (molecule, column), for the Morgan
 # and the physchem distance alike. Capped by the column's size.
 K_NEIGHBORS = 5
+# A Tanimoto distance below this is a perfect fingerprint match. FPSim2 returns
+# exactly 0.0; the epsilon guards against float wobble.
+_SELF_MATCH_DISTANCE = 1e-6
 # A progress bar is drawn for query descriptor passes of at least this many molecules.
 PROGRESS_MIN_MOLECULES = 500
 
@@ -72,7 +71,7 @@ class TrainingQuery:
         """
         if "input" not in query.columns:
             raise ValueError("The training scores need an 'input' SMILES column.")
-        std = [_standardize(s) for s in query["input"]]
+        std = _standardize_all(list(query["input"]))
         rows = np.flatnonzero([s is not None for s in std])
         return cls([std[i] for i in rows], rows, len(query))
 
@@ -125,10 +124,24 @@ class TrainingQuery:
 
 
 def _nearest_training(vi: VectorIndex, query_smiles: list[str], k: int):
-    """Top-k training neighbours of standardised SMILES (see ``TrainingQuery``)."""
-    if not query_smiles:
+    """Top-k training neighbours of standardised SMILES (see ``TrainingQuery``).
+
+    The index is searched for ``k + 1`` and one entry per query is dropped: the
+    query's own entry when it is a training molecule (the same standardised
+    SMILES; a different molecule with an identical fingerprint stays a
+    neighbour), else the furthest.
+    """
+    n = len(query_smiles)
+    if not n:
         return np.zeros((0, k)), np.zeros((0, k), dtype=np.int64), np.zeros(0, bool)
-    dist, nn = _query_fp_distances_valid(query_smiles, vi, k, exclude_self_match=True)
-    members = set(vi.smiles)
+    dist, nn = vi.query(query_smiles, k=k + 1)
+    dist = dist.astype(np.float64)
+    library = vi.smiles
+    drop = np.full(n, k, dtype=np.int64)
+    for i, j in zip(*np.nonzero(dist < _SELF_MATCH_DISTANCE), strict=True):
+        if drop[i] == k and library[nn[i, j]] == query_smiles[i]:
+            drop[i] = j
+    keep = np.arange(k + 1)[None, :] != drop[:, None]
+    members = set(library)
     hit = np.array([smi in members for smi in query_smiles])
-    return dist, nn, hit
+    return dist[keep].reshape(n, k), nn[keep].reshape(n, k), hit

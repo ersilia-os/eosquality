@@ -47,13 +47,12 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
   Variable values are never written into tracebacks, so SMILES don't leak into logs.
 - **Exit status.** Errors print as `✖ error: …` and exit with status 1; success exits with 0.
 - **Invalid molecules.** Query rows whose `input` SMILES is missing or does not parse are not an error. Their structure-based scores (`ref_match`, `ref_scaffold` and the `trn_` scores) are NaN, and a warning names the rows. The output-based scores, `ref_typicality` and `ref_extremity`, are still computed.
-- `fit` and `run` refuse to overwrite an existing output path.
+- **Cores.** `fit`, `run` and `build` spread the RDKit work (descriptors, standardisation, structure keys) over every core, and over none with `-j 1`. A pool starts only for a few hundred molecules or more.
+- `fit`, `run` and `build` refuse to overwrite an existing output path.
 
 ## `eosquality setup`
 
-Sets eosquality up: fetches the canonical reference library from the public S3 bucket into the user cache:
-- the library folder (SMILES, metadata, match keys) → `~/.eosquality/indices/<library>/`
-- the source CSV → `~/.eosquality/libraries/<library>.csv`
+Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
 
 This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
 
@@ -89,6 +88,7 @@ Training SMILES are standardised: largest fragment, then canonical isomeric SMIL
 | `--reference`, `-r CSV` | — | reference modality: the model's predictions on the reference library |
 | `--training-sets`, `-t DIR` | — | training modality: per-column training sets |
 | `--artifacts`, `-a DIR` | required | new artifacts folder |
+| `--jobs`, `-j N` | -1 | worker processes for the RDKit descriptors (every core up to 16 by default, 1 for none); only used for 200 or more molecules |
 | `--exclude SCORES` | none | scores not to fit, from `ref_typicality`, `ref_extremity`, `ref_match`, `trn_tanimoto`, `trn_physchem`, `trn_match` |
 | `--verbose`, `-v` | off | |
 
@@ -127,6 +127,7 @@ For a training-only artifact, the query only needs SMILES, in an `input` or `smi
 | `--input`, `-i PATH` | required | query CSV |
 | `--artifacts`, `-a PATH` | required | folder written by `fit` |
 | `--output`, `-o CSV` | required | scores CSV, ending in `.csv` (must not exist; nor may its details CSVs) |
+| `--jobs`, `-j N` | -1 | worker processes for the RDKit descriptors (every core up to 16 by default, 1 for none) |
 | `--verbose`, `-v` | off | |
 
 Artifacts written by an older eosquality format fail with a "refit" message.
@@ -138,13 +139,14 @@ Builds a reference-library folder from a SMILES CSV that has a `smiles` column. 
 - `metadata.json` (the library's identity, `library_name`)
 - `connectivity_keys.npz` (the sorted unique connectivity layers of the molecules and of their scaffolds)
 
-The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes tens of minutes for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
+The output folder must not exist (an existing one is refused, as for `fit` and `run`). The folder is written whole or not at all: it is built next to the output and renamed once complete, so an interrupted build leaves nothing to clean up. `metadata.json` records the RDKit version, which `fit` and `run` check. The library name is the CSV file name without its extension, and it must be a library id such as `ersilia_reference_library_v1`; pass `--name` to give another name explicitly (for a test library). It takes a few minutes on several cores (about 15 minutes on one) for the 1.35M-molecule library. See [reference-library.md](reference-library.md).
 
 | flag | default | |
 |---|---|---|
 | `--input`, `-i PATH` | required | library CSV |
 | `--output`, `-o PATH` | required | new library folder |
 | `--name NAME` | CSV file stem | library identity (`library_name`) |
+| `--jobs`, `-j N` | -1 | worker processes for the standardisation and the keys (every core up to 16 by default) |
 | `--max-samples N` | all | truncate the input (testing) |
 | `--verbose`, `-v` | off | |
 

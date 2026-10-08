@@ -5,7 +5,12 @@ import pandas as pd
 import pytest
 
 from eosquality import ErsiliaQuality, Typicality
-from eosquality.exceptions import ArtifactVersionError
+from eosquality.exceptions import (
+    ArtifactVersionError,
+    IncompatibleArtifactsError,
+    NotFittedError,
+    SchemaError,
+)
 
 REFERENCE = ["typicality", "extremity", "match"]
 PCT_SCORES = ("typicality", "extremity")
@@ -142,3 +147,87 @@ def test_metadata_keys_are_stable(fitted, query):
         assert key.startswith(("ref_", "trn_")), key
         score = "_".join(key.split("_")[:2])
         assert not key[len(score) + 1 :].startswith(score.split("_")[1]), key
+
+
+def test_saving_over_existing_artifacts_is_refused(fitted, tmp_path):
+    fitted.save(tmp_path / "art")
+    with pytest.raises(FileExistsError, match="already holds artifacts"):
+        fitted.save(tmp_path / "art")
+
+
+def test_loading_something_that_is_not_artifacts_is_a_clear_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No artifacts folder"):
+        ErsiliaQuality.load(tmp_path / "nope")
+    (tmp_path / "file.txt").write_text("x")
+    with pytest.raises(ValueError, match="Expected a directory"):
+        ErsiliaQuality.load(tmp_path / "file.txt")
+    with pytest.raises(FileNotFoundError, match="nothing to load"):
+        ErsiliaQuality.load(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        ({"library_id": "another_library", "library_path": ""}, "another_library"),
+        ({"eosquality_version": "9.9.9"}, "major=9"),
+    ],
+)
+def test_artifacts_of_another_library_or_major_are_refused(
+    fitted, tmp_path, edit, message
+):
+    fitted.save(tmp_path / "art")
+    meta_path = tmp_path / "art/reference_mode/shared/metadata.json"
+    meta = json.loads(meta_path.read_text())
+    meta_path.write_text(json.dumps({**meta, **edit}))
+    with pytest.raises(IncompatibleArtifactsError, match=message):
+        ErsiliaQuality.load(tmp_path / "art")
+
+
+def test_post_fit_attributes(fitted):
+    assert fitted.modalities_ == ["reference"]
+    assert fitted.metadata_.eos_id == "eos0aaa" and fitted.metadata_.n_samples == 600
+    assert fitted.schema_.column_names == fitted.shared_.schema.column_names
+
+
+def test_an_unfitted_instance_refuses_to_run(query):
+    eq = ErsiliaQuality()
+    with pytest.raises(NotFittedError, match="not fitted"):
+        eq.run(query)
+    with pytest.raises(NotFittedError):
+        _ = eq.reference_typicality_
+
+
+def test_an_anchor_needs_its_score_to_be_fitted(reference, library):
+    eq = ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", library=library, exclude=["ref_typicality"]
+    )
+    with pytest.raises(RuntimeError, match="only defined when typicality"):
+        _ = eq.reference_typicality_
+    assert eq.reference_extremity_ == pytest.approx(0.5, abs=0.02)
+
+
+def test_a_query_without_smiles_is_refused_when_ref_match_is_fitted(fitted, query):
+    with pytest.raises(SchemaError, match="'input' \\(or 'smiles'\\) column"):
+        fitted.run(query.drop(columns=["input"]))
+
+
+def test_smiles_is_accepted_as_the_input_column(fitted, query):
+    renamed = query.rename(columns={"input": "smiles"})
+    pd.testing.assert_frame_equal(fitted.run(renamed).scores, fitted.run(query).scores)
+
+
+def test_artifacts_without_ref_match_do_not_need_the_library_to_run(
+    reference, library, query, tmp_path
+):
+    """Only ref_match reads the library at run time."""
+    import shutil
+
+    copy = tmp_path / "lib"
+    shutil.copytree(library, copy)
+    eq = ErsiliaQuality().fit(
+        reference, eos_id="eos0aaa", library=copy, exclude=["ref_match"]
+    )
+    eq.save(tmp_path / "art")
+    shutil.rmtree(copy)  # the custom library is gone
+    scores = ErsiliaQuality.load(tmp_path / "art").run(query).scores
+    assert list(scores.columns)[0] == "ref_typicality_pct" and len(scores) == len(query)

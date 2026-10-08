@@ -9,6 +9,7 @@ every file must name one of them.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 from dataclasses import dataclass
 from functools import cached_property
@@ -17,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from eosquality.exceptions import SchemaError
-from eosquality.scores._helpers import _standardize
+from eosquality.scores._helpers import _standardize_all
 from eosquality.utils.logging import logger
 
 # Columns with fewer training molecules than this are skipped: their
@@ -32,7 +33,7 @@ class TrainingColumn:
     """The standardised training set of one model output column."""
 
     name: str
-    smiles: list[str]  # standardised, unique, in file order of first occurrence
+    smiles: list[str]  # standardised, unique, sorted
     ids: list[str]  # the file's `key` per molecule, or "<column>:<row>"
     n_unparsable: int = 0  # file rows dropped: SMILES missing or unparsable
 
@@ -45,6 +46,17 @@ class TrainingColumn:
         int
         """
         return len(self.smiles)
+
+    @cached_property
+    def signature(self) -> str:
+        """Identity of the molecule set: columns with the same one share their index.
+
+        Returns
+        -------
+        str
+            A digest of the (sorted) standardised SMILES.
+        """
+        return hashlib.sha1("\n".join(self.smiles).encode()).hexdigest()
 
     @cached_property
     def _position(self) -> dict[str, int]:
@@ -107,12 +119,11 @@ def load_training(
             f"(columns: {order})."
         )
 
+    frames = {name: pd.read_csv(files[name]) for name in order if name in files}
+    standardized = _standardize_files(frames)  # panels repeat molecules: once each
     columns: dict[str, TrainingColumn] = {}
-    standardized: dict[str, str | None] = {}  # shared: panels repeat molecules
-    for name in order:
-        if name not in files:
-            continue
-        column = _load_column(name, pd.read_csv(files[name]), standardized)
+    for name, frame in frames.items():
+        column = _load_column(name, frame, standardized)
         if column.n < MIN_TRAINING_MOLECULES:
             logger.warning(
                 f"training | column {name!r}: only {column.n} usable molecules "
@@ -132,19 +143,29 @@ def load_training(
     return columns
 
 
-def _load_column(
-    name: str, df: pd.DataFrame, standardized: dict[str, str | None] | None = None
-) -> TrainingColumn:
-    smiles_col = next((c for c in _SMILES_COLUMNS if c in df.columns), None)
-    if smiles_col is None:
+def _smiles_column(name: str, df: pd.DataFrame) -> str:
+    """The SMILES column of a training file (``smiles`` or ``input``)."""
+    column = next((c for c in _SMILES_COLUMNS if c in df.columns), None)
+    if column is None:
         raise SchemaError(
             f"Training file for column {name!r} needs a 'smiles' column "
             f"(found {list(df.columns)})."
         )
-    cache = {} if standardized is None else standardized
-    std = df[smiles_col].map(
-        lambda s: cache[s] if s in cache else cache.setdefault(s, _standardize(s))
+    return column
+
+
+def _standardize_files(frames: dict[str, pd.DataFrame]) -> dict[str, str | None]:
+    """Standardise every distinct SMILES of the training files, once."""
+    distinct = pd.unique(
+        pd.concat([df[_smiles_column(name, df)] for name, df in frames.items()])
     )
+    return dict(zip(distinct, _standardize_all(distinct), strict=True))
+
+
+def _load_column(
+    name: str, df: pd.DataFrame, standardized: dict[str, str | None]
+) -> TrainingColumn:
+    std = df[_smiles_column(name, df)].map(standardized)
     n_bad = int(std.isna().sum())
     if n_bad:
         logger.info(f"training | column {name!r}: {n_bad} unparsable SMILES dropped")
@@ -156,7 +177,7 @@ def _load_column(
     table = pd.DataFrame({"smiles": std, "id": ids})
     table = table[table["smiles"].notna()]
 
-    grouped = table.groupby("smiles", sort=False)
+    grouped = table.groupby("smiles", sort=True)
     smiles = list(grouped.groups.keys())
     first_ids = grouped["id"].first().reindex(smiles).tolist()
     n_dupes = len(table) - len(smiles)

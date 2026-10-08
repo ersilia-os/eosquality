@@ -1,6 +1,7 @@
 import numpy as np
 
-from eosquality.scores.extremity import compute_extremity
+from eosquality.scores._helpers import _nan_aggregate
+from eosquality.scores.extremity import per_feature_extremity
 from eosquality.scores.typicality import compute_typicality, fit_typicality_luts
 
 
@@ -26,7 +27,8 @@ def test_typicality_nan_sentinel_does_not_collide():
 
 
 def test_extremity_ignores_nan_features():
-    per_feature, agg = compute_extremity(np.array([[0.5, np.nan], [np.nan, np.nan]]))
+    per_feature = per_feature_extremity(np.array([[0.5, np.nan], [np.nan, np.nan]]))
+    agg = _nan_aggregate(per_feature)
     assert agg[0] == 0.5 and np.isnan(agg[1])
 
 

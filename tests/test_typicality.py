@@ -33,7 +33,7 @@ def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.typicality.run(reference).score
     assert score.name == "ref_typicality_pct"
     assert score.mean() == pytest.approx(0.5, abs=0.01)
-    assert fitted.typicality.reference_typicality_ == pytest.approx(0.5, abs=0.01)
+    assert fitted.typicality.anchor_ == pytest.approx(0.5, abs=0.01)
 
 
 def test_raw_is_the_q66_of_count_over_max(fitted, reference):
@@ -58,7 +58,7 @@ def test_percentile_table_is_the_mid_rank_of_the_density():
         density = luts[:, j].max()
         levels = np.round(scaled[:, j] * 127).astype(int) + 128
         per_value = luts[levels, j] / density
-        expected = _cdf_score(per_value, np.sort(per_value), higher_is_higher=True)
+        expected = _cdf_score(per_value, np.sort(per_value))
         np.testing.assert_allclose(pct[:, j], expected)
 
 
@@ -102,3 +102,27 @@ def test_save_load_rebuilds_the_percentile_tables(fitted, query, tmp_path):
     before, after = fitted.run(query), loaded.run(query)
     pd.testing.assert_frame_equal(before.scores, after.scores)
     pd.testing.assert_frame_equal(before.reference_details, after.reference_details)
+
+
+def test_a_component_can_be_fitted_saved_and_loaded_on_its_own(
+    reference, query, tmp_path
+):
+    """The documented standalone use: shared state is fitted, then saved alongside."""
+    from eosquality import Typicality
+
+    alone = Typicality().fit(reference, eos_id="eos0aaa", version="v1")
+    alone.save(tmp_path / "art")
+    assert (tmp_path / "art" / "shared" / "schema.json").is_file()
+    assert (tmp_path / "art" / "typicality" / "count_luts.npy").is_file()
+    loaded = Typicality.load(tmp_path / "art")
+    pd.testing.assert_frame_equal(
+        alone.run(query).per_feature_pct, loaded.run(query).per_feature_pct
+    )
+    assert loaded.anchor_ == alone.anchor_
+
+
+def test_loading_a_component_that_was_not_saved_is_a_clear_error(tmp_path):
+    from eosquality import Typicality
+
+    with pytest.raises(FileNotFoundError, match="typicality artifacts"):
+        Typicality.load(tmp_path)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from eosquality.shared.load import load_shared
@@ -54,7 +54,7 @@ class ScoreComponent:
     def _finish_fit(self, t0: float) -> None:
         """Record wall-clock duration since ``t0`` and a UTC timestamp."""
         self._fit_duration_seconds = float(time.perf_counter() - t0)
-        self._fit_timestamp = datetime.now(tz=timezone.utc).isoformat()
+        self._fit_timestamp = datetime.now(tz=UTC).isoformat()
 
     # ------------------------------------------------------------------
     # Save / load
@@ -197,26 +197,6 @@ class ScoreComponent:
         self._check_fitted()
         assert self._shared is not None
         return self._shared
-
-    @property
-    def fit_duration_seconds_(self) -> float | None:
-        """Wall-clock fit duration.
-
-        Returns
-        -------
-        float or None
-        """
-        return self._fit_duration_seconds
-
-    @property
-    def fit_timestamp_(self) -> str | None:
-        """UTC fit timestamp (ISO 8601).
-
-        Returns
-        -------
-        str or None
-        """
-        return self._fit_timestamp
 
     def _check_fitted(self) -> None:
         if not self.is_fitted_:

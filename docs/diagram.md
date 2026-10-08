@@ -24,7 +24,7 @@ flowchart LR
 flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
-    SEL --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
+    SEL --> IDX["<b>training/</b><br/>a Morgan index per distinct training set<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b> (trn_tanimoto)<br/>mean Morgan distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TP["<b>Training physchem</b> (trn_physchem)<br/>217 descriptors, library scaler, clip ±10<br/>mean distance to the 5 nearest per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TM["<b>Training match</b> (trn_match, trn_scaffold)<br/>connectivity layers of the molecules<br/>and of their Murcko scaffolds"]
@@ -56,19 +56,19 @@ One subfolder per modality; either or both may be present.
   manifest.json                           # informational: eos_id, version, modalities, scores
   reference_mode/                         # iff fitted with -r/--reference
     shared/
-      schema.json  scaler.json  binary_class_freq.json
+      schema.json  scaler.json
       metadata.json                       # n_samples, library_id, library_path, format_version, …
-      reference_ids.json  selected_columns.json
-    typicality/   state.json  reference_self_aggregates.npy  metadata.json
+      selected_columns.json
+    typicality/   state.json  count_luts.npy  reference_self_aggregates.npy  metadata.json
     extremity/    state.json  column_tables.npz  reference_self_aggregates.npy  metadata.json
     match/        state.json  metadata.json        # counts only; the keys live in the library folder
   training_mode/                          # iff fitted with -t/--training-sets
     training_sets/
       metadata.json                       # training_format_version, eos_id, version, columns
       columns.json  arrays.npz            # per column: n, ids
-      indices/c000/ …                     # one VectorIndex per output column
+      indices/c000/ …                     # one VectorIndex per distinct training set
     training_distance/  state.json  loo_mean_distances.npz  metadata.json  # trn_tanimoto
-    training_physchem/  c000/ …  # trn_physchem
+    training_physchem/  state.json  c000/ …  # trn_physchem: one domain per distinct training set
     training_match/  connectivity_keys.npz  metadata.json  # trn_match, trn_scaffold
 ```
 

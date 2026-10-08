@@ -17,6 +17,7 @@ from eosquality._registry import (
 )
 from eosquality.cli._common import (
     CliError,
+    jobs_option,
     require_new_path,
     run_command,
     staged_log,
@@ -130,12 +131,14 @@ def _read_reference(path: str | None) -> pd.DataFrame | None:
     metavar="SCORES",
     help=("Scores not to fit, comma-separated, e.g. ref_match."),
 )
+@jobs_option
 @verbose_option
 def fit(
     reference: str | None,
     training_sets: str | None,
     artifacts: str,
     exclude: tuple[str, ...],
+    jobs: int,
     verbose: bool,
 ) -> None:
     """Fit the reference and/or training scores and save the artifacts.
@@ -150,11 +153,13 @@ def fit(
         New artifacts folder.
     exclude : tuple of str
         Scores not to fit.
+    jobs : int
+        Worker processes for the descriptors.
     verbose : bool
         Also print debug messages and full tracebacks.
     """
-    options = dict(locals())
-    run_command(lambda: _fit(**options), verbose=verbose, command="fit")
+    options = {k: v for k, v in locals().items() if k != "jobs"}
+    run_command(lambda: _fit(**options), verbose=verbose, command="fit", jobs=jobs)
 
 
 def _fit(*, reference, training_sets, artifacts, exclude, verbose) -> None:

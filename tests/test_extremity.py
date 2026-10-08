@@ -27,7 +27,7 @@ def test_each_column_is_uniform_on_the_reference(fitted, reference):
 def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.extremity.run(reference).score
     assert score.mean() == pytest.approx(0.5, abs=0.01)
-    assert fitted.extremity.reference_extremity_ == pytest.approx(0.5, abs=0.01)
+    assert fitted.extremity.anchor_ == pytest.approx(0.5, abs=0.01)
 
 
 def test_raw_is_the_q66_of_the_per_column_values(fitted, query):
@@ -46,20 +46,18 @@ def test_percentile_is_looked_up_on_the_columns_own_table(fitted, query):
     expected = _cdf_score(
         result.per_feature[name].to_numpy().astype(np.float32),
         table,
-        higher_is_higher=True,
     )
     np.testing.assert_allclose(result.per_feature_pct[name], expected)
     assert table.dtype == np.float32 and (np.diff(table) >= 0).all()
 
 
-def test_sign_is_ignored(fitted, reference):
-    """Mirrored scaled values are equally extreme."""
-    from eosquality.scores.extremity import compute_extremity
+def test_sign_is_ignored():
+    """Mirrored scaled values are equally extreme; the rails clip at 1."""
+    from eosquality.scores.extremity import per_feature_extremity
 
-    values = np.array([[0.3, -0.7], [-0.3, 0.7]])
-    per_feature, agg = compute_extremity(values)
+    per_feature = per_feature_extremity(np.array([[0.3, -0.7, 2.0], [-0.3, 0.7, -2.0]]))
     np.testing.assert_allclose(per_feature[0], per_feature[1])
-    assert agg[0] == agg[1]
+    np.testing.assert_allclose(per_feature[0], [0.3, 0.7, 1.0])
 
 
 def test_reference_details_has_one_row_per_query(fitted, query):

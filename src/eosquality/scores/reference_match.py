@@ -32,7 +32,7 @@ import pandas as pd
 
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.scores._base import ScoreComponent, read_json
-from eosquality.scores._helpers import _standardize
+from eosquality.scores._helpers import _standardize_all
 from eosquality.scores._match_keys import _flags, _layers
 from eosquality.shared.state import SharedFitState
 
@@ -66,7 +66,6 @@ class ReferenceMatch(ScoreComponent):
         *,
         shared: SharedFitState,
         library: ReferenceLibrary,
-        **_: Any,
     ) -> ReferenceMatch:
         """Bind to a reference library (its keys are computed by ``build``).
 
@@ -92,7 +91,7 @@ class ReferenceMatch(ScoreComponent):
         self._finish_fit(t0)
         return self
 
-    def run(self, query: pd.DataFrame, **_: Any) -> ReferenceMatchRunResult:
+    def run(self, query: pd.DataFrame) -> ReferenceMatchRunResult:
         """Flag each query that matches a library molecule or scaffold.
 
         Parameters
@@ -106,7 +105,7 @@ class ReferenceMatch(ScoreComponent):
         """
         self._check_fitted()
         molecules_known, scaffolds_known = self._resolve_library().match_keys()
-        smiles = [_standardize(s) for s in query["input"]]
+        smiles = _standardize_all(list(query["input"]))
         rows = np.array([i for i, s in enumerate(smiles) if s], dtype=int)
         standardised = [smiles[i] for i in rows]
         molecules, scaffolds = _layers(standardised, "query InChIKey layers")
@@ -191,3 +190,13 @@ class ReferenceMatch(ScoreComponent):
         self._check_fitted()
         assert self._n_scaffolds is not None
         return self._n_scaffolds
+
+    @property
+    def fit_summary(self) -> str:
+        """One line for the fit log.
+
+        Returns
+        -------
+        str
+        """
+        return f"{self.n_molecules:,} structures · {self.n_scaffolds:,} scaffolds"

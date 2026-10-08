@@ -14,13 +14,9 @@ import sys
 
 import numpy as np
 
-from eosquality.library.physchem import (
-    apply_scaler,
-    canonical_scaler,
-    compute_physchem_raw,
-)
+from eosquality.library.physchem import canonical_scaler, compute_physchem_raw
 from eosquality.library.reference import ReferenceLibrary
-from eosquality.scores._physchem_domain import CLIP, PAIR_MEDIAN
+from eosquality.scores._physchem_domain import CLIP, PAIR_MEDIAN, _fill, _standardise
 
 
 def main(n_molecules: int = 20_000, n_pairs: int = 1_000_000, seed: int = 0) -> None:
@@ -39,7 +35,14 @@ def main(n_molecules: int = 20_000, n_pairs: int = 1_000_000, seed: int = 0) -> 
     rng = np.random.default_rng(seed)
     picked = rng.choice(len(smiles), size=min(n_molecules, len(smiles)), replace=False)
     raw = compute_physchem_raw([smiles[i] for i in picked])
-    matrix = np.clip(apply_scaler(raw, canonical_scaler()), -CLIP, CLIP)
+    scaler = canonical_scaler()
+    scale = np.asarray(scaler["scale"], dtype=np.float64)
+    matrix = _standardise(
+        _fill(raw.astype(np.float64), np.asarray(scaler["median"])),
+        np.asarray(scaler["mean"]),
+        np.where(scale > 0, scale, 1.0),
+        CLIP,
+    )
     i = rng.integers(0, len(matrix), n_pairs)
     j = rng.integers(0, len(matrix), n_pairs)
     keep = i != j

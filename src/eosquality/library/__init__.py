@@ -10,13 +10,11 @@ prefetched into ``data/`` and shipped to S3 by maintainers.
 from eosquality.library.identity import (
     LIBRARY_ID,
     library_major,
-    reference_library_csv_path,
     reference_library_path,
 )
 
 __all__ = [
     "LIBRARY_ID",
     "library_major",
-    "reference_library_csv_path",
     "reference_library_path",
 ]

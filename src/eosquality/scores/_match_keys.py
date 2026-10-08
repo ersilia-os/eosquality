@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._base import require_file
-from eosquality.utils import console
+from eosquality.utils.parallel import map_rows
 
 KEYS_FILE = "connectivity_keys.npz"
 # Characters of an InChIKey that form its connectivity layer (first block).
@@ -73,10 +73,18 @@ def _scaffold(smiles: str) -> str:
             return ""
 
 
+def _layer_pair(smiles: str) -> tuple[str, str]:
+    """Connectivity layers of a molecule and of its Murcko scaffold (picklable)."""
+    return connectivity_layer(smiles), connectivity_layer(_scaffold(smiles))
+
+
 def _layers(
     smiles: list[str], label: str = "InChIKey layers"
 ) -> tuple[np.ndarray, np.ndarray]:
     """Connectivity layers of the molecules and of their Murcko scaffolds.
+
+    Spread over processes inside ``parallel.workers`` (the CLI); in-process
+    otherwise.
 
     Parameters
     ----------
@@ -91,28 +99,32 @@ def _layers(
         ``(molecule layers, scaffold layers)``, both length ``len(smiles)``;
         ``""`` where there is none.
     """
-    molecules = np.empty(len(smiles), dtype=object)
-    scaffolds = np.empty(len(smiles), dtype=object)
-    with console.progress(label) as bar:
-        task = bar.add_task(label, total=len(smiles))
-        for i, s in enumerate(smiles):
-            molecules[i] = connectivity_layer(s)
-            scaffolds[i] = connectivity_layer(_scaffold(s))
-            bar.advance(task)
-    return molecules, scaffolds
-
-
-def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:
-    """1 / 0 for layers found in ``known``; NA where the layer is empty."""
-    present = np.array([bool(x) for x in layers], dtype=bool)
-    found = np.isin(layers, known)
-    return pd.Series(np.where(present, found.astype(int), 0), dtype="Int64").mask(
-        ~present
+    pairs = np.empty(len(smiles), dtype=object)
+    map_rows(_layer_pair, smiles, pairs, label=label, show_progress=True)
+    return (
+        np.array([m for m, _ in pairs], dtype=object),
+        np.array([c for _, c in pairs], dtype=object),
     )
 
 
+def _flags(layers: np.ndarray, known: np.ndarray) -> pd.Series:
+    """1 / 0 for layers found in ``known``; NA where the layer is empty.
+
+    ``known`` is the sorted array of :func:`unique_keys`, so each layer is one
+    binary search (``np.isin`` would sort the whole array on every call).
+    """
+    layers = np.asarray(layers, dtype=known.dtype)
+    present = np.char.str_len(layers) > 0
+    at = np.minimum(np.searchsorted(known, layers), len(known) - 1)
+    found = (known[at] == layers) if len(known) else np.zeros(len(layers), bool)
+    return pd.Series(found.astype(int), dtype="Int64").mask(~present)
+
+
 def unique_keys(layers: np.ndarray) -> np.ndarray:
-    """Sorted unique non-empty layers, as a fixed-width string array.
+    """Sorted unique non-empty layers, as a fixed-width byte-string array.
+
+    A connectivity layer is 14 ASCII characters, so ``S14`` takes a quarter of
+    the memory and disk of the ``U14`` that ``astype(str)`` would give.
 
     Parameters
     ----------
@@ -123,7 +135,7 @@ def unique_keys(layers: np.ndarray) -> np.ndarray:
     -------
     numpy.ndarray
     """
-    return np.unique(layers[layers != ""]).astype(str)
+    return np.unique(layers[layers != ""]).astype(f"S{CONNECTIVITY_LENGTH}")
 
 
 def save_keys(path: pathlib.Path, molecules: np.ndarray, scaffolds: np.ndarray) -> None:

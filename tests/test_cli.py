@@ -1,4 +1,5 @@
 import json
+import pathlib
 
 import pandas as pd
 import pytest
@@ -7,6 +8,9 @@ from eosquality.cli import main
 
 
 def _run(argv):
+    """Run the CLI; ``fit`` / ``run`` stay in-process unless ``-j`` is given."""
+    if argv[0] in ("fit", "run") and "-j" not in argv:
+        argv = [*argv, "-j", "1"]
     with pytest.raises(SystemExit) as exc:
         main(argv)
     return exc.value.code
@@ -166,9 +170,9 @@ def test_run_output_must_be_csv(files, capsys):
     assert "mustbea.csvfile" in _err(capsys)
 
 
-def _library_csv(tmp_path, smiles, name):
+def _library_csv(tmp_path, smiles, name, n=30):
     path = tmp_path / name
-    pd.DataFrame({"smiles": smiles[:30]}).to_csv(path, index=False)
+    pd.DataFrame({"smiles": smiles[:n]}).to_csv(path, index=False)
     return str(path)
 
 
@@ -203,3 +207,157 @@ def test_build_needs_a_library_id_name_or_an_explicit_one(tmp_path, smiles, caps
     assert _run(["build", "-i", csv, "-o", str(tmp_path / "b"), "--name", "mylib"]) == 0
     meta = json.loads((tmp_path / "b" / "metadata.json").read_text())
     assert meta["library_name"] == "mylib"
+
+
+def test_help_lists_user_and_maintainer_commands(capsys):
+    assert _run(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "Commands" in out and "Developer commands" in out
+    assert out.index("setup") < out.index("Developer commands") < out.index("build")
+
+
+@pytest.fixture
+def served_library(library, tmp_path, monkeypatch):
+    """``setup`` pointed at the test library, served from a ``file://`` URL."""
+    import importlib
+
+    setup_cli = importlib.import_module(
+        "eosquality.cli.setup"
+    )  # the name `setup` is the command
+
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_BASE_URL", library.parent.as_uri() + "/")
+    monkeypatch.setattr(setup_cli, "LIBRARY_ID", "test_library")
+    monkeypatch.setattr(setup_cli, "library_dirname", lambda: library.name)
+    monkeypatch.setattr(setup_cli, "user_cache_dir", lambda: tmp_path / "cache")
+    return tmp_path / "cache" / library.name
+
+
+def test_setup_fetches_the_library_once(served_library, capsys):
+    assert _run(["setup"]) == 0
+    assert (served_library / "connectivity_keys.npz").is_file()
+    marker = served_library / "marker.txt"
+    marker.write_text("x")
+    assert _run(["setup"]) == 0  # cached: nothing is fetched again
+    assert marker.exists()
+    assert _run(["setup", "--force"]) == 0
+    assert not marker.exists()
+
+
+def test_setup_reports_a_library_it_cannot_fetch(served_library, monkeypatch, capsys):
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_BASE_URL", "file:///nonexistent/")
+    assert _run(["setup"]) == 1
+    assert "couldnotfetchthereferencelibrary" in _err(capsys)
+
+
+def test_the_maintainer_workflow_build_then_fit_then_run(
+    tmp_path, smiles, reference, query, monkeypatch
+):
+    """``build`` makes a library that ``fit`` and ``run`` then use."""
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v0.csv", n=600)
+    lib = tmp_path / "lib"
+    assert _run(["build", "-i", csv, "-o", str(lib), "-j", "1"]) == 0
+    monkeypatch.setenv("EOSQUALITY_REFERENCE_LIBRARY_PATH", str(lib))
+    reference.to_csv(tmp_path / "reference_eos0aaa_v1.csv", index=False)
+    query.to_csv(tmp_path / "query.csv", index=False)
+    art = str(tmp_path / "artifacts_eos0aaa_v1")
+    assert (
+        _run(["fit", "-r", str(tmp_path / "reference_eos0aaa_v1.csv"), "-a", art]) == 0
+    )
+    out = tmp_path / "quality_eos0aaa_v1.csv"
+    assert (
+        _run(["run", "-i", str(tmp_path / "query.csv"), "-a", art, "-o", str(out)]) == 0
+    )
+    scores = pd.read_csv(out)
+    meta = pathlib.Path(art) / "reference_mode/shared/metadata.json"
+    assert json.loads(meta.read_text())["library_path"] == ""  # canonical: by identity
+    assert {"ref_match", "ref_scaffold", "ref_typicality_pct"} <= set(scores.columns)
+    assert scores["ref_match"].tail(40).eq(1).all()  # the 40 reference rows
+
+
+def test_fit_and_run_use_a_pool_for_the_descriptors_when_asked(files, training_dir):
+    """The default ``-j -1`` path: a pool for a column of 200 or more molecules."""
+    only = str(files["tmp"] / "training_only_eos0aaa_v1")
+    assert _run(["fit", "-t", str(training_dir), "-a", only, "-j", "2"]) == 0
+    out = str(files["tmp"] / "pooled_eos0aaa_v1.csv")
+    assert _run(["run", "-i", files["query"], "-a", only, "-o", out, "-j", "2"]) == 0
+    assert "trn_physchem_pct" in pd.read_csv(out).columns
+
+
+def test_a_custom_library_found_through_the_environment_is_recorded_by_path(files):
+    """Not the canonical id: the artifacts must find it again at run time."""
+    fit = ["fit", "-r", files["reference"], "-a", files["artifacts"]]
+    assert _run(fit) == 0  # every reference score, ref_match included
+    shared = pathlib.Path(files["artifacts"]) / "reference_mode/shared/metadata.json"
+    meta = json.loads(shared.read_text())
+    assert meta["library_id"] == "test_library" and meta["library_path"]
+    run = ["run", "-i", files["query"], "-a", files["artifacts"], "-o", files["output"]]
+    assert _run(run) == 0
+
+
+def test_fit_and_build_report_unreadable_inputs(tmp_path, capsys):
+    assert (
+        _run(
+            [
+                "fit",
+                "-r",
+                str(tmp_path / "reference_eos0aaa_v1.csv"),
+                "-a",
+                "a_eos0aaa_v1",
+            ]
+        )
+        == 1
+    )
+    assert "couldnotreadreferenceCSV" in _err(capsys)
+    assert (
+        _run(
+            [
+                "build",
+                "-i",
+                str(tmp_path / "ersilia_reference_library_v7.csv"),
+                "-o",
+                str(tmp_path / "o"),
+            ]
+        )
+        == 1
+    )
+    assert "couldnotreadlibraryfile" in _err(capsys)
+    wrong = tmp_path / "ersilia_reference_library_v8.csv"
+    pd.DataFrame({"molecule": ["CCO"]}).to_csv(wrong, index=False)
+    assert _run(["build", "-i", str(wrong), "-o", str(tmp_path / "o2")]) == 1
+    assert "mustcontaina'smiles'column" in _err(capsys)
+    assert not (tmp_path / "o2").exists()
+
+
+def test_build_can_truncate_the_library(tmp_path, smiles):
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv", n=50)
+    assert (
+        _run(
+            [
+                "build",
+                "-i",
+                csv,
+                "-o",
+                str(tmp_path / "lib"),
+                "--max-samples",
+                "20",
+                "-j",
+                "1",
+            ]
+        )
+        == 0
+    )
+    meta = json.loads((tmp_path / "lib" / "metadata.json").read_text())
+    assert meta["n_samples"] == 20
+
+
+def test_the_built_folder_has_the_usual_permissions_not_a_private_temp_folder(
+    tmp_path, smiles
+):
+    import os
+    import stat
+
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "lib"), "-j", "1"]) == 0
+    umask = os.umask(0)
+    os.umask(umask)
+    assert stat.S_IMODE((tmp_path / "lib").stat().st_mode) == 0o777 & ~umask

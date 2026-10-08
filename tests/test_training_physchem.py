@@ -38,7 +38,6 @@ def test_calibration_puts_training_molecules_near_a_half(fitted):
             compute_physchem_raw(column.smiles), column.rows_of(column.smiles)
         ),
         domain.sorted_distances,
-        higher_is_higher=True,
     )
     assert calibrated.mean() == pytest.approx(0.5, abs=0.05)
     assert ((calibrated > 0) & (calibrated <= 1)).all()
@@ -171,23 +170,6 @@ def test_scaler_must_match_the_descriptor_count():
     scaler = _scaler(raw[:, :4])
     with pytest.raises(ValueError, match="4 descriptors, the matrix 5"):
         PhyschemDomain.fit(raw, scaler)
-
-
-def test_the_packaged_scaler_is_the_canonical_librarys():
-    """The shipped copy must equal what ``eosquality build`` wrote."""
-    import glob
-    import json
-
-    from eosquality.library.physchem import canonical_scaler
-
-    found = glob.glob("data/indices/*/physchem_scaler.json")
-    if not found:
-        pytest.skip("canonical library not installed here")
-    with open(found[0]) as f:
-        library = json.load(f)
-    shipped = canonical_scaler()
-    for key in ("descriptor_names", "median", "mean", "scale"):
-        assert shipped[key] == library[key], key
 
 
 def test_similarity_is_one_minus_distance_over_the_pair_median():

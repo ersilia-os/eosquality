@@ -1,21 +1,11 @@
 """Fetch the canonical reference library from its public S3 URL.
 
-The library is not shipped in the wheel — it lives in a public S3 bucket and
-is fetched into a user cache (``~/.eosquality/``) only when the user runs
-``eosquality download``. The maintainer side uses ``eosvc`` to push updates
-to S3; at runtime plain HTTPS is enough for public objects.
-
-Two public functions:
-
-- :func:`ensure_library_downloaded` fetches the index folder (every file in
-  ``_LIBRARY_FILES``) into a temp directory and atomically moves it into the
-  cache. Partial downloads never leave a half-populated cache folder.
-- :func:`ensure_single_file_downloaded` does the same atomic-fetch for one
-  file (used for the source SMILES CSV).
-
-Progress output goes to stderr via ``rich`` (already a dep) — a per-file
-progress bar with byte counts, transfer speed, and ETA. Cached hits and
-error paths print compact status lines instead of a bar.
+The library is not shipped in the wheel: ``eosquality setup`` fetches it into a
+user cache (``~/.eosquality/``). The maintainer side uses ``eosvc`` to push
+updates to S3; at runtime plain HTTPS is enough for public objects.
+:func:`ensure_library_downloaded` fetches every file in ``_LIBRARY_FILES`` into
+a temporary folder, checks the library identity, and only then moves the
+folder into the cache, so a failed download never leaves a half-populated one.
 """
 
 from __future__ import annotations
@@ -27,7 +17,6 @@ import tempfile
 import urllib.error
 import urllib.request
 
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -38,6 +27,8 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
+from eosquality.utils import console
+
 # Files that make up a complete reference library folder. Must stay in sync
 # with what ``eosquality build`` emits: the library SMILES, its identity and
 # the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
@@ -47,16 +38,9 @@ _LIBRARY_FILES: tuple[str, ...] = (
     "connectivity_keys.npz",
 )
 
-# Chunk size for streamed copy. 256 KB is the sweet spot for progress
-# update frequency vs syscall overhead on typical networks.
 _CHUNK_BYTES = 256 * 1024
 # Per-socket-operation timeout; a stalled connection fails instead of hanging.
 _TIMEOUT_SECONDS = 60
-
-# Downloads are a user-triggered, non-trivial operation: always show progress
-# on stderr regardless of the global logger verbosity. Stdout stays clean for
-# machine-readable CLI output.
-_console = Console(stderr=True, highlight=False)
 
 
 class LibraryDownloadError(RuntimeError):
@@ -71,10 +55,6 @@ def ensure_library_downloaded(
     force: bool = False,
 ) -> pathlib.Path:
     """Return a local path to the reference library, fetching it if missing.
-
-    Files are fetched into a temporary folder, the library identity is
-    verified, and only then is the folder moved into the cache, so a failed
-    download never leaves a half-populated cache.
 
     Parameters
     ----------
@@ -94,46 +74,45 @@ def ensure_library_downloaded(
     -------
     pathlib.Path
         ``cache_dir / dirname``.
+
+    Raises
+    ------
+    LibraryDownloadError
+        On a network failure or when the library identity does not match.
     """
-    if not base_url.endswith("/"):
-        base_url = base_url + "/"
+    base_url = base_url if base_url.endswith("/") else base_url + "/"
     library_dir = cache_dir / dirname
     if not force and is_library_cached_and_valid(library_dir, expected_library_id):
-        _console.print(
-            f"[dim]↪ reference library cached [/dim]"
-            f"[cyan]{dirname}[/cyan] [dim]→[/dim] {library_dir}"
-        )
+        console.echo(f"library cached → {console.path(library_dir)}", "info")
         return library_dir
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    _console.rule(f"[bold]Downloading reference library[/bold] [cyan]{dirname}[/cyan]")
-    _console.print(f"[dim]source:[/dim]      {base_url}{dirname}/")
-    _console.print(f"[dim]destination:[/dim] {library_dir}")
-    with tempfile.TemporaryDirectory(prefix=f".{dirname}.", dir=cache_dir) as tmp_str:
-        tmp_dir = pathlib.Path(tmp_str)
-        total_bytes = _fetch_verified(base_url, dirname, tmp_dir, expected_library_id)
-        # Atomic swap: replace any stale/partial folder with the verified one.
-        if library_dir.exists():
+    console.echo(f"fetching {console.plain(base_url + dirname)}/", "info")
+    with tempfile.TemporaryDirectory(prefix=f".{dirname}.", dir=cache_dir) as tmp:
+        tmp_dir = pathlib.Path(tmp)
+        total = _fetch_verified(base_url + dirname, tmp_dir, expected_library_id)
+        if library_dir.exists():  # a stale or partial folder
             shutil.rmtree(library_dir)
         shutil.move(str(tmp_dir), str(library_dir))
-    _console.print(
-        f"[green]✓[/green] reference library ready "
-        f"[dim]({_fmt_bytes(total_bytes)} across {len(_LIBRARY_FILES)} files)[/dim] "
-        f"→ {library_dir}"
-    )
-    _console.rule()
+    console.echo(f"{console.filesize(total)} → {console.path(library_dir)}", "success")
     return library_dir
 
 
-def _fetch_verified(
-    base_url: str, dirname: str, tmp_dir: pathlib.Path, expected_library_id: str
-) -> int:
-    """Download every library file into ``tmp_dir`` and check the library identity."""
-    total_bytes = 0
-    with _build_progress() as progress:
+def _fetch_verified(url: str, tmp_dir: pathlib.Path, expected_library_id: str) -> int:
+    """Download every library file into ``tmp_dir``; check the library identity."""
+    total = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold cyan]{task.fields[filename]}[/]"),
+        BarColumn(bar_width=None),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console.console,
+        transient=True,
+    ) as progress:
         for filename in _LIBRARY_FILES:
-            src = f"{base_url}{dirname}/{filename}"
-            total_bytes += _download_one(src, tmp_dir / filename, progress)
+            total += _download_one(f"{url}/{filename}", tmp_dir / filename, progress)
     fetched_id = _read_library_name(tmp_dir / "metadata.json")
     if fetched_id != expected_library_id:
         raise LibraryDownloadError(
@@ -141,35 +120,11 @@ def _fetch_verified(
             f"this eosquality expects {expected_library_id!r}. Wrong base URL or "
             "stale bucket."
         )
-    _console.print(
-        f"[green]✓[/green] integrity check passed [dim](library_name={fetched_id!r})[/dim]"
-    )
-    return total_bytes
-
-
-def _build_progress() -> Progress:
-    """rich.Progress with per-file bar, bytes, speed, and ETA columns."""
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold cyan]{task.fields[filename]}[/bold cyan]"),
-        BarColumn(bar_width=None),
-        DownloadColumn(),
-        "•",
-        TransferSpeedColumn(),
-        "•",
-        TimeRemainingColumn(),
-        console=_console,
-        transient=False,
-    )
+    return total
 
 
 def _download_one(src: str, dst: pathlib.Path, progress: Progress) -> int:
-    """Stream one file to ``dst`` with a per-file progress task.
-
-    Returns the number of bytes written. Raises LibraryDownloadError on any
-    failure. Unknown Content-Length (rare for S3) produces an indeterminate
-    bar — progress text still shows bytes downloaded.
-    """
+    """Stream one file to ``dst``; return the bytes written."""
     try:
         response = urllib.request.urlopen(src, timeout=_TIMEOUT_SECONDS)
     except urllib.error.HTTPError as exc:
@@ -178,42 +133,28 @@ def _download_one(src: str, dst: pathlib.Path, progress: Progress) -> int:
         ) from exc
     except urllib.error.URLError as exc:
         raise LibraryDownloadError(
-            f"Network error fetching {src}: {exc.reason}. "
-            "Check your connection, or set EOSQUALITY_REFERENCE_LIBRARY_PATH "
-            "to point at a pre-downloaded folder."
+            f"Network error fetching {src}: {exc.reason}. Check your connection, "
+            "or set EOSQUALITY_REFERENCE_LIBRARY_PATH to a pre-downloaded folder."
         ) from exc
-
-    total = response.headers.get("Content-Length")
-    try:
-        total_int = int(total) if total is not None else None
-    except ValueError:
-        total_int = None
-
-    task_id = progress.add_task(
+    length = response.headers.get("Content-Length")
+    task = progress.add_task(
         "download",
-        total=total_int,
+        total=int(length) if length and length.isdigit() else None,
         filename=dst.name,
     )
-
     written = 0
     with response, open(dst, "wb") as out:
-        while True:
-            chunk = response.read(_CHUNK_BYTES)
-            if not chunk:
-                break
+        while chunk := response.read(_CHUNK_BYTES):
             out.write(chunk)
             written += len(chunk)
-            progress.update(task_id, advance=len(chunk))
-    # Finalize the task so the bar reads 100% even if Content-Length was off.
-    if total_int is None:
-        progress.update(task_id, total=written, completed=written)
+            progress.update(task, advance=len(chunk))
     return written
 
 
 def is_library_cached_and_valid(
     library_dir: pathlib.Path, expected_library_id: str
 ) -> bool:
-    """Return True if every expected file is present and metadata matches.
+    """Whether every expected file is present and the library identity matches.
 
     Parameters
     ----------
@@ -226,11 +167,8 @@ def is_library_cached_and_valid(
     -------
     bool
     """
-    if not library_dir.is_dir():
+    if not all((library_dir / name).is_file() for name in _LIBRARY_FILES):
         return False
-    for filename in _LIBRARY_FILES:
-        if not (library_dir / filename).is_file():
-            return False
     try:
         return _read_library_name(library_dir / "metadata.json") == expected_library_id
     except (OSError, ValueError):
@@ -239,74 +177,4 @@ def is_library_cached_and_valid(
 
 def _read_library_name(metadata_path: pathlib.Path) -> str:
     with open(metadata_path) as f:
-        data = json.load(f)
-    return str(data.get("library_name", ""))
-
-
-# ---------------------------------------------------------------------------
-# Single-file download (used for the library SMILES CSV)
-# ---------------------------------------------------------------------------
-
-
-def ensure_single_file_downloaded(
-    url: str,
-    dest: pathlib.Path,
-    force: bool = False,
-) -> pathlib.Path:
-    """Return a local path to a single file, downloading it if missing.
-
-    Atomically writes to a sibling ``.part`` path first, then renames into
-    ``dest``. If ``dest`` already exists and ``force`` is False, returns it
-    without touching the network.
-
-    Parameters
-    ----------
-    url : str
-        Public HTTPS URL of the file.
-    dest : pathlib.Path
-        Local destination path.
-    force : bool, optional
-        Redownload even if ``dest`` exists.
-
-    Returns
-    -------
-    pathlib.Path
-        ``dest``.
-    """
-    if not force and dest.is_file():
-        _console.print(
-            f"[dim]↪ file cached[/dim] [cyan]{dest.name}[/cyan] [dim]→[/dim] {dest}"
-        )
-        return dest
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    _console.rule(f"[bold]Downloading[/bold] [cyan]{dest.name}[/cyan]")
-    _console.print(f"[dim]source:[/dim]      {url}")
-    _console.print(f"[dim]destination:[/dim] {dest}")
-
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    try:
-        with _build_progress() as progress:
-            _download_one(url, tmp, progress)
-        tmp.replace(dest)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-
-    _console.print(f"[green]✓[/green] file ready → {dest}")
-    _console.rule()
-    return dest
-
-
-def _fmt_bytes(n: int) -> str:
-    """Human-readable byte count (e.g. ``1.6 MB``)."""
-    size = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024.0 or unit == "TB":
-            return f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} TB"  # unreachable; keeps type-checker happy
+        return str(json.load(f).get("library_name", ""))

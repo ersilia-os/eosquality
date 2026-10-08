@@ -5,7 +5,7 @@ import pytest
 import eosquality
 from eosquality import ErsiliaQuality
 from eosquality.cli import main
-from eosquality.cli.run import log_path_for
+from eosquality.cli.run import sibling_path
 from eosquality.utils import console
 from eosquality.utils.logging import logger
 
@@ -38,7 +38,7 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
 
 
 def test_log_path_sits_next_to_the_output():
-    assert str(log_path_for("out/scores.csv")) == "out/scores.log"
+    assert str(sibling_path("out/scores.csv", ".log")) == "out/scores.log"
 
 
 @pytest.mark.parametrize(
@@ -106,14 +106,30 @@ def test_library_code_never_starts_a_process_pool(monkeypatch):
     def no_pool(*args, **kwargs):
         raise AssertionError("process pool started without n_jobs")
 
-    monkeypatch.setattr(parallel.mp, "Pool", no_pool)
-    smiles = ["CCO"] * (parallel.PARALLEL_MIN_ITEMS + 1)
+    monkeypatch.setattr(parallel, "_make_pool", no_pool)
+    smiles = ["CCO"] * 300
     assert len(compute_physchem_raw(smiles)) == len(smiles)
     assert np.array_equal(
         compute_physchem_raw(smiles[:3], n_jobs=1)[0],
         compute_physchem_raw(["CCO"])[0],
         equal_nan=True,
     )
+
+
+def test_workers_context_lets_the_cli_use_a_pool(monkeypatch):
+    """Only inside ``parallel.workers`` does the descriptor map start a pool."""
+    from eosquality.library.physchem import compute_physchem_raw
+    from eosquality.utils import parallel
+
+    def no_pool(*args, **kwargs):
+        raise AssertionError("pool requested")
+
+    monkeypatch.setattr(parallel, "_make_pool", no_pool)
+    smiles = ["CCO"] * 300
+    assert len(compute_physchem_raw(smiles)) == 300  # outside: in-process
+    with parallel.workers(2), pytest.raises(AssertionError, match="pool requested"):
+        compute_physchem_raw(smiles)
+    assert len(compute_physchem_raw(smiles)) == 300  # restored
 
 
 def test_all_unparsable_queries_are_reported_not_crashed(
@@ -135,3 +151,42 @@ def test_all_unparsable_queries_are_reported_not_crashed(
     scores = pd.read_csv(out)
     assert scores.trn_tanimoto_pct.isna().all()
     assert scores.trn_match.isna().all() and scores.trn_scaffold.isna().all()
+
+
+def test_the_pool_pins_blas_threads_for_its_workers_and_restores_the_environment(
+    monkeypatch,
+):
+    import os
+
+    from eosquality.utils import parallel
+
+    seen = {}
+
+    class FakePool:
+        def __init__(self, processes):
+            seen.update(
+                {
+                    k: os.environ.get(k)
+                    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+                }
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def imap(self, fn, items, chunksize):
+            return map(fn, items)
+
+    monkeypatch.setattr(parallel, "_make_pool", FakePool)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "4")  # a user's choice is respected
+    out = __import__("numpy").zeros((300, 1))
+    parallel.map_rows(
+        lambda s: [1.0], ["x"] * 300, out, label="t", n_jobs=2, min_items=1
+    )
+    assert seen == {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "4"}
+    assert "OMP_NUM_THREADS" not in os.environ
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "4"

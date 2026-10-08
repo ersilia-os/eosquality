@@ -7,6 +7,8 @@ avoids one score owning a helper that others also use.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from rdkit import Chem, rdBase
@@ -15,7 +17,7 @@ from eosquality.preprocess import PreprocessPipeline
 from eosquality.schema.infer import validate_against_schema
 from eosquality.shared.fit import fit_shared
 from eosquality.shared.state import SharedFitState
-from eosquality.vectorindex import VectorIndex
+from eosquality.utils.parallel import map_rows
 
 # ---------------------------------------------------------------------------
 # Aggregation + calibration shared by typicality and extremity
@@ -107,22 +109,14 @@ def _row_nanquantile_block(values: np.ndarray, q: float) -> np.ndarray:
     return np.where(has_values, out, np.nan)
 
 
-def _cdf_score(
-    values: np.ndarray,
-    sorted_self: np.ndarray,
-    *,
-    higher_is_higher: bool,
-) -> np.ndarray:
+def _cdf_score(values: np.ndarray, sorted_self: np.ndarray) -> np.ndarray:
     """Map per-row values to calibrated scores via the reference CDF.
 
     Single source of truth for every CDF-calibrated score in the package.
     ``sorted_self`` is the ascending array of the same raw quantity computed
-    on the reference (finite values only).
-
-    - ``higher_is_higher=True`` (typicality, extremity): a value
-      above the reference median maps above 0.5.
-    - ``higher_is_higher=False`` (distances): a
-      *smaller* value maps above 0.5 via a ``1 − cdf`` flip.
+    on the reference (finite values only); a value above the reference
+    median maps above 0.5, so the score reads "higher = more of the raw
+    quantity".
 
     The CDF uses **mid-ranks**, ``cdf = (#{ref < v} + #{ref ≤ v}) / (2n)``,
     so a value tied with many reference rows sits in the middle of its tie
@@ -138,19 +132,8 @@ def _cdf_score(
     below = np.searchsorted(sorted_self, values, side="left")
     at_or_below = np.searchsorted(sorted_self, values, side="right")
     cdf = (below + at_or_below) / (2.0 * n)
-    out = np.clip(cdf if higher_is_higher else 1.0 - cdf, 1.0 / (2.0 * n), 1.0)
+    out = np.clip(cdf, 1.0 / (2.0 * n), 1.0)
     return np.where(np.isnan(values), np.nan, out)
-
-
-def _score_from_aggregates(
-    aggregates: np.ndarray, sorted_self_aggregates: np.ndarray
-) -> np.ndarray:
-    """``higher_is_higher=True`` wrapper around :func:`_cdf_score`.
-
-    Used by typicality / extremity, where the per-row aggregate
-    grows with the property being measured.
-    """
-    return _cdf_score(aggregates, sorted_self_aggregates, higher_is_higher=True)
 
 
 def _sorted_finite(values: np.ndarray, component: str) -> np.ndarray:
@@ -175,7 +158,6 @@ def _make_pipeline(shared: SharedFitState) -> PreprocessPipeline:
         {
             "schema": shared.schema,
             "scaler_params": shared.scaler_params,
-            "binary_class_freq": shared.binary_class_freq,
         }
     )
 
@@ -229,19 +211,12 @@ def _resolve_shared(
 
 
 # ---------------------------------------------------------------------------
-# Standardisation and query-time fingerprint distances
+# Standardisation
 # ---------------------------------------------------------------------------
 
-
-# Tanimoto distance below this is a perfect fingerprint match. FPSim2 returns
-# exactly 0.0; the epsilon guards against float wobble.
-_SELF_MATCH_DISTANCE_THRESHOLD = 1e-6
-
-
-def _canonical(smiles: str) -> str | None:
-    """RDKit canonical isomeric SMILES, or ``None`` if it does not parse."""
-    mol = Chem.MolFromSmiles(smiles)
-    return Chem.MolToSmiles(mol) if mol is not None else None
+# Below this many molecules a process pool costs more than it saves (each worker
+# imports RDKit); ``standardize_all`` spreads larger lists inside ``parallel.workers``.
+_STANDARDIZE_MIN_PARALLEL = 20_000
 
 
 def _standardize(smiles: str) -> str | None:
@@ -262,36 +237,24 @@ def _standardize(smiles: str) -> str | None:
         return Chem.MolToSmiles(mol)
 
 
-def _is_same_molecule(query_smiles: str, library_smiles: str) -> bool:
-    if query_smiles == library_smiles:
-        return True
-    a, b = _canonical(query_smiles), _canonical(library_smiles)
-    return a is not None and a == b
+def _standardize_all(smiles: Sequence) -> list[str | None]:
+    """:func:`_standardize` of every SMILES, in order (parallel inside ``workers``).
 
+    Parameters
+    ----------
+    smiles : sequence
+        SMILES strings (anything else standardises to ``None``).
 
-def _query_fp_distances_valid(
-    query_smiles: list[str], vi: VectorIndex, k: int, exclude_self_match: bool
-) -> tuple[np.ndarray, np.ndarray]:
-    """:func:`_query_fp_distances` for SMILES that are known to parse."""
-    if not exclude_self_match:
-        fp_distances, vi_indices = vi.query(query_smiles, k=k)
-        return fp_distances.astype(np.float64), vi_indices
-
-    fp_distances, vi_indices = vi.query(query_smiles, k=k + 1)
-    fp_distances = fp_distances.astype(np.float64)
-    n_query = fp_distances.shape[0]
-    library_smiles = vi.smiles
-
-    # Column to drop per row: the self match if present, else the furthest.
-    drop_col = np.full(n_query, k, dtype=np.int64)
-    rows, cols = np.nonzero(fp_distances < _SELF_MATCH_DISTANCE_THRESHOLD)
-    for i, j in zip(rows, cols, strict=True):
-        if drop_col[i] != k:
-            continue  # already found this row's self match
-        if _is_same_molecule(query_smiles[i], library_smiles[vi_indices[i, j]]):
-            drop_col[i] = j
-
-    keep_mask = np.arange(k + 1)[None, :] != drop_col[:, None]
-    fp_kept = fp_distances[keep_mask].reshape(n_query, k)
-    idx_kept = vi_indices[keep_mask].reshape(n_query, k)
-    return fp_kept, idx_kept
+    Returns
+    -------
+    list of str or None
+    """
+    out = np.empty(len(smiles), dtype=object)
+    map_rows(
+        _standardize,
+        smiles,
+        out,
+        label="standardise",
+        min_items=_STANDARDIZE_MIN_PARALLEL,
+    )
+    return out.tolist()

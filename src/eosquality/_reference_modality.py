@@ -14,6 +14,7 @@ import pandas as pd
 
 from eosquality._registry import SCORE_ORDER, score_name
 from eosquality.exceptions import SchemaError
+from eosquality.library.identity import LIBRARY_ID
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.schema.infer import validate_against_schema
 from eosquality.scores._helpers import _make_query_repr
@@ -76,7 +77,9 @@ def fit_reference(
                 eos_id=eos_id,
                 version=version,
                 library_id=lib.library_name,
-                library_path=str(lib.path.resolve()) if library else "",
+                library_path=""
+                if _is_canonical(lib, library)
+                else str(lib.path.resolve()),
                 max_features=max_features,
             )
             st.summary = (
@@ -86,11 +89,21 @@ def fit_reference(
         eq._shared = shared
         fitters = _fitters(reference, shared, lib)
         for name in requested:
-            with steps(f"Score: {score_name(name)}"):
+            with steps(f"Score: {score_name(name)}") as st:
                 setattr(eq, name, fitters[name]())
-                anchor = getattr(getattr(eq, name), f"reference_{name}_", None)
+                st.summary = getattr(getattr(eq, name), "fit_summary", None)
+                anchor = getattr(getattr(eq, name), "anchor_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
         section.summary = f"{len(requested)} score(s) fitted"
+
+
+def _is_canonical(lib: ReferenceLibrary, requested) -> bool:
+    """Whether ``lib`` is this install's canonical library, found by its identity.
+
+    A library passed explicitly, or one of another name (an environment-variable
+    override), is recorded by its path instead, so ``run`` finds it again.
+    """
+    return requested is None and lib.library_name == LIBRARY_ID
 
 
 def _fitters(reference, shared, library):
@@ -150,7 +163,7 @@ def run_reference(
             st.summary = (
                 f"{query_repr.shape[0]:,} molecules · {query_repr.shape[1]} feature(s)"
             )
-        metadata["n_reference"] = len(eq._shared.reference_ids)
+        metadata["n_reference"] = eq._shared.metadata.n_samples
         for name, component in components.items():
             column = score_name(name)
             with steps(f"Score: {column}") as st:

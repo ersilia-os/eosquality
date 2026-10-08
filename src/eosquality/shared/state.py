@@ -13,8 +13,7 @@ from eosquality.shared.metadata import FitMetadata
 
 @dataclass
 class SharedFitState:
-    """Schema + eosframes scaler + binary class freqs + metadata + reference ids
-    + selected feature subset.
+    """Schema + eosframes scaler + metadata + selected feature subset.
 
     Computed once per fit pass (by :func:`fit_shared`) and consumed by every
     score component. Persisted under ``<root>/shared/``.
@@ -28,16 +27,16 @@ class SharedFitState:
     The ``ref_repr`` field carries the eosframes-scaled reference matrix
     projected onto ``selected_columns`` — shape ``(n_ref, n_selected)``.
     Set by :func:`fit_shared` after the scaler runs; score fits reuse it
-    instead of re-scaling the reference. It is not saved (``None`` after
-    loading): no score reads it at run time.
+    instead of re-scaling the reference. Neither it nor ``reference_ids`` (the
+    reference's row labels, which tell whether ``ref_repr`` belongs to a given
+    reference) is saved: no score reads them at run time.
     """
 
     schema: Schema
     scaler_params: dict[str, Any]
-    binary_class_freq: dict[str, float]
     metadata: FitMetadata
-    reference_ids: list[Any]
     selected_columns: list[str] = field(default_factory=list)
+    reference_ids: list[Any] = field(default_factory=list)
     ref_repr: np.ndarray | None = None
 
     def selected_indices(self) -> np.ndarray:

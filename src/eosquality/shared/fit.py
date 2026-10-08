@@ -77,7 +77,6 @@ def fit_shared(
     return SharedFitState(
         schema=schema,
         scaler_params=pipeline_state["scaler_params"],
-        binary_class_freq=pipeline_state["binary_class_freq"],
         metadata=metadata,
         reference_ids=list(reference.index),
         ref_repr=ref_repr,

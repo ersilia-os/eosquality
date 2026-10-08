@@ -22,7 +22,7 @@ cdf(v) = (#{ref < v} + #{ref ≤ v}) / (2n)
 score  = clip(cdf(v), 1/(2n), 1)
 ```
 
-With mid-ranks, a raw value shared by many reference rows (common for one-output models or quantised typicality) lands in the middle of its tie block. Reference molecules therefore score close to Uniform(0, 1), and their mean is 0.5; this is the `reference_<score>` anchor reported by each component.
+With mid-ranks, a raw value shared by many reference rows (common for one-output models or quantised typicality) lands in the middle of its tie block. Reference molecules therefore score close to Uniform(0, 1), and their mean is 0.5; this is the anchor (`reference_typicality_`, `reference_extremity_`, and the `ref_<score>_anchor` run metadata).
 
 `docs/figures/reference_calibration.png` checks this on 1,000 molecules sampled from the library.
 
@@ -73,7 +73,7 @@ The keys are computed once per library by `eosquality build` and shipped with it
 
 ## Training modality
 
-Each output column of a model may have its own training set: SMILES. Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each column gets its own Morgan fingerprint index (radius 2, 2048 bits).
+Each output column of a model may have its own training set: SMILES. Training SMILES are standardised (largest fragment, then canonical isomeric SMILES) and duplicates are merged. Each distinct training set gets a Morgan fingerprint index (radius 2, 2048 bits); columns measured on the same molecules, such as one screening panel, share it.
 
 ### Training distance
 

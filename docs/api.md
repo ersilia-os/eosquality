@@ -36,7 +36,7 @@ eq.fit(
 - **Training sets.** The folder holds one CSV per output column (`smiles`, optional `key`). With a reference, file names must be among its output columns. See [cli.md](cli.md#eosquality-fit) for the loading rules.
 - **Both inputs.** The training sets are loaded first. The reference modality is then fitted only on the output columns that have a usable training set (at least 20 valid molecules), and `max_features` selects among those; the training modality is then fitted on the selected columns only, so both modalities cover the same columns. A training-only fit applies `max_features` too, keeping the largest training set of each cluster on `1 − Jaccard` overlap of the training molecules. There is no way to add training sets to a fitted instance or to saved artifacts: fit both together.
 
-**Score names.** `ALL_SCORES` lists the eight public names above, reference scores first.
+**Score names.** `ALL_SCORES` lists the six public names above, reference scores first.
 
 ### `run`
 
@@ -53,7 +53,7 @@ eq.save("artifacts/")
 eq = ErsiliaQuality.load("artifacts/")
 ```
 
-`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). `load` reconstructs whichever modalities are present. It raises the following errors:
+`save` writes one subfolder per fitted modality, `reference_mode/` and `training_mode/`, plus `manifest.json` (see [diagram.md](diagram.md#save-layout)). It refuses a folder that already holds artifacts (`FileExistsError`), as the CLI does. `load` reconstructs whichever modalities are present. It raises the following errors:
 - `ArtifactVersionError`: the artifacts were written in an older on-disk format. Refit them.
 - `IncompatibleArtifactsError`: the artifacts were fit against a different reference library or package major version.
 
@@ -131,8 +131,21 @@ Typicality.load("art/").run(query).score
 ```
 
 - **Names.** Components keep their short names (`eq.match`, `ReferenceMatch`, the `match/` artifacts folder); the `ref_` / `trn_` prefixes belong to the orchestrator's output columns, metadata keys and `exclude`.
-- **ReferenceMatch** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `library=` (a `ReferenceLibrary`).
+- **ReferenceMatch** needs a pre-fit `shared=` state (for example `ErsiliaQuality(...).shared_`) and a `library=` (`eosquality.library.reference.ReferenceLibrary`).
+- **Anchors.** `Typicality` and `Extremity` expose `anchor_`, their mean over the reference (about 0.5); the orchestrator's `reference_typicality_` and `reference_extremity_` return them.
 - **Run results.** Typicality and extremity results have `score`, `score_raw`, `per_feature`, `per_feature_pct` and `metadata`; the match result has `match`, `scaffold` and `metadata`. The Series carry the public column names (`ref_typicality_pct`, `ref_match`), the same as the orchestrator's output columns.
+
+## Parallelism
+
+`fit` and `run` work in one process: a pool started from a library call would re-run an unguarded user script in every worker. The CLI is a proper entry point and spreads the RDKit descriptors over the cores (`-j/--jobs`). From Python, opt in inside a guarded script:
+
+```python
+from eosquality.utils import parallel
+
+if __name__ == "__main__":
+    with parallel.workers(-1):  # every core; a number for fewer
+        result = eq.run(query)
+```
 
 ## Logging
 

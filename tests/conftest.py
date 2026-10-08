@@ -9,6 +9,7 @@ something to calibrate.
 
 from __future__ import annotations
 
+import functools
 import pathlib
 
 import numpy as np
@@ -43,6 +44,21 @@ def model_outputs(smiles: list[str], seed: int) -> pd.DataFrame:
     df.insert(0, "input", smiles)
     df.insert(0, "key", [f"k{seed}_{i}" for i in range(len(df))])
     return df
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cached_descriptors():
+    """Compute each molecule's RDKit descriptors once per test session.
+
+    The same fixture molecules are scored by dozens of tests; the descriptors
+    (milliseconds each) were most of the suite's run time.
+    """
+    from eosquality.library import physchem
+
+    original = physchem._compute_one
+    physchem._compute_one = functools.lru_cache(maxsize=None)(original)
+    yield
+    physchem._compute_one = original
 
 
 @pytest.fixture(scope="session")

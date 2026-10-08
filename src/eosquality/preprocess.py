@@ -14,8 +14,7 @@ plain JSON-serialisable dict returned by ``eosframes.fit`` — see the
 ``shared/`` save/load helpers.
 
 Typicality consumes the int8-quantized output of the same scaler (see
-:mod:`eosquality.scores.typicality`), so no separate CDF artifact is fit
-or persisted here.
+:mod:`eosquality.scores.typicality`).
 """
 
 from __future__ import annotations
@@ -40,7 +39,6 @@ class PreprocessPipeline:
     def __init__(self, schema: Schema) -> None:
         self._schema = schema
         self._params: dict | None = None
-        self._binary_class_freq: dict[str, float] | None = None
 
     # ------------------------------------------------------------------
     # Fit + transform
@@ -66,7 +64,6 @@ class PreprocessPipeline:
         )
         feature_df = df[feature_cols]
         self._params = eosframes.fit(feature_df)
-        self._binary_class_freq = _compute_binary_class_freq(feature_df, self._params)
         if logger.verbose:
             kind_counts: dict[str, int] = {}
             for entry in self._params["columns"].values():
@@ -108,14 +105,13 @@ class PreprocessPipeline:
         Returns
         -------
         dict
-            ``schema``, ``scaler_params`` and ``binary_class_freq``.
+            ``schema`` and ``scaler_params``.
         """
         if self._params is None:
             raise RuntimeError("PreprocessPipeline must be fitted before get_state().")
         return {
             "schema": self._schema,
             "scaler_params": self._params,
-            "binary_class_freq": self._binary_class_freq or {},
         }
 
     @classmethod
@@ -134,26 +130,7 @@ class PreprocessPipeline:
         """
         pipeline = cls(schema=state["schema"])
         pipeline._params = state["scaler_params"]
-        pipeline._binary_class_freq = state["binary_class_freq"]
         return pipeline
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    @property
-    def binary_class_freq(self) -> dict[str, float]:
-        """Per binary-column frequency of the 'high' class in the reference.
-
-        Returns
-        -------
-        dict of str to float
-        """
-        if self._binary_class_freq is None:
-            raise RuntimeError(
-                "PreprocessPipeline must be fitted before binary_class_freq."
-            )
-        return self._binary_class_freq
 
     def _transform_to_array(self, feature_df: pd.DataFrame) -> np.ndarray:
         """Apply ``eosframes.transform`` and return the values as float64.
@@ -167,35 +144,3 @@ class PreprocessPipeline:
         if not feature_cols:
             return np.empty((len(feature_df), 0))
         return scaled[feature_cols].to_numpy(dtype=np.float64)
-
-
-def _compute_binary_class_freq(
-    feature_df: pd.DataFrame, params: dict
-) -> dict[str, float]:
-    """Frequency of the eosframes 'high' class per binary column.
-
-    The eosframes binary transform snaps every non-NaN value to whichever of
-    ``{low, high}`` is closer. We replicate that snap here over the raw
-    reference and record the resulting fraction of 1s as a descriptive
-    statistic in ``shared/binary_class_freq.json`` (no score reads it;
-    typicality's density LUTs already capture class balance). NaNs are
-    excluded from the denominator; a column
-    whose reference is entirely NaN gets a sentinel 0.5 (balanced — no
-    information either way).
-    """
-    out: dict[str, float] = {}
-    for col, entry in params["columns"].items():
-        transform = entry["transform"]
-        if transform["kind"] != "binary":
-            continue
-        low = float(transform["low"])
-        high = float(transform["high"])
-        values = feature_df[col].to_numpy(dtype=float)
-        non_nan = ~np.isnan(values)
-        denom = int(non_nan.sum())
-        if denom == 0:
-            out[col] = 0.5
-            continue
-        closer_to_high = np.abs(values - high) < np.abs(values - low)
-        out[col] = float((non_nan & closer_to_high).sum() / denom)
-    return out

@@ -11,14 +11,16 @@ the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
 """
 
 import json
+import os
 import pathlib
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import click
 
 from eosquality.cli._common import (
     CliError,
+    jobs_option,
     require_new_path,
     run_command,
     verbose_option,
@@ -59,12 +61,14 @@ from eosquality.utils import console
     metavar="N",
     help="Truncate input to the first N molecules (for testing).",
 )
+@jobs_option
 @verbose_option
 def build(
     input_path: str,
     output: str,
     name: str | None,
     max_samples: int | None,
+    jobs: int,
     verbose: bool,
 ) -> None:
     """Build the library folder: SMILES, metadata and connectivity keys.
@@ -80,6 +84,8 @@ def build(
         library id (``ersilia_reference_library_vN``).
     max_samples : int or None
         Optional truncation for testing.
+    jobs : int
+        Worker processes for the standardisation and the connectivity keys.
     verbose : bool
         Print debug messages.
     """
@@ -88,6 +94,7 @@ def build(
         lambda: _build(input_path, output, name, max_samples),
         verbose=verbose,
         command="build",
+        jobs=jobs,
     )
 
 
@@ -147,7 +154,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
     from rdkit import __version__ as rdkit_version
 
     from eosquality.library.reference import KEYS_FILE, METADATA_FILE, SMILES_FILE
-    from eosquality.scores._helpers import _standardize
+    from eosquality.scores._helpers import _standardize_all
     from eosquality.scores._match_keys import _layers, save_keys, unique_keys
 
     final = pathlib.Path(output)
@@ -155,9 +162,12 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
         raise FileExistsError(f"{final} already exists and is not an empty folder.")
     final.parent.mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=final.parent))
+    umask = os.umask(0)  # mkdtemp makes the folder private (0700); a library is shared
+    os.umask(umask)
+    work.chmod(0o777 & ~umask)
     try:
         pd.DataFrame({"smiles": smiles}).to_csv(work / SMILES_FILE, index=False)
-        standardised = [s for s in map(_standardize, smiles) if s]
+        standardised = [s for s in _standardize_all(smiles) if s]
         molecules, scaffolds = _layers(standardised, "library InChIKey layers")
         molecule_keys, scaffold_keys = unique_keys(molecules), unique_keys(scaffolds)
         save_keys(work / KEYS_FILE, molecule_keys, scaffold_keys)
@@ -170,7 +180,7 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
                     "n_scaffold_keys": int(len(scaffold_keys)),
                     "rdkit_version": rdkit_version,
                     "eosquality_version": _package_version(),
-                    "build_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    "build_timestamp": datetime.now(tz=UTC).isoformat(),
                     "library_name": name,
                 },
                 f,
