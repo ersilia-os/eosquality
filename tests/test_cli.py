@@ -348,3 +348,16 @@ def test_build_can_truncate_the_library(tmp_path, smiles):
     )
     meta = json.loads((tmp_path / "lib" / "metadata.json").read_text())
     assert meta["n_samples"] == 20
+
+
+def test_the_built_folder_has_the_usual_permissions_not_a_private_temp_folder(
+    tmp_path, smiles
+):
+    import os
+    import stat
+
+    csv = _library_csv(tmp_path, smiles, "ersilia_reference_library_v7.csv")
+    assert _run(["build", "-i", csv, "-o", str(tmp_path / "lib"), "-j", "1"]) == 0
+    umask = os.umask(0)
+    os.umask(umask)
+    assert stat.S_IMODE((tmp_path / "lib").stat().st_mode) == 0o777 & ~umask

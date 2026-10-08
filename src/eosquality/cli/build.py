@@ -11,6 +11,7 @@ the connectivity keys that ``ref_match`` / ``ref_scaffold`` look up.
 """
 
 import json
+import os
 import pathlib
 import time
 from datetime import UTC, datetime
@@ -161,6 +162,9 @@ def build_library(smiles: list[str], output: str | pathlib.Path, name: str) -> N
         raise FileExistsError(f"{final} already exists and is not an empty folder.")
     final.parent.mkdir(parents=True, exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix=f".{final.name}.", dir=final.parent))
+    umask = os.umask(0)  # mkdtemp makes the folder private (0700); a library is shared
+    os.umask(umask)
+    work.chmod(0o777 & ~umask)
     try:
         pd.DataFrame({"smiles": smiles}).to_csv(work / SMILES_FILE, index=False)
         standardised = [s for s in _standardize_all(smiles) if s]
