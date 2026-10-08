@@ -60,14 +60,16 @@ eosquality run -i query_eos4e40_v1.csv -a artifacts_eos4e40_v1/ -o quality_eos4e
 
 Typicality and extremity compare a query against the model's own predictions on the reference library, which is **not** ground truth; each is calibrated so that reference molecules score roughly Uniform(0, 1). The match flags are exact lookups against the library's molecules. Training-modality scores compare it against the model's training sets instead, calibrated so that training molecules score roughly Uniform(0, 1).
 
-| Score (column) | Question |
-|---|---|
-| **Typicality** (`ref_typicality_pct`, `_raw`) | Are the predicted values ones the model commonly produces? |
-| **Extremity** (`ref_extremity_pct`, `_raw`) | Are the predicted values far from the centre of the model's output range? |
-| **Reference match** (`ref_match`, `ref_scaffold`) | Is the same structure, or the same Murcko scaffold, in the reference library? 1 or 0. |
-| **Training similarity** (`trn_tanimoto`) | How far is the molecule from the model's training molecules, compared with how close they are to each other? Raw and as a percentile of the training set's own distances. |
-| **Training physchem** (`trn_physchem`) | The same question in physicochemical descriptor space. |
-| **Training match** (`trn_match`, `trn_scaffold`) | Is the same structure, or the same Murcko scaffold, in a training set? 1 or 0. |
+| Score | Columns | Question |
+|---|---|---|
+| **Typicality** | `ref_typicality_pct`, `ref_typicality_raw` | Are the predicted values ones the model commonly produces? |
+| **Extremity** | `ref_extremity_pct`, `ref_extremity_raw` | Are the predicted values far from the centre of the model's output range? |
+| **Reference match** | `ref_match`, `ref_scaffold` | Is the same structure, or the same Murcko scaffold, in the reference library? 1 or 0. |
+| **Training similarity** | `trn_tanimoto_pct`, `trn_tanimoto_raw` | How close is the molecule to the model's training molecules (Morgan fingerprints), compared with how close they are to each other? Raw is the mean Tanimoto similarity to the 5 nearest; higher is closer. |
+| **Training physchem** | `trn_physchem_pct`, `trn_physchem_raw` | The same question in physicochemical descriptor space. |
+| **Training match** | `trn_match`, `trn_scaffold` | Is the same structure, or the same Murcko scaffold, in a training set? 1 or 0. |
+
+The `_pct` columns are calibrated percentiles and the `_raw` columns the underlying values. `run --details` also writes the per-column values and the nearest training molecules.
 
 ## Documentation
 

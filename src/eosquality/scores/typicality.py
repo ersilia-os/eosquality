@@ -1,13 +1,15 @@
 """Typicality score: per-feature + CDF-calibrated aggregate, no library needed.
 
-Typicality is **density-based**: for each query value, look up its int8
-quantization in the per-column count LUT built on the reference and
-return ``count(int8) / max_count``.
+Typicality is **density-based**: for each query value, look up the
+per-column count LUT built on the reference (the reference's counts per int8
+level) and return ``count / max_count``. The lookup interpolates linearly
+between the two int8 levels around the value rather than rounding to one, so
+the density varies continuously with the value instead of in steps.
 
 This handles every distribution shape uniformly — unimodal, multimodal,
-constant, binary — with no kind dispatch: the most common int8 always
-scores typicality 1.0, every other int8 scores in proportion to how
-often it appears in the reference, and unseen int8 values score 0.
+constant, binary — with no kind dispatch: the most common level scores
+typicality 1.0, every other level scores in proportion to how often it appears
+in the reference, and unseen levels score 0.
 
 Missing values carry no information: a NaN feature stays NaN per feature
 and is ignored by the aggregate; a row whose every feature is NaN scores
@@ -27,8 +29,11 @@ Two columns are published for the whole model:
   feature counts. The per-feature raw values and percentiles are returned as
   ``per_feature`` and ``per_feature_pct``.
 
-A column's density takes at most 256 values, so its percentile table is
-derived exactly from the count LUT (:func:`percentile_luts`) and is not saved.
+A column's percentile table is the mid-rank of the density among the
+reference's own densities, kept as a 65536-bin histogram of them
+(:func:`density_histograms`, saved); the table is derived from it
+(:func:`percentile_tables`). Densities that are exactly equal (a binary or
+constant column) fall in one bin and tie at half weight, as before.
 """
 
 from __future__ import annotations
@@ -45,8 +50,10 @@ from eosquality.scores._percentile_score import PercentileScore
 _INT8_MAX_VAL = 127
 _LUT_SIZE = 256
 _LUT_OFFSET = 128  # lut index = int8 + offset; the slot at index 0 is the NaN sentinel
+_N_BINS = 65536  # bins of the density histogram behind the percentile tables
 SUBFOLDER = "typicality"
 COUNT_LUTS_FILE = "count_luts.npy"
+DENSITY_HIST_FILE = "density_hist.npy"
 
 
 class Typicality(PercentileScore):
@@ -57,8 +64,10 @@ class Typicality(PercentileScore):
 
     - per-column int8 count LUTs, ``(256, n_features)``: reference counts per
       level per column, built at fit time (saved);
-    - ``pct_luts_`` — ``(256, n_features)`` per-column percentile of each
-      level, derived from the counts (not saved).
+    - per-column histogram of the reference's densities, ``(65536, n_features)``
+      (saved);
+    - ``pct_tables_`` — ``(65536, n_features)`` per-column percentile of each
+      density bin, derived from the histogram (not saved).
 
     Depends only on :class:`SharedFitState` — no reference library required.
     """
@@ -69,44 +78,50 @@ class Typicality(PercentileScore):
     def __init__(self) -> None:
         super().__init__()
         self._count_luts: np.ndarray | None = None  # (256, n_features)
-        self._pct_luts: np.ndarray | None = None  # (256, n_features), derived
+        self._density_hist: np.ndarray | None = None  # (65536, n_features)
+        self._pct_tables: np.ndarray | None = None  # (65536, n_features), derived
 
     def _per_feature(self, scaled: np.ndarray) -> np.ndarray:
         assert self._count_luts is not None
         return compute_typicality(scaled, self._count_luts)[0]
 
     def _percentiles(self, scaled: np.ndarray, per_feature: np.ndarray) -> np.ndarray:
-        assert self._pct_luts is not None
-        return lookup_percentiles(scaled, self._pct_luts)
+        assert self._pct_tables is not None
+        return lookup_percentiles(per_feature, self._pct_tables)
 
     def _fit_columns(self, scaled: np.ndarray, columns: list[str]) -> None:
         self._count_luts = fit_typicality_luts(scaled)
-        self._pct_luts = percentile_luts(self._count_luts)
+        self._density_hist = density_histograms(scaled, self._count_luts)
+        self._pct_tables = percentile_tables(self._density_hist)
 
     def _save_columns(self, folder: pathlib.Path) -> dict[str, Any]:
-        assert self._count_luts is not None
+        assert self._count_luts is not None and self._density_hist is not None
         np.save(folder / COUNT_LUTS_FILE, self._count_luts)
+        np.save(folder / DENSITY_HIST_FILE, self._density_hist)
         return {}
 
     def _load_columns(self, folder: pathlib.Path, state: dict[str, Any]) -> None:
         self._count_luts = np.load(require_file(folder / COUNT_LUTS_FILE, self.NAME))
-        self._pct_luts = percentile_luts(self._count_luts)
+        self._density_hist = np.load(
+            require_file(folder / DENSITY_HIST_FILE, self.NAME)
+        )
+        self._pct_tables = percentile_tables(self._density_hist)
 
     def _has_columns(self) -> bool:
-        return self._count_luts is not None and self._pct_luts is not None
+        return self._count_luts is not None and self._pct_tables is not None
 
     @property
-    def pct_luts_(self) -> np.ndarray:
-        """Per-column percentile of each int8 level (derived from the counts).
+    def pct_tables_(self) -> np.ndarray:
+        """Per-column percentile of each density bin (derived from the histogram).
 
         Returns
         -------
         numpy.ndarray
-            ``(256, n_features)``.
+            ``(65536, n_features)``.
         """
         self._check_fitted()
-        assert self._pct_luts is not None
-        return self._pct_luts
+        assert self._pct_tables is not None
+        return self._pct_tables
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +141,25 @@ def _quantize_to_int8(scaled: np.ndarray) -> np.ndarray:
     )
     q = np.where(np.isnan(scaled), -_LUT_OFFSET, q)
     return q.astype(np.int64)
+
+
+def _interpolate(luts: np.ndarray, scaled: np.ndarray) -> np.ndarray:
+    """Per-column LUT value at scaled values, linear between int8 levels.
+
+    A value ``x`` sits at ``t = x × 127`` on the level axis (a level's centre is
+    its integer); the result is the LUT value of the two levels around ``t``,
+    weighted by distance. A value on a level gives that level's entry. ``t``
+    is clipped to ``[-127, 127]``, and NaN stays NaN.
+    """
+    t = np.clip(scaled * _INT8_MAX_VAL, -_INT8_MAX_VAL, _INT8_MAX_VAL)
+    low = np.floor(np.nan_to_num(t))
+    weight = t - low
+    low = low.astype(np.int64)
+    high = np.minimum(low + 1, _INT8_MAX_VAL)
+    cols = np.arange(scaled.shape[1])[None, :]
+    return (1.0 - weight) * luts[low + _LUT_OFFSET, cols] + weight * luts[
+        high + _LUT_OFFSET, cols
+    ]
 
 
 def fit_typicality_luts(scaled_reference: np.ndarray) -> np.ndarray:
@@ -194,67 +228,88 @@ def compute_typicality(
             f"got {count_luts.shape}."
         )
 
-    q_int8 = _quantize_to_int8(scaled_values)
     col_max = count_luts.max(axis=0).astype(np.float64)
     col_max[col_max <= 0] = 1.0
-    counts = count_luts[q_int8 + _LUT_OFFSET, np.arange(n_features)[None, :]]
-    per_feature = counts / col_max[None, :]
-    per_feature[q_int8 == -_LUT_OFFSET] = np.nan
+    per_feature = _interpolate(count_luts, scaled_values) / col_max[None, :]
     return per_feature, _nan_aggregate(per_feature)
 
 
-def percentile_luts(count_luts: np.ndarray) -> np.ndarray:
-    """Mid-rank percentile of each level's density among the reference values.
-
-    Within a column the density of a level is its count (over a constant),
-    so a level's percentile is the share of reference values whose level is
-    less common, with ties at half weight, as in
-    :func:`~eosquality.scores._helpers._cdf_score`: the most common level
-    scores near 1, rare levels near 0, and unseen levels the floor
-    ``1 / (2 n)``. A column with no counted value gives NaN.
+def density_histograms(
+    scaled_reference: np.ndarray, count_luts: np.ndarray
+) -> np.ndarray:
+    """Histogram of the reference's own densities, per column.
 
     Parameters
     ----------
+    scaled_reference : numpy.ndarray
+        ``(n_ref, n_features)`` eosframes-scaled reference values.
     count_luts : numpy.ndarray
         ``(256, n_features)`` counts, as returned by :func:`fit_typicality_luts`.
 
     Returns
     -------
     numpy.ndarray
-        ``(256, n_features)`` percentiles in ``(0, 1]``.
+        ``(65536, n_features)`` int32: how many reference values have a
+        density (``count / max_count``, interpolated) in each of 65536 equal
+        bins of ``[0, 1]``. NaN values are not counted.
     """
-    counts = np.asarray(count_luts, dtype=np.float64)
-    out = np.full(counts.shape, np.nan)
-    for j in range(counts.shape[1]):
-        c = counts[:, j]
-        n = c.sum()
-        if n <= 0:
-            continue
-        below = (c[None, :] * (c[None, :] < c[:, None])).sum(axis=1)
-        at_or_below = (c[None, :] * (c[None, :] <= c[:, None])).sum(axis=1)
-        out[:, j] = np.clip((below + at_or_below) / (2.0 * n), 0.5 / n, 1.0)
-    return out
+    n_features = scaled_reference.shape[1]
+    hist = np.zeros((_N_BINS, n_features), dtype=np.int32)
+    for j in range(n_features):
+        density = compute_typicality(scaled_reference[:, [j]], count_luts[:, [j]])[0]
+        valid = np.isfinite(density[:, 0])
+        hist[:, j] = np.bincount(_density_bin(density[valid, 0]), minlength=_N_BINS)
+    return hist
 
 
-def lookup_percentiles(scaled_values: np.ndarray, pct_luts: np.ndarray) -> np.ndarray:
-    """Per-feature typicality percentiles of scaled values.
+def percentile_tables(density_hist: np.ndarray) -> np.ndarray:
+    """Mid-rank percentile of each density bin among the reference's densities.
+
+    The share of reference values whose density is in a lower bin plus half
+    the share in the same bin, as in
+    :func:`~eosquality.scores._helpers._cdf_score`: the densest values score
+    near 1, rare ones near 0. A column with no counted value gives NaN.
 
     Parameters
     ----------
-    scaled_values : numpy.ndarray
-        ``(n, n_features)`` eosframes-scaled values.
-    pct_luts : numpy.ndarray
-        ``(256, n_features)`` from :func:`percentile_luts`.
+    density_hist : numpy.ndarray
+        ``(65536, n_features)`` counts, as returned by :func:`density_histograms`.
 
     Returns
     -------
     numpy.ndarray
-        ``(n, n_features)`` percentiles; NaN where the input is NaN.
+        ``(65536, n_features)`` percentiles in ``(0, 1]``.
     """
-    n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
-    if n_features == 0:
-        return np.ones((scaled_values.shape[0], 0))
-    q_int8 = _quantize_to_int8(scaled_values)
-    out = pct_luts[q_int8 + _LUT_OFFSET, np.arange(n_features)[None, :]]
-    out[q_int8 == -_LUT_OFFSET] = np.nan
+    counts = np.asarray(density_hist, dtype=np.float64)
+    n = counts.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mid = (np.cumsum(counts, axis=0) - 0.5 * counts) / n
+        return np.where(n > 0, np.clip(mid, 0.5 / n, 1.0), np.nan)
+
+
+def lookup_percentiles(per_feature: np.ndarray, pct_tables: np.ndarray) -> np.ndarray:
+    """Per-feature typicality percentiles of per-feature densities.
+
+    Parameters
+    ----------
+    per_feature : numpy.ndarray
+        ``(n, n_features)`` densities from :func:`compute_typicality`.
+    pct_tables : numpy.ndarray
+        ``(65536, n_features)`` from :func:`percentile_tables`.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n, n_features)`` percentiles; NaN where the density is NaN.
+    """
+    if per_feature.shape[1] == 0:
+        return np.ones((per_feature.shape[0], 0))
+    bins = _density_bin(np.nan_to_num(per_feature))
+    out = pct_tables[bins, np.arange(per_feature.shape[1])[None, :]]
+    out[np.isnan(per_feature)] = np.nan
     return out
+
+
+def _density_bin(density: np.ndarray) -> np.ndarray:
+    """Histogram bin of densities in ``[0, 1]``."""
+    return np.minimum((density * _N_BINS).astype(np.int64), _N_BINS - 1)
