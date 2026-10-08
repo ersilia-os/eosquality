@@ -24,7 +24,7 @@ flowchart LR
 flowchart LR
     TR["training_eosXXXX_vN/<br/><i>&lt;column&gt;.csv: smiles, key?</i>"] --> LD["load + standardise<br/>largest fragment · canonical<br/>merge duplicates"]
     LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
-    SEL --> IDX["<b>training/</b><br/>one Morgan index per column<br/>(self-kNN = leave-one-out)"]
+    SEL --> IDX["<b>training/</b><br/>a Morgan index per distinct training set<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b> (trn_tanimoto)<br/>mean Morgan distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TP["<b>Training physchem</b> (trn_physchem)<br/>217 descriptors, library scaler, clip ±10<br/>mean distance to the 5 nearest per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TM["<b>Training match</b> (trn_match, trn_scaffold)<br/>connectivity layers of the molecules<br/>and of their Murcko scaffolds"]
