@@ -66,7 +66,6 @@ class ReferenceMatch(ScoreComponent):
         *,
         shared: SharedFitState,
         library: ReferenceLibrary,
-        **_: Any,
     ) -> ReferenceMatch:
         """Bind to a reference library (its keys are computed by ``build``).
 
@@ -92,7 +91,7 @@ class ReferenceMatch(ScoreComponent):
         self._finish_fit(t0)
         return self
 
-    def run(self, query: pd.DataFrame, **_: Any) -> ReferenceMatchRunResult:
+    def run(self, query: pd.DataFrame) -> ReferenceMatchRunResult:
         """Flag each query that matches a library molecule or scaffold.
 
         Parameters
