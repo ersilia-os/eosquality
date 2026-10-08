@@ -25,7 +25,7 @@ Saved artifacts record the following in `reference_mode/shared/metadata.json`:
 - `format_version` (the on-disk layout and score semantics; currently 11)
 - `library_path` (for custom libraries)
 
-The training modality is versioned separately: `training_mode/training_sets/metadata.json` holds `training_format_version` (currently 12). Adding or changing the training modality therefore never invalidates reference artifacts.
+The training modality is versioned separately: `training_mode/training_sets/metadata.json` holds `training_format_version` (currently 13). Adding or changing the training modality therefore never invalidates reference artifacts.
 
 `ErsiliaQuality.load` rejects artifacts in these cases:
 - the format version is different, or the folder uses the old flat layout (no `reference_mode/` / `training_mode/`) → `ArtifactVersionError`; refit;

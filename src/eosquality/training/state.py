@@ -7,7 +7,7 @@ an :class:`~eosquality.quality.ErsiliaQuality` artifacts folder)::
     columns.json         # per column: its index folder, n
     arrays.npz           # per column: ids
     indices/c000/ …      # one VectorIndex folder per distinct molecule set
-                         # (vector_index.h5, knn_*.npy, smiles.csv, metadata.json)
+                         # (vector_index.h5, knn_distances.npy, smiles.csv, metadata.json)
 
 Columns measured on the same molecules (one screening panel) share an index.
 Each index is built with :meth:`VectorIndex.build`, whose
@@ -36,7 +36,7 @@ SUBFOLDER = "training_sets"
 # Bump when the meaning or layout of training_sets/ changes. Independent of
 # ARTIFACT_FORMAT_VERSION so reference-only artifacts are unaffected. History:
 # git log.
-TRAINING_FORMAT_VERSION = 12
+TRAINING_FORMAT_VERSION = 13
 # Neighbours precomputed per training molecule (capped by column size).
 TRAINING_MAX_K = 10
 

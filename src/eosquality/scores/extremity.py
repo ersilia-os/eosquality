@@ -34,10 +34,7 @@ from typing import Any
 import numpy as np
 
 from eosquality.scores._base import require_file
-from eosquality.scores._helpers import (
-    _cdf_score,
-    _nan_aggregate,
-)
+from eosquality.scores._helpers import _cdf_score
 from eosquality.scores._percentile_score import PercentileScore
 
 SUBFOLDER = "extremity"
@@ -64,7 +61,7 @@ class Extremity(PercentileScore):
         self._column_tables: dict[str, np.ndarray] | None = None
 
     def _per_feature(self, scaled: np.ndarray) -> np.ndarray:
-        return np.minimum(np.abs(scaled), 1.0)
+        return per_feature_extremity(scaled)
 
     def _percentiles(self, scaled: np.ndarray, per_feature: np.ndarray) -> np.ndarray:
         assert self._column_tables is not None
@@ -111,38 +108,22 @@ class Extremity(PercentileScore):
 # ---------------------------------------------------------------------------
 
 
-def compute_extremity(
-    scaled_values: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute per-feature and aggregate extremity from eosframes-scaled values.
+def per_feature_extremity(scaled: np.ndarray) -> np.ndarray:
+    """``min(|scaled|, 1)`` of eosframes-scaled values; NaN stays NaN.
+
+    0 at a column's centre, 1 at (or beyond) the rails.
 
     Parameters
     ----------
-    scaled_values:
-        ``(n_query, n_features)`` float array produced by the eosframes
-        scaler (the output of :meth:`PreprocessPipeline.transform`).
+    scaled : numpy.ndarray
+        ``(n, n_features)`` output of :meth:`PreprocessPipeline.transform`.
 
     Returns
     -------
-    per_feature:
-        ``(n_query, n_features)`` extremity in ``[0, 1]``. NaN inputs stay
-        NaN.
-    aggregate:
-        ``(n_query,)`` 66th-percentile of ``per_feature`` across features
-        (see ``AGGREGATE_QUANTILE``), ignoring NaN. The shift away from
-        the mean prevents the aggregate from collapsing to the
-        per-feature expectation as ``n_features`` grows; downstream CDF
-        calibration in :meth:`Extremity.run` further re-spreads it to
-        uniform under the reference. A query whose every feature is NaN
-        returns NaN.
+    numpy.ndarray
+        ``(n, n_features)`` in ``[0, 1]``.
     """
-    n_query = scaled_values.shape[0]
-    n_features = scaled_values.shape[1] if scaled_values.ndim > 1 else 0
-    if n_features == 0:
-        return np.zeros((n_query, 0)), np.full(n_query, np.nan)
-
-    per_feature = np.minimum(np.abs(scaled_values), 1.0)
-    return per_feature, _nan_aggregate(per_feature)
+    return np.minimum(np.abs(scaled), 1.0)
 
 
 def _column_table(values: np.ndarray) -> np.ndarray:

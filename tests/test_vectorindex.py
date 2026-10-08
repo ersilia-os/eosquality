@@ -16,7 +16,6 @@ def test_build_writes_the_index_folder(built):
     _, folder = built
     assert sorted(p.name for p in folder.iterdir()) == [
         "knn_distances.npy",
-        "knn_indices.npy",
         "metadata.json",
         "smiles.csv",
         "vector_index.h5",
@@ -27,16 +26,17 @@ def test_load_gives_the_same_index(built, smiles):
     vi, folder = built
     loaded = VectorIndex.load(folder)
     assert loaded.smiles == vi.smiles == smiles[:100]
-    np.testing.assert_array_equal(loaded.self_knn_indices(5), vi.self_knn_indices(5))
     np.testing.assert_array_equal(
         loaded.self_knn_distances(3), vi.self_knn_distances(5)[:, :3]
     )
     assert loaded.index_dir == folder
 
 
-def test_self_knn_excludes_self(built):
-    idx = built[0].self_knn_indices(5)
-    assert (idx != np.arange(len(idx))[:, None]).all()
+def test_self_knn_distances_leave_the_molecule_itself_out(built, smiles):
+    """The nearest *other* molecule is never at distance 0 for unique molecules."""
+    distances = built[0].self_knn_distances(5)
+    assert distances.shape == (100, 5) and (distances > 0).all()
+    assert (np.diff(distances, axis=1) >= 0).all()
 
 
 def test_query_finds_a_molecule_as_its_own_nearest(built, smiles):
@@ -49,7 +49,7 @@ def test_query_finds_a_molecule_as_its_own_nearest(built, smiles):
 
 def test_k_beyond_the_precomputed_depth_is_refused(built):
     with pytest.raises(ValueError, match="exceeds the pre-computed max_k=5"):
-        built[0].self_knn_indices(6)
+        built[0].self_knn_distances(6)
 
 
 def test_build_needs_unique_smiles_and_enough_molecules(tmp_path, smiles):

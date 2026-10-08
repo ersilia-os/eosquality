@@ -35,8 +35,9 @@ class VectorIndex:
     ----------
     smiles : list of str
         The molecules, in index row order.
-    knn_indices, knn_distances : numpy.ndarray
-        ``(n, max_k)`` self-kNN (each molecule's own row stripped).
+    knn_distances : numpy.ndarray
+        ``(n, max_k)`` Tanimoto distances to each molecule's nearest *other*
+        molecules, closest first.
     h5_path : pathlib.Path
         The FPSim2 database inside the index folder.
     config : dict
@@ -46,13 +47,11 @@ class VectorIndex:
     def __init__(
         self,
         smiles: list[str],
-        knn_indices: np.ndarray,
         knn_distances: np.ndarray,
         h5_path: pathlib.Path,
         config: dict,
     ) -> None:
         self._smiles = smiles
-        self._knn_indices = knn_indices  # (n, max_k)
         self._knn_distances = knn_distances  # (n, max_k)
         self._h5_path = h5_path
         self._config = config
@@ -73,9 +72,8 @@ class VectorIndex:
     ) -> VectorIndex:
         """Build a VectorIndex from unique SMILES and persist it to ``output_dir``.
 
-        Writes ``vector_index.h5`` (FPSim2 database), ``knn_indices.npy`` and
-        ``knn_distances.npy`` (self-kNN, identity stripped), ``smiles.csv`` and
-        ``metadata.json``.
+        Writes ``vector_index.h5`` (FPSim2 database), ``knn_distances.npy`` (the
+        self-kNN distances, identity stripped), ``smiles.csv`` and ``metadata.json``.
 
         Parameters
         ----------
@@ -106,8 +104,7 @@ class VectorIndex:
             {"radius": radius, "fpSize": n_bits},
         )
         engine = FPSim2Engine(str(h5_path), in_memory_fps=True)
-        knn_indices, knn_distances = _self_knn(engine, smiles, max_k)
-        np.save(output_dir / "knn_indices.npy", knn_indices)
+        knn_distances = _self_knn_distances(engine, smiles, max_k)
         np.save(output_dir / "knn_distances.npy", knn_distances)
         (output_dir / "smiles.csv").write_text(
             "smiles\n" + "".join(f"{s}\n" for s in smiles)
@@ -124,7 +121,7 @@ class VectorIndex:
             f"vector index | {len(smiles):,} molecules | max_k={max_k} | "
             f"{time.perf_counter() - t0:.2f}s"
         )
-        index = cls(smiles, knn_indices, knn_distances, h5_path, config)
+        index = cls(smiles, knn_distances, h5_path, config)
         index._engine = engine
         return index
 
@@ -150,7 +147,6 @@ class VectorIndex:
         # Memory-mapped: the full (n, max_k) arrays never need to be resident.
         return cls(
             smiles=smiles,
-            knn_indices=np.load(index_dir / "knn_indices.npy", mmap_mode="r"),
             knn_distances=np.load(index_dir / "knn_distances.npy", mmap_mode="r"),
             h5_path=index_dir / "vector_index.h5",
             config=config,
@@ -179,20 +175,6 @@ class VectorIndex:
         list of str
         """
         return self._smiles
-
-    def self_knn_indices(self, k: int) -> np.ndarray:
-        """Precomputed self-kNN indices ``(n, k)``, closest first (int32).
-
-        Parameters
-        ----------
-        k : int
-            Neighbours per molecule; at most ``max_k``.
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        return np.ascontiguousarray(self._knn_indices[:, : self._check_k(k)])
 
     def self_knn_distances(self, k: int) -> np.ndarray:
         """Precomputed self-kNN Tanimoto distances ``(n, k)``, closest first (float32).
@@ -310,17 +292,13 @@ def _check_build_inputs(smiles: list[str], max_k: int) -> None:
         )
 
 
-def _self_knn(
+def _self_knn_distances(
     engine: FPSim2Engine, smiles: list[str], max_k: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Each molecule's ``max_k`` nearest *other* molecules and their distances."""
-    n = len(smiles)
-    knn_indices = np.zeros((n, max_k), dtype=np.int32)
-    knn_distances = np.zeros((n, max_k), dtype=np.float32)
+) -> np.ndarray:
+    """Distances from each molecule to its ``max_k`` nearest *other* molecules."""
+    distances = np.zeros((len(smiles), max_k), dtype=np.float32)
     for i, smi in enumerate(smiles):
         hits = engine.top_k(smi, k=max_k + 1, threshold=0.0, n_workers=_QUERY_WORKERS)
-        mol_ids = hits["mol_id"].astype(np.int32)
-        not_self = mol_ids != i
-        knn_indices[i] = mol_ids[not_self][:max_k]
-        knn_distances[i] = 1.0 - hits["coeff"].astype(np.float32)[not_self][:max_k]
-    return knn_indices, knn_distances
+        not_self = hits["mol_id"] != i
+        distances[i] = 1.0 - hits["coeff"].astype(np.float32)[not_self][:max_k]
+    return distances
