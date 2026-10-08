@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 
 from eosquality._registry import TRAINING_ORDER, score_name
-from eosquality.scores._training_helpers import TrainingQuery
+from eosquality.scores._helpers import query_keys
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.scores.training_distance import TrainingDistance
 from eosquality.scores.training_match import TrainingMatch
 from eosquality.scores.training_physchem import TrainingPhyschem
@@ -71,7 +72,7 @@ def load_training_sets(training_sets, output_columns=None) -> dict:
     with console.section("Training sets") as section:
         with steps("Load and standardise the training sets") as st:
             columns = load_training(training_sets, output_columns)
-            st.summary = f"{len(columns)} column(s)"
+            st.summary = console.plural(len(columns), "column")
         console.table(
             ("column", "molecules", "unparsable"),
             [
@@ -90,7 +91,7 @@ def load_training_sets(training_sets, output_columns=None) -> dict:
                     )
                 ]
             )
-        section.summary = f"{len(columns)} column(s)"
+        section.summary = console.plural(len(columns), "column")
     return columns
 
 
@@ -189,7 +190,7 @@ def fit_training_modality(
                 component = cls().fit(training=eq._training, shared=eq._shared)
                 setattr(eq, name, component)
                 st.summary = component.fit_summary
-        section.summary = f"{len(columns)} column(s)"
+        section.summary = console.plural(len(columns), "column")
 
 
 def _assemble_details(
@@ -215,12 +216,9 @@ def _assemble_details(
     if details is None:
         if not extras:
             return None
-        keys = (
-            query["key"].astype(str).tolist()
-            if "key" in query.columns
-            else [str(i) for i in query.index]
+        details = pd.DataFrame(
+            {"key": query_keys(query), "input": query["input"].tolist()}
         )
-        details = pd.DataFrame({"key": keys, "input": query["input"].tolist()})
     for name, values in extras.items():
         details[name] = np.asarray(values)
     ordered = [c for c in _DETAILS_ORDER if c in details.columns]
@@ -235,7 +233,11 @@ def _emit(columns: dict, extras: dict, *series: pd.Series) -> None:
 
 
 def run_training(
-    eq, query: pd.DataFrame, columns: dict[str, pd.Series], metadata: dict[str, Any]
+    eq,
+    query: pd.DataFrame,
+    columns: dict[str, pd.Series],
+    metadata: dict[str, Any],
+    features: QueryFeatures | None = None,
 ) -> pd.DataFrame | None:
     """Run the fitted training components, filling ``columns`` and ``metadata``.
 
@@ -254,6 +256,9 @@ def run_training(
         Score columns, updated in place.
     metadata : dict
         Run metadata, updated in place.
+    features : QueryFeatures, optional
+        The query's features, shared with the reference match (built from
+        ``query`` when omitted).
 
     Returns
     -------
@@ -271,7 +276,8 @@ def run_training(
     steps = console.Steps(len(fitted))
     details = None
     extras: dict[str, Any] = {}
-    features = TrainingQuery.from_frame(query)
+    if features is None:
+        features = QueryFeatures.from_frame(query)
     n_bad = features.n_rows - len(features.smiles)
     if n_bad and eq._shared is None:  # the reference modality already warned
         logger.warning(

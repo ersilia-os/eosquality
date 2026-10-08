@@ -23,6 +23,7 @@ ABBREV = {
 
 def plot_heatmap(ax, corr, labels, cmap):
     """Draw an annotated correlation heatmap.
+
     Parameters
     ----------
     ax : matplotlib.axes.Axes
@@ -37,7 +38,15 @@ def plot_heatmap(ax, corr, labels, cmap):
     colors = np.asarray(cmap.transform(corr.ravel())).reshape(*corr.shape, -1)
     ax.imshow(colors)
     for (r, c), v in np.ndenumerate(corr):
-        ax.text(c, r, f"{v:.2f}", ha="center", va="center")
+        luminance = colors[r, c][:3] @ [0.299, 0.587, 0.114]
+        ax.text(
+            c,
+            r,
+            f"{v:.2f}",
+            ha="center",
+            va="center",
+            color="white" if luminance < 0.5 else "black",
+        )
     ax.set_xticks(range(len(labels)), labels)
     ax.set_yticks(range(len(labels)), labels)
     ax.grid(False)

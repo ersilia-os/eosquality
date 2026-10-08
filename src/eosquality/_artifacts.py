@@ -186,22 +186,23 @@ def load(eq_cls, path: str | pathlib.Path) -> ErsiliaQuality:
     if has_reference:
         _load_reference(instance, folder / REFERENCE_DIR)
     if has_training:
-        root = folder / TRAINING_DIR
-        instance._training = load_training_state(root)
-        for cls in (TrainingDistance, TrainingPhyschem, TrainingMatch):
-            if (root / cls.NAME).is_dir():
-                setattr(
-                    instance,
-                    cls.NAME,
-                    cls.load(
-                        root, shared=instance._shared, training=instance._training
-                    ),
-                )
+        _load_training(instance, folder / TRAINING_DIR)
     instance.is_fitted_ = True
     logger.success(
         f"Artifacts loaded from {folder} | modalities={instance.modalities_}"
     )
     return instance
+
+
+def _load_training(instance, root: pathlib.Path) -> None:
+    """Fill ``instance`` with the training modality stored under ``root``."""
+    instance._training = load_training_state(root)
+    for cls in (TrainingDistance, TrainingPhyschem, TrainingMatch):
+        if (root / cls.NAME).is_dir():
+            component = cls.load(
+                root, shared=instance._shared, training=instance._training
+            )
+            setattr(instance, cls.NAME, component)
 
 
 def _load_reference(instance, root: pathlib.Path) -> None:

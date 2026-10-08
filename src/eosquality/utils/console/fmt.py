@@ -8,6 +8,24 @@ import psutil
 from rich.markup import escape
 
 
+def plural(n: int, word: str) -> str:
+    """``n`` and ``word``, pluralised with an ``s`` unless ``n`` is 1.
+
+    Parameters
+    ----------
+    n : int
+        The count.
+    word : str
+        The singular noun.
+
+    Returns
+    -------
+    str
+        E.g. ``"1 column"``, ``"3 columns"``.
+    """
+    return f"{n:,} {word}" if n == 1 else f"{n:,} {word}s"
+
+
 def path(value, keep: int = 3) -> str:
     """Render a path compactly (``~/runs/art`` or ``…/a/b/c``), markup-escaped.
 

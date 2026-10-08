@@ -70,6 +70,9 @@ def run_command(fn, *, verbose: bool, command: str, jobs: int | None = None) -> 
     except CliError as exc:
         console.echo(f"[bold red]error:[/] {console.plain(exc)}", "error")
         ctx.exit(1)
+    except KeyboardInterrupt:
+        console.echo("[bold red]interrupted[/]", "error")
+        ctx.exit(130)
     except Exception as exc:  # anything unexpected still exits cleanly with status 1
         console.echo(f"[bold red]error:[/] {console.plain(exc)}", "error")
         if verbose:

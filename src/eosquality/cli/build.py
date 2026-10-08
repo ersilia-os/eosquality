@@ -90,7 +90,6 @@ def build(
     verbose : bool
         Print debug messages.
     """
-
     run_command(
         lambda: _build(input_path, output, name, max_samples),
         verbose=verbose,

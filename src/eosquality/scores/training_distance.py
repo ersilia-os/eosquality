@@ -1,4 +1,4 @@
-"""Training distance: how far is the query from the model's training molecules?
+"""Training distance: how far the query is from the model's training molecules.
 
 Training mode, X only. One value per molecule for the whole model, built
 from the output columns' training sets without pooling them:
@@ -41,11 +41,11 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._base import ScoreComponent, read_json, require_file
-from eosquality.scores._helpers import _cdf_score, _sorted_finite
+from eosquality.scores._helpers import _cdf_score, _sorted_finite, query_keys
 from eosquality.scores._training_helpers import (
     K_NEIGHBORS,
     SUMMARY_QUANTILE,
-    TrainingQuery,
+    QueryFeatures,
     _columns_summary,
 )
 from eosquality.shared.state import SharedFitState
@@ -127,7 +127,7 @@ class TrainingDistance(ScoreComponent):
         return self
 
     def run(
-        self, query: pd.DataFrame, features: TrainingQuery | None = None
+        self, query: pd.DataFrame, features: QueryFeatures | None = None
     ) -> TrainingDistanceRunResult:
         """Distance of each query to every column's training set.
 
@@ -136,7 +136,7 @@ class TrainingDistance(ScoreComponent):
         query : pandas.DataFrame
             Needs an ``input`` SMILES column; ``key`` (if present) labels the
             rows of the details table.
-        features : TrainingQuery, optional
+        features : QueryFeatures, optional
             The query's features, shared with the other training scores (built from
             ``query`` when omitted).
 
@@ -149,13 +149,9 @@ class TrainingDistance(ScoreComponent):
         assert self._training is not None and self._k is not None
         assert self._loo is not None
         if features is None:
-            features = TrainingQuery.from_frame(query)
+            features = QueryFeatures.from_frame(query)
         idx = list(query.index)
-        keys = (
-            query["key"].astype(str).tolist()
-            if "key" in query.columns
-            else [str(i) for i in idx]
-        )
+        keys = query_keys(query)
         rows = features.rows
         names = self._training.column_names
         raw = np.full((len(query), len(names)), np.nan)
@@ -204,7 +200,7 @@ class TrainingDistance(ScoreComponent):
             },
         )
 
-    def _per_column(self, features: TrainingQuery | list[str]):
+    def _per_column(self, features: QueryFeatures | list[str]):
         """Per-column raw and calibrated distances for standardised SMILES.
 
         Returns ``(raw (n, n_columns), calibrated (n, n_columns),
@@ -213,8 +209,8 @@ class TrainingDistance(ScoreComponent):
         """
         assert self._training is not None and self._k is not None
         assert self._loo is not None
-        if not isinstance(features, TrainingQuery):
-            features = TrainingQuery(features)
+        if not isinstance(features, QueryFeatures):
+            features = QueryFeatures(features)
         names = self._training.column_names
         raw = np.full((len(features.smiles), len(names)), np.nan)
         calibrated = np.full_like(raw, np.nan)
@@ -292,7 +288,7 @@ class TrainingDistance(ScoreComponent):
 def _neighbours(columns, neighbours) -> dict[str, list]:
     """The ``nn_*`` details columns for the valid queries, in row order.
 
-    Each column's nearest training molecules are pooled, deduplicated by
+    Each column's nearest training molecules are merged, deduplicated by
     standardised SMILES (a molecule in several training sets keeps the key of
     its first column and lists every column it belongs to) and the
     ``K_NEIGHBORS`` closest are kept.

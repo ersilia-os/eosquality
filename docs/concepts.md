@@ -178,7 +178,7 @@ Three implementation details, each with a reason:
   the same information without assuming the distances are normal. The mapping
   is direct: on eos4e40 `Z = 0.5` falls at the 65th percentile of the training
   distribution, `Z = 1.0` at the 81st, `Z = 2.0` at the 100th — so
-  `trn_tanimoto_pct <= 0.65` reproduces the conventional flag.
+  `trn_tanimoto_pct <= 0.35` (one minus the distance percentile) reproduces the conventional flag.
 
 **An ellipsoid-style measure was implemented first and removed.** Hotelling's
 T² and DModX on physchem principal components were tried, and were more
@@ -196,7 +196,7 @@ identical"). Empirically, a thresholded Mahalanobis-to-centroid domain made
 external Q² *worse* than applying no domain at all, 0.797 → 0.791, while
 discarding 6 of 95 test compounds — and the model there was a radial-basis
 neural network, so this is a non-linear case rather than a linear-model
-artefact (Sahigara et al., *J. Cheminform.* 2013, 5, 27). The trade is
+artifact (Sahigara et al., *J. Cheminform.* 2013, 5, 27). The trade is
 deliberate: less orthogonality, better evidential support.
 
 Honesty about how strong that support is: in the same table the *classical*
@@ -207,4 +207,4 @@ family, not a demonstration that k-NN domains earn their keep.
 **Cost.** The standardised training matrix is kept with the artifact, because
 a nearest-neighbour domain needs the reference molecules themselves, not a
 summary of them: about 34 MB for a 39,000-molecule column. Computing the
-descriptors runs at 3–5 ms per molecule.
+descriptors runs at about 6 ms per molecule.

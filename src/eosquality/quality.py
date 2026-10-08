@@ -29,6 +29,7 @@ from eosquality.exceptions import (
 )
 from eosquality.results import RunResult
 from eosquality.schema.infer import infer_schema
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.reference_match import ReferenceMatch
 from eosquality.scores.training_distance import TrainingDistance
@@ -207,13 +208,16 @@ class ErsiliaQuality:
         columns: dict[str, pd.Series] = {}
         metadata: dict[str, Any] = {}
         reference_details = None
+        features = None  # standardised once, for the match and training scores
+        if needs_input_col:
+            features = QueryFeatures.from_frame(query)
         if self._shared is not None:
             reference_details = _reference_modality.run_reference(
-                self, query, components, columns, metadata
+                self, query, components, columns, metadata, features
             )
 
         training_details = _training_modality.run_training(
-            self, query, columns, metadata
+            self, query, columns, metadata, features
         )
 
         scores_df = pd.DataFrame(columns, index=list(query.index))
@@ -233,10 +237,6 @@ class ErsiliaQuality:
             training_details=training_details,
             reference_details=reference_details,
         )
-
-    # ------------------------------------------------------------------
-    # Save / load
-    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Save / load
@@ -286,9 +286,7 @@ class ErsiliaQuality:
         Schema
             Reference modality only.
         """
-        self._check_fitted()
-        assert self._shared is not None
-        return self._shared.schema
+        return self._require_reference().schema
 
     @property
     def reference_typicality_(self) -> float:
@@ -340,9 +338,7 @@ class ErsiliaQuality:
         FitMetadata
             Reference modality only.
         """
-        self._check_fitted()
-        assert self._shared is not None
-        return self._shared.metadata
+        return self._require_reference().metadata
 
     @property
     def shared_(self) -> SharedFitState:
@@ -353,13 +349,20 @@ class ErsiliaQuality:
         SharedFitState
             Schema, scaler, selected columns and the scaled reference.
         """
-        self._check_fitted()
-        assert self._shared is not None
-        return self._shared
+        return self._require_reference()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _require_reference(self) -> SharedFitState:
+        """The shared state, or :class:`NotFittedError` without a reference fit."""
+        self._check_fitted()
+        if self._shared is None:
+            raise NotFittedError(
+                "The reference modality is not fitted (fit with a reference CSV)."
+            )
+        return self._shared
 
     def _log_fit_done(self, t_start: float) -> None:
         """Log the ``Fit complete`` line with the fitted scores and the elapsed time."""

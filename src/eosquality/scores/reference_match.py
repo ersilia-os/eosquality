@@ -32,8 +32,8 @@ import pandas as pd
 
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.scores._base import ScoreComponent, read_json
-from eosquality.scores._helpers import _standardize_all
-from eosquality.scores._match_keys import _flags, _layers
+from eosquality.scores._match_keys import _flags
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.shared.state import SharedFitState
 
 SUBFOLDER = "match"
@@ -91,13 +91,18 @@ class ReferenceMatch(ScoreComponent):
         self._finish_fit(t0)
         return self
 
-    def run(self, query: pd.DataFrame) -> ReferenceMatchRunResult:
+    def run(
+        self, query: pd.DataFrame, features: QueryFeatures | None = None
+    ) -> ReferenceMatchRunResult:
         """Flag each query that matches a library molecule or scaffold.
 
         Parameters
         ----------
         query : pandas.DataFrame
             Needs an ``input`` SMILES column.
+        features : QueryFeatures, optional
+            The query's features, shared with the other scores (built from
+            ``query`` when omitted).
 
         Returns
         -------
@@ -105,10 +110,10 @@ class ReferenceMatch(ScoreComponent):
         """
         self._check_fitted()
         molecules_known, scaffolds_known = self._resolve_library().match_keys()
-        smiles = _standardize_all(list(query["input"]))
-        rows = np.array([i for i, s in enumerate(smiles) if s], dtype=int)
-        standardised = [smiles[i] for i in rows]
-        molecules, scaffolds = _layers(standardised, "query InChIKey layers")
+        if features is None:
+            features = QueryFeatures.from_frame(query)
+        rows = np.asarray(features.rows, dtype=int)
+        molecules, scaffolds = features.layers
         idx = list(query.index)
         match = pd.Series(pd.NA, index=range(len(idx)), dtype="Int64")
         scaffold = match.copy()

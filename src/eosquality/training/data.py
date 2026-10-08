@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cache, cached_property
 
 import numpy as np
 import pandas as pd
@@ -20,6 +20,7 @@ import pandas as pd
 from eosquality.exceptions import SchemaError
 from eosquality.scores._helpers import _standardize_all
 from eosquality.utils.logging import logger
+from eosquality.utils.parallel import map_rows
 
 # Columns with fewer training molecules than this are skipped: their
 # leave-one-out calibration would have steps coarser than ~5%.
@@ -192,21 +193,48 @@ def _standardize_files(frames: dict[str, pd.DataFrame]) -> dict[str, str | None]
     return dict(zip(distinct, _standardize_all(distinct), strict=True))
 
 
-def _fingerprints(smiles: set[str]) -> dict[str, bytes]:
-    """The Morgan fingerprint (the index's radius and size) of each SMILES."""
-    from rdkit import Chem
+@cache
+def _morgan_generator():
+    """The Morgan fingerprint generator with the index's radius and size."""
     from rdkit.Chem import rdFingerprintGenerator
 
     from eosquality.vectorindex import N_BITS_DEFAULT, RADIUS_DEFAULT
 
-    generator = rdFingerprintGenerator.GetMorganGenerator(
+    return rdFingerprintGenerator.GetMorganGenerator(
         radius=RADIUS_DEFAULT, fpSize=N_BITS_DEFAULT
     )
-    out = {}
-    for smi in smiles:
-        mol = Chem.MolFromSmiles(smi)
-        out[smi] = generator.GetFingerprint(mol).ToBinary() if mol else smi.encode()
-    return out
+
+
+def _fingerprint(smi: str) -> bytes:
+    """The Morgan fingerprint of one SMILES, as bytes (the SMILES if unparsable)."""
+    from rdkit import Chem
+
+    mol = Chem.MolFromSmiles(smi)
+    return _morgan_generator().GetFingerprint(mol).ToBinary() if mol else smi.encode()
+
+
+def _fingerprints(smiles: set[str]) -> dict[str, bytes]:
+    """The Morgan fingerprint (the index's radius and size) of each SMILES.
+
+    Parallel inside ``workers``.
+    """
+    distinct = sorted(smiles)
+    out = np.empty(len(distinct), dtype=object)
+    map_rows(_fingerprint, distinct, out, label="fingerprints")
+    return dict(zip(distinct, out.tolist(), strict=True))
+
+
+def _first_of_each_fingerprint(
+    smiles: list[str], fingerprints: dict[str, bytes]
+) -> list[int]:
+    """Positions of the first molecule of every distinct fingerprint, in order."""
+    seen: set[bytes] = set()
+    keep = []
+    for i, smi in enumerate(smiles):
+        if fingerprints[smi] not in seen:
+            seen.add(fingerprints[smi])
+            keep.append(i)
+    return keep
 
 
 def _load_column(
@@ -233,12 +261,7 @@ def _load_column(
     n_dupes = len(table) - len(all_smiles)
     if n_dupes:
         logger.info(f"training | column {name!r}: {n_dupes} duplicate rows merged")
-    seen: set[bytes] = set()
-    keep = [
-        i
-        for i, smi in enumerate(all_smiles)
-        if not (fingerprints[smi] in seen or seen.add(fingerprints[smi]))
-    ]
+    keep = _first_of_each_fingerprint(all_smiles, fingerprints)
     if len(keep) < len(all_smiles):
         logger.info(
             f"training | column {name!r}: {len(all_smiles):,} molecules, "

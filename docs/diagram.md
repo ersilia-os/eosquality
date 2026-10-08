@@ -26,7 +26,7 @@ flowchart LR
     LD --> SEL["select ≤ max_features columns<br/>(the reference's selection, or<br/>least-overlapping training sets)"]
     SEL --> IDX["<b>training/</b><br/>a Morgan index per distinct training set<br/>(self-kNN = leave-one-out)"]
     IDX --> TD["<b>Training distance</b> (trn_tanimoto)<br/>mean Morgan distance to the 5 nearest<br/>training molecules per column,<br/>Q66 → one value (pct + raw)"]
-    LD --> TP["<b>Training physchem</b> (trn_physchem)<br/>217 descriptors, library scaler, clip ±10<br/>mean distance to the 5 nearest per column,<br/>Q66 → one value (pct + raw)"]
+    LD --> TP["<b>Training physchem</b> (trn_physchem)<br/>217 descriptors (read from the library cache when it has the molecule), library scaler, clip ±10<br/>mean distance to the 5 nearest per column,<br/>Q66 → one value (pct + raw)"]
     LD --> TM["<b>Training match</b> (trn_match, trn_scaffold)<br/>connectivity layers of the molecules<br/>and of their Murcko scaffolds"]
 ```
 
@@ -37,8 +37,8 @@ flowchart LR
     Q["Query predictions<br/><i>key, input, outputs…</i>"] --> SCALE["validate schema<br/>scale + select features<br/>(once)"]
     LIB[("Reference library<br/>connectivity keys")] --> MAT
     SCALE --> TYP[Typicality] & EXT[Extremity]
-    Q -- SMILES --> MAT["Match<br/>standardise · connectivity layers<br/>set lookup"]
-    Q -- SMILES --> TQ["TrainingQuery (once)<br/>standardise · physchem<br/>per-column kNN"]
+    Q -- SMILES --> TQ["Query features (once)<br/>standardise · InChIKey layers<br/>physchem · per-column kNN"]
+    TQ --> MAT["Match<br/>set lookup in the library keys"]
     TQ --> TDR["Training distance<br/>per column → 66th percentile"]
     TQ --> TPH["Training physchem<br/>per column → 66th percentile"]
     TQ --> TMA["Training match<br/>connectivity-layer lookup"]

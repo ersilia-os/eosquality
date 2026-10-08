@@ -1,6 +1,6 @@
 # Project status
 
-**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 12, training format 13. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
+**Status:** package `0.1.0`, library `ersilia_reference_library_v0` (1,355,109 molecules), artifact format 12, training format 14. The project is a work in progress. Typicality and extremity are functional and calibrated, and the reference and training match flags are exact lookups.
 
 ## Example results
 
@@ -16,7 +16,7 @@ The example models and query sets are those of `scripts/run_all_scores.sh`: it f
 
 The query sets, and how many of their molecules the reference library holds (`ref_match` / `ref_scaffold`, the same for every model):
 
-| query set | `ref_match` = 1 | `ref_scaffold` = 1 | no scaffold (NA) |
+| query set | `ref_match` = 1 | `ref_scaffold` = 1 (of molecules with a scaffold) | no scaffold (NA) |
 |---|---|---|---|
 | Library sample | 100% | 100% | 0.4% |
 | Drugs | 71% | 92% | 10% |
@@ -31,13 +31,13 @@ The query sets, and how many of their molecules the reference library holds (`re
 ![Reference calibration](figures/reference_calibration.png)
 ![Score distributions](figures/score_distributions.png)
 
-**Typicality is smooth.** The density is interpolated between int8 levels, so the percentile varies continuously with the value (about 800 distinct values per 1,000 molecules for the one-output models, against about 130 when each value was rounded to a level). Exact ties remain where the outputs themselves tie (a binary or constant column).
+**Typicality is smooth.** The density is interpolated between int8 levels, so the percentile varies continuously with the value (about 770–990 distinct values per 1,000 molecules for the one-output models, against about 130 when each value was rounded to a level). Exact ties remain where the outputs themselves tie (a binary or constant column).
 
-**Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.59 and −0.38).
+**Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95, over all query sets: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.60 and −0.36).
 
 ![Score correlations](figures/score_correlations.png)
 
-**Cost.** On eos4e40, `fit` with reference and training sets takes about 11 s and `run` on 1,000 molecules about 9 s, with the RDKit descriptors spread over the cores (`-j`). The largest training sets cost most: the cytotoxicity model (3 columns of 39,000 molecules, one shared index) fits in about 2.5 minutes, the ADMET panel (10 selected columns) in about a minute. `eosquality build` of the 1.35M-molecule library takes about 3.5 minutes. The artifacts are 25–115 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (11 MB each for typicality and extremity).
+**Cost.** On eos4e40, `fit` with reference and training sets takes about 13 s and `run` on 1,000 drugs about 11 s (about 4 s for molecules that are in the library, whose descriptors come from its cache), with the RDKit descriptors spread over the cores (`-j`). The largest training sets cost most: the cytotoxicity model (3 columns of 39,000 molecules, one shared index) fits in about 1.1 minutes, the ADMET panel (10 selected columns) in about 1.3 minutes. `eosquality build` of the 1.35M-molecule library takes about 30 minutes (the physchem descriptors dominate). The artifacts are 25–160 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (about 11 MB for typicality and 16 MB for extremity).
 
 ## Decisions to review
 
@@ -66,22 +66,12 @@ reference scores use only the columns that have a training set.
 
 ![Training-score distributions](figures/training_scores.png)
 
-Read that figure critically: against every example query set, including a
-sample of the reference library itself, the distance percentile (now published
-as the similarity `trn_tanimoto_pct`, one minus it) sits far from the training
-set's own typical value and often saturates. That is honest — the training sets hold a few
-thousand molecules against a 1.35M-molecule library, so almost any query is
-farther from them than their molecules are from each other — but it leaves
-the calibrated score with little resolution once everything is "far", which
-is why `trn_tanimoto_raw` is reported alongside it.
-Drugs are the closest set for eos4e40 (E. coli), whose training data is a
-drug-like screen; the synthetic set is the farthest for every model.
+Read that figure critically. The columns are the Tanimoto similarity percentile (`trn_tanimoto_pct`), the raw mean Tanimoto similarity (`trn_tanimoto_raw`) and the physchem similarity percentile (`trn_physchem_pct`). Against most query sets, including a sample of the reference library itself, the similarity percentile sits far below the training set's own typical value (the dashed 0.5 line) and often saturates near 0. That is honest: the training sets hold a few thousand molecules against a 1.35M-molecule library, so almost any query is farther from them than their molecules are from each other. It leaves the calibrated score with little resolution once everything is "far", which is why `trn_tanimoto_raw` is reported alongside it. Drugs are the closest set for eos4e40 (E. coli), whose training data is a drug-like screen; the synthetic set is the farthest for every model. The natural products fall outside every training set's physchem range, so `trn_physchem_pct` is near 0 for them.
 
 ## Open items
 
 Reference modality:
 
-- [ ] Build the match keys for the real library (`eosquality build`) and upload the library folder.
 - [ ] Raise the feature-selection cap from 10 to around 30 columns.
 - [ ] Decide on typicality/extremity redundancy (see Decisions to review).
 
@@ -90,7 +80,3 @@ Training modality:
 - [ ] `trn_tanimoto_pct` saturates near 0 against query sets that are all far
       from the training sets, so its calibrated form loses resolution exactly
       where a user most wants it. Consider a log companion.
-
-General:
-
-- [ ] Before pushing, check that CI passes on GitHub (`.github/workflows/ci.yml`).

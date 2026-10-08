@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from eosquality.scores._helpers import _row_nanquantile, _standardize_all
+from eosquality.scores._match_keys import _layers
 from eosquality.vectorindex import VectorIndex
 
 # Quantile across output columns for the whole-model value (the column
@@ -26,13 +27,13 @@ def _columns_summary(values: np.ndarray) -> np.ndarray:
     return _row_nanquantile(values, SUMMARY_QUANTILE)
 
 
-class TrainingQuery:
-    """Query features computed once per run and shared by the training scores.
+class QueryFeatures:
+    """Query features computed once per run and shared by the scores that need them.
 
-    Standardising SMILES, physchem descriptors and each
-    column's nearest-neighbour search are the costly steps of scoring; the
-    training scores need the same ones, so they are computed on first use and
-    cached here.
+    Standardising SMILES, the InChIKey layers, physchem descriptors and each
+    column's nearest-neighbour search are the costly steps of scoring; the match
+    and training scores need the same ones, so they are computed on first use
+    and cached here.
 
     Parameters
     ----------
@@ -54,10 +55,11 @@ class TrainingQuery:
         self.rows = np.arange(len(self.smiles)) if rows is None else rows
         self.n_rows = len(self.smiles) if n_rows is None else n_rows
         self._physchem: np.ndarray | None = None
+        self._layers: tuple[np.ndarray, np.ndarray] | None = None
         self._nearest: dict[str, tuple[int, tuple]] = {}
 
     @classmethod
-    def from_frame(cls, query: pd.DataFrame) -> TrainingQuery:
+    def from_frame(cls, query: pd.DataFrame) -> QueryFeatures:
         """Standardise the ``input`` column; unparsable rows are left out.
 
         Parameters
@@ -67,13 +69,26 @@ class TrainingQuery:
 
         Returns
         -------
-        TrainingQuery
+        QueryFeatures
         """
         if "input" not in query.columns:
             raise ValueError("The training scores need an 'input' SMILES column.")
         std = _standardize_all(list(query["input"]))
         rows = np.flatnonzero([s is not None for s in std])
         return cls([std[i] for i in rows], rows, len(query))
+
+    @property
+    def layers(self) -> tuple[np.ndarray, np.ndarray]:
+        """InChIKey connectivity layers of the molecules and of their scaffolds.
+
+        Returns
+        -------
+        tuple of numpy.ndarray
+            ``(molecules, scaffolds)``; the match keys of ``_match_keys``.
+        """
+        if self._layers is None:
+            self._layers = _layers(self.smiles, "query InChIKey layers")
+        return self._layers
 
     @property
     def physchem(self) -> np.ndarray:
@@ -124,7 +139,7 @@ class TrainingQuery:
 
 
 def _nearest_training(vi: VectorIndex, query_smiles: list[str], k: int):
-    """Top-k training neighbours of standardised SMILES (see ``TrainingQuery``).
+    """Top-k training neighbours of standardised SMILES (see ``QueryFeatures``).
 
     The index is searched for ``k + 1`` and one entry per query is dropped: the
     query's own entry when it is a training molecule (the same standardised

@@ -38,7 +38,7 @@ from eosquality.scores._match_keys import (
     save_keys,
     unique_keys,
 )
-from eosquality.scores._training_helpers import TrainingQuery
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.shared.state import SharedFitState
 from eosquality.training.state import TrainingFitState
 
@@ -97,7 +97,7 @@ class TrainingMatch(ScoreComponent):
         return self
 
     def run(
-        self, query: pd.DataFrame, features: TrainingQuery | None = None
+        self, query: pd.DataFrame, features: QueryFeatures | None = None
     ) -> TrainingMatchRunResult:
         """Flag each query that matches a training molecule or scaffold.
 
@@ -105,7 +105,7 @@ class TrainingMatch(ScoreComponent):
         ----------
         query : pandas.DataFrame
             Needs an ``input`` SMILES column.
-        features : TrainingQuery, optional
+        features : QueryFeatures, optional
             The query's standardised SMILES, shared with the other training
             scores (built from ``query`` when omitted).
 
@@ -116,8 +116,8 @@ class TrainingMatch(ScoreComponent):
         self._check_fitted()
         assert self._molecules is not None and self._scaffolds is not None
         if features is None:
-            features = TrainingQuery.from_frame(query)
-        molecules, scaffolds = _layers(features.smiles, "query InChIKey layers")
+            features = QueryFeatures.from_frame(query)
+        molecules, scaffolds = features.layers
         idx = list(query.index)
         match = pd.Series(pd.NA, index=range(len(idx)), dtype="Int64")
         scaffold = match.copy()

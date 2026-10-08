@@ -90,7 +90,8 @@ def split_exclude(exclude) -> tuple[set[str], set[str]]:
     unknown = sorted(names - set(ALL_SCORES))
     if unknown:
         raise ValueError(
-            f"Unknown score(s) {unknown}; choose from: {', '.join(ALL_SCORES)}."
+            f"Unknown score(s) {unknown}; choose from: {', '.join(ALL_SCORES)} "
+            "(`ref_match` and `trn_match` also control their `_scaffold` flags)."
         )
     components = {COMPONENTS[n] for n in names}
     return components & set(SCORE_ORDER), components & set(TRAINING_ORDER)

@@ -17,7 +17,8 @@ from eosquality.exceptions import SchemaError
 from eosquality.library.identity import LIBRARY_ID
 from eosquality.library.reference import ReferenceLibrary
 from eosquality.schema.infer import validate_against_schema
-from eosquality.scores._helpers import _make_query_repr
+from eosquality.scores._helpers import _make_query_repr, query_keys
+from eosquality.scores._training_helpers import QueryFeatures
 from eosquality.scores.extremity import Extremity
 from eosquality.scores.reference_match import ReferenceMatch
 from eosquality.scores.typicality import Typicality
@@ -60,7 +61,7 @@ def fit_reference(
     with console.section("Reference modality") as section:
         with steps("Validate reference predictions") as st:
             _validate_reference(reference)
-            st.summary = f"{len(reference):,} molecules · {len(requested)} score(s)"
+            st.summary = f"{len(reference):,} molecules · {console.plural(len(requested), 'score')}"
         logger.info(
             f"fit | eos_id={eos_id} version={version} scores=[{', '.join(requested)}]"
         )
@@ -83,7 +84,7 @@ def fit_reference(
                 max_features=max_features,
             )
             st.summary = (
-                f"{len(shared.schema.columns)} output(s) → "
+                f"{console.plural(len(shared.schema.columns), 'output')} → "
                 f"{len(shared.selected_columns)} selected"
             )
         eq._shared = shared
@@ -94,7 +95,7 @@ def fit_reference(
                 st.summary = getattr(getattr(eq, name), "fit_summary", None)
                 anchor = getattr(getattr(eq, name), "anchor_", None)
                 logger.info(f"score {name!r} | fitted | reference={anchor}")
-        section.summary = f"{len(requested)} score(s) fitted"
+        section.summary = f"{console.plural(len(requested), 'score')} fitted"
 
 
 def _is_canonical(lib: ReferenceLibrary, requested) -> bool:
@@ -131,6 +132,7 @@ def run_reference(
     components: dict[str, Any],
     columns: dict[str, pd.Series],
     metadata: dict[str, Any],
+    features: QueryFeatures | None = None,
 ) -> pd.DataFrame | None:
     """Run the reference-modality components, filling ``columns``/``metadata``.
 
@@ -146,6 +148,8 @@ def run_reference(
         Output score columns; filled in place.
     metadata : dict
         Run metadata; filled in place.
+    features : QueryFeatures, optional
+        The query's SMILES features, shared with the training scores.
 
     Returns
     -------
@@ -161,13 +165,14 @@ def run_reference(
             validate_against_schema(query, eq._shared.schema)
             query_repr = _make_query_repr(eq._shared, query)
             st.summary = (
-                f"{query_repr.shape[0]:,} molecules · {query_repr.shape[1]} feature(s)"
+                f"{query_repr.shape[0]:,} molecules · "
+                f"{console.plural(query_repr.shape[1], 'feature')}"
             )
         metadata["n_reference"] = eq._shared.metadata.n_samples
         for name, component in components.items():
             column = score_name(name)
             with steps(f"Score: {column}") as st:
-                result = _run_component(name, component, query, query_repr)
+                result = _run_component(name, component, query, query_repr, features)
                 st.summary = (
                     console.share_summary(result.match)
                     if name == "match"
@@ -185,7 +190,7 @@ def run_reference(
                     f"raw mean={float(result.score_raw.mean()):.4f}"
                 )
             metadata.update({f"{column}_{k}": v for k, v in result.metadata.items()})
-        section.summary = f"{len(components)} score(s)"
+        section.summary = console.plural(len(components), "score")
     return _reference_details(query, results) if results else None
 
 
@@ -205,12 +210,7 @@ def _reference_details(query: pd.DataFrame, results: dict[str, Any]) -> pd.DataF
         ``key``, ``input`` (when given), then per score and column the raw
         value and the percentile on that column's reference distribution.
     """
-    keys = (
-        query["key"].astype(str).tolist()
-        if "key" in query.columns
-        else [str(i) for i in query.index]
-    )
-    parts = {"key": keys}
+    parts = {"key": query_keys(query)}
     if "input" in query.columns:
         parts["input"] = query["input"].tolist()
     for name, result in results.items():
@@ -220,11 +220,11 @@ def _reference_details(query: pd.DataFrame, results: dict[str, Any]) -> pd.DataF
     return pd.DataFrame(parts)
 
 
-def _run_component(name, component, query, query_repr):
+def _run_component(name, component, query, query_repr, features):
     """Run one reference component with the precomputed shared inputs."""
     if name in ("typicality", "extremity"):
         return component.run(query, query_repr=query_repr)
-    return component.run(query)
+    return component.run(query, features)
 
 
 def validate_input_column(reference: pd.DataFrame) -> None:

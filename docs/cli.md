@@ -54,7 +54,7 @@ eosquality fit -r reference_eos4e40_v1.csv -a artifacts_eos4e40_v1/ --exclude re
 
 Sets eosquality up: fetches the canonical reference library folder (SMILES, metadata, match keys and the physchem descriptor cache, about 1.3 GB) from the public S3 bucket into `~/.eosquality/indices/<library>/`.
 
-This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched.
+This is the only command that uses the network. If a valid cached copy already exists, nothing is fetched. `EOSQUALITY_REFERENCE_BASE_URL` overrides the S3 source.
 
 | flag | default | |
 |---|---|---|
@@ -154,4 +154,4 @@ The output folder must not exist (an existing one is refused, as for `fit` and `
 
 ## Reproducing the example results
 
-`scripts/run_all_scores.sh` fits every reference score for every `data/fit_examples/emh_paper_<eos>_v1.csv`. It then scores every matching `data/run_examples/*_1000_<eos>_v1.csv` query set, writing artifacts and scores to `output/` (override with `OUT_DIR=`). The figure scripts in `scripts/figures/` read those CSVs (see [status.md](status.md)).
+`scripts/run_all_scores.sh` fits every reference score for every `data/fit_examples/emh_paper_<eos>_v1.csv`. It then scores every matching `data/run_examples/*_1000_<eos>_v1.csv` query set, writing artifacts and scores to `output/` (override with `OUT_DIR=`). The example data are not in git: fetch them with `eosvc download --path data/` (see `access.json`). The figure scripts in `scripts/figures/` read those CSVs (see [status.md](status.md)).

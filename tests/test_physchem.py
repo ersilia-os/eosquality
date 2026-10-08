@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from eosquality.library.physchem import (
-    DESCRIPTOR_FNS,
     DESCRIPTOR_NAMES,
     N_DESCRIPTORS,
     _compute_one,
@@ -17,10 +16,11 @@ from eosquality.library.physchem import (
 def test_descriptors_equal_rdkit_s_own(smiles):
     """The row is exactly what RDKit's own descriptor functions return."""
     from rdkit import Chem
+    from rdkit.Chem import Descriptors
 
     for smi in smiles[:25]:
         mol = Chem.MolFromSmiles(smi)
-        expected = np.array([float(fn(mol)) for _, fn in DESCRIPTOR_FNS])
+        expected = np.array([float(fn(mol)) for _, fn in Descriptors._descList])
         got = _compute_one(smi).astype(np.float64)
         finite = np.isfinite(expected) & (np.abs(expected) < 3e38)
         np.testing.assert_allclose(got[finite], expected[finite], rtol=1e-5, atol=1e-6)

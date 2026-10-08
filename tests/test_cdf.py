@@ -39,3 +39,17 @@ def test_nan_aggregate_ignores_missing_features():
     agg = _nan_aggregate(per_feature)
     assert agg[0] == pytest.approx(0.2)
     assert np.isnan(agg[1])
+
+
+def test_large_inputs_give_the_same_scores_as_small_ones(monkeypatch):
+    """Looking the values up in sorted order is an optimisation, not a change."""
+    from eosquality.scores import _helpers
+
+    rng = np.random.default_rng(0)
+    reference = np.sort(rng.integers(0, 50, 400).astype(float))  # many ties
+    values = rng.normal(25, 20, 3000)
+    values[::50] = np.nan
+    values = values.reshape(30, 100)  # any shape, not only 1-D
+    plain = _helpers._cdf_score(values, reference)
+    monkeypatch.setattr(_helpers, "_SORT_NEEDLES_MIN", 100)
+    np.testing.assert_array_equal(_helpers._cdf_score(values, reference), plain)
