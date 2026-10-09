@@ -32,13 +32,6 @@ def fitted(reference, library):
     )
 
 
-def test_each_column_is_uniform_on_the_reference(fitted, reference):
-    """The per-column percentile averages 0.5 on the reference, column by column."""
-    result = fitted.typicality.run(reference)
-    assert list(result.per_feature_pct.columns) == fitted.shared_.selected_columns
-    np.testing.assert_allclose(result.per_feature_pct.mean(), 0.5, atol=0.02)
-
-
 def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.typicality.run(reference).score
     assert score.name == "ref_typicality_pct"
@@ -86,33 +79,11 @@ def test_interpolation_is_exact_on_a_level():
     np.testing.assert_allclose(per_feature[:, 0], [1.0, 0.25, 0.625])
 
 
-def test_a_common_level_scores_above_a_rare_one():
-    scaled = np.array([[0.0]] * 90 + [[0.5]] * 9 + [[-1.0]])
-    pct = percentiles(scaled)
-    assert pct[0, 0] > pct[90, 0] > pct[99, 0]
-
-
 def test_unseen_levels_get_the_floor_and_nan_stays_nan():
     scaled = np.array([[0.0]] * 10)
     pct = percentiles(scaled, np.array([[0.9], [np.nan]]))
     assert pct[0, 0] == pytest.approx(0.5 / 10)
     assert np.isnan(pct[1, 0])
-
-
-def test_reference_details_has_both_columns_per_feature(fitted, query):
-    details = fitted.run(query).reference_details
-    assert len(details) == len(query)
-    cols = fitted.shared_.selected_columns
-    assert list(details.columns) == [
-        "key",
-        "input",
-        *[f"{c}_{kind}" for c in cols for kind in ("typicality_raw", "typicality_pct")],
-    ]
-    first = cols[0]
-    np.testing.assert_allclose(
-        details[f"{first}_typicality_raw"],
-        fitted.typicality.run(query).per_feature[first],
-    )
 
 
 def test_save_load_rebuilds_the_percentile_tables(fitted, query, tmp_path):

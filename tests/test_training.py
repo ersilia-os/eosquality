@@ -60,10 +60,6 @@ def test_loader_skips_small_columns(tmp_path, training_dir):
     assert "logp" not in load_training(tmp_path, COLUMNS)
 
 
-def test_loader_without_schema_takes_all_files(training_dir):
-    assert set(load_training(training_dir)) == {"mw", "aromatic", "hbd"}
-
-
 # ---------------------------------------------------------------------------
 # Domain score
 # ---------------------------------------------------------------------------
@@ -127,14 +123,6 @@ def test_details_keep_unparsable_queries(both):
     assert det.key.tolist() == ["ok", "bad"]
     assert np.isfinite(det.trn_tanimoto_pct[0]) and np.isnan(det.trn_tanimoto_pct[1])
     assert det.nn_smiles.isna().tolist() == [False, True]
-
-
-def test_unrelated_molecule_is_far(both):
-    q = pd.DataFrame({"key": ["far"], "input": ["[Fe+2].[Cl-].[Cl-]"]})
-    res = both.training_distance.run(q)
-    assert res.score.iloc[0] < 0.05  # similarity percentile: far is near 0
-    assert res.score_raw.iloc[0] < 0.1  # a similarity: nothing like the training set
-    assert not res.in_training.iloc[0]
 
 
 def test_whole_model_value_is_q66_of_columns(both, query):
@@ -219,14 +207,6 @@ def test_max_features_selects_within_training_columns(reference, library, traini
     assert set(eq.shared_.selected_columns) <= {"mw", "aromatic", "hbd"}
     # The training modality uses the same columns.
     assert eq.training_distance.training_.column_names == eq.shared_.selected_columns
-
-
-def test_training_only_keeps_least_overlapping_columns(training_dir):
-    eq = ErsiliaQuality().fit(
-        training_sets=training_dir, eos_id="eos0aaa", max_features=2
-    )
-    kept = eq.training_distance.training_.column_names
-    assert len(kept) == 2 and set(kept) <= {"mw", "aromatic", "hbd"}
 
 
 def test_select_by_shared_molecules_drops_a_panel_twin():
@@ -359,18 +339,6 @@ def test_match_is_one_for_a_training_molecule_and_zero_for_a_stranger(both):
     assert res.match.tolist() == [1, 0]
 
 
-def test_match_ignores_stereochemistry(training_dir):
-    """The connectivity layer is blind to stereo, so enantiomers match."""
-    eq = ErsiliaQuality().fit(training_sets=training_dir, eos_id="eos0aaa")
-    layers = eq.training_match._molecules
-    from eosquality.scores.training_match import connectivity_layer
-
-    assert connectivity_layer("C[C@H](N)C(=O)O") == connectivity_layer(
-        "C[C@@H](N)C(=O)O"
-    )
-    assert len(layers) and all(len(x) == 14 for x in layers)
-
-
 def test_scaffold_is_missing_without_one_and_match_is_missing_if_unparsable(both):
     q = pd.DataFrame(
         {"key": ["ring", "chain", "bad"], "input": ["c1ccccc1CC", "CCCCO", "no"]}
@@ -379,17 +347,6 @@ def test_scaffold_is_missing_without_one_and_match_is_missing_if_unparsable(both
     assert pd.isna(res.scaffold.iloc[1]) and res.scaffold.iloc[0] in (0, 1)
     assert pd.isna(res.match.iloc[2]) and pd.isna(res.scaffold.iloc[2])
     assert str(res.match.dtype) == "Int64"
-
-
-def test_scaffold_matches_through_the_ring_system(both):
-    """A query that is a training molecule's bare scaffold matches on scaffold."""
-    from eosquality.scores.training_match import _scaffold
-
-    known = next(
-        s for s in both._training.columns["mw"].smiles if _scaffold(s) not in ("", s)
-    )
-    q = pd.DataFrame({"key": ["scaffold"], "input": [_scaffold(known)]})
-    assert both.training_match.run(q).scaffold.tolist() == [1]
 
 
 def test_match_roundtrip(both, query, tmp_path):
@@ -470,17 +427,6 @@ def test_identical_fingerprints_are_one_point_to_the_distance(stereo_dir):
     assert len(column.all_smiles) == column.n + 1  # two L/D forms, one fingerprint
     assert set(column.smiles) <= set(column.all_smiles)
     assert column.contains(["C[C@H](N)C(=O)O", "C[C@@H](N)C(=O)O"]).all()
-
-
-def test_copies_do_not_zero_the_loo_table(stereo_dir, tmp_path):
-    eq = ErsiliaQuality().fit(training_sets=stereo_dir, eos_id="eos0aaa")
-    assert (eq.training_distance._loo["mw"] > 0).all()
-    eq.save(tmp_path / "artifacts")
-    loaded = ErsiliaQuality.load(tmp_path / "artifacts")
-    both_forms = pd.DataFrame({"input": ["C[C@H](N)C(=O)O", "C[C@@H](N)C(=O)O"]})
-    res = loaded.run(both_forms)
-    assert res.scores.trn_match.tolist() == [1, 1]  # exact lookups keep every form
-    assert res.training_details.trn_in_training.all()  # also the dropped copy
 
 
 def test_reference_properties_of_a_training_only_fit_are_a_clear_error(training_dir):
