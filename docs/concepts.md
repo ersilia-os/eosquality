@@ -112,6 +112,9 @@ descriptor space and distances are in library standard deviations.
 Clipping is needed because the scaler is not robust: `Ipc` grows exponentially
 with molecule size and reached z = 2.7×10²⁶ on eos4e40, and a single
 occurrence of a rare fragment count such as `fr_isothiocyan` gives z ≈ 100.
+For molecules of more than 128 atoms (the library's largest has 52) `Ipc` and
+`AvgIpc` are not computed, because they take seconds and overflow; they are
+imputed like any missing descriptor.
 The **mean Euclidean distance to the 5 nearest training molecules** is
 `trn_physchem_dist` (details file). Two scores come from it. `trn_physchem_pct`
 is the similarity percentile: 1 − the mid-rank percentile of the distance among

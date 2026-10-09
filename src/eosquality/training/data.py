@@ -149,7 +149,7 @@ def load_training(
             f"(columns: {order})."
         )
 
-    frames = {name: pd.read_csv(files[name]) for name in order if name in files}
+    frames = {name: _read_file(files[name]) for name in order if name in files}
     standardized = _standardize_files(frames)  # panels repeat molecules: once each
     fingerprints = _fingerprints(set(standardized.values()) - {None})
     columns: dict[str, TrainingColumn] = {}
@@ -172,6 +172,14 @@ def load_training(
     if not columns:
         raise SchemaError(f"No usable training column in {folder}.")
     return columns
+
+
+def _read_file(path: pathlib.Path) -> pd.DataFrame:
+    """One training CSV, or a :class:`SchemaError` saying why it cannot be read."""
+    try:
+        return pd.read_csv(path)
+    except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
+        raise SchemaError(f"Training file {path} could not be read: {exc}") from exc
 
 
 def _smiles_column(name: str, df: pd.DataFrame) -> str:

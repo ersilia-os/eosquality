@@ -490,3 +490,10 @@ def test_reference_properties_of_a_training_only_fit_are_a_clear_error(training_
     for name in ("schema_", "metadata_", "shared_"):
         with pytest.raises(NotFittedError, match="reference modality"):
             getattr(eq, name)
+
+
+@pytest.mark.parametrize("content", ["", "smiles\n", "smiles\nCCO,extra\nCCC\n"])
+def test_an_unreadable_training_file_is_a_schema_error(tmp_path, content):
+    (tmp_path / "mw.csv").write_text(content)
+    with pytest.raises(SchemaError):
+        load_training(tmp_path)

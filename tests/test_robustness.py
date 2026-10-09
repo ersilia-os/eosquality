@@ -190,3 +190,33 @@ def test_the_pool_pins_blas_threads_for_its_workers_and_restores_the_environment
     assert seen == {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "4"}
     assert "OMP_NUM_THREADS" not in os.environ
     assert os.environ["OPENBLAS_NUM_THREADS"] == "4"
+
+
+def test_standardise_ignores_edges_and_rejects_inner_whitespace():
+    from eosquality.scores._helpers import _standardize
+
+    assert _standardize("  CCO\n") == "CCO"
+    assert _standardize("CCO ethanol") is None  # RDKit would read "ethanol" as a name
+    assert _standardize("C C") is None
+    assert _standardize("   ") is None
+    assert _standardize(None) is None
+
+
+@pytest.mark.parametrize("jobs", ["0", "-2"])
+def test_jobs_must_be_minus_one_or_positive(tmp_path, capsys, jobs):
+    from eosquality.cli import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "fit",
+                "-r",
+                "x_eos0aaa_v1.csv",
+                "-a",
+                str(tmp_path / "a_eos0aaa_v1"),
+                "-j",
+                jobs,
+            ]
+        )
+    assert exc.value.code == 2
+    assert "--jobs" in capsys.readouterr().err
