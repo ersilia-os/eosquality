@@ -17,7 +17,6 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_SCORES_DIR = REPO / "output"
 DEFAULT_OUT_DIR = REPO / "docs" / "figures"
 
-SCORES = ["typicality", "extremity"]
 QUERY_SETS = ["molecules", "drugs", "np_large", "synthetic", "inert"]
 QUERY_SET_LABELS = {
     "molecules": "Library sample",
@@ -91,12 +90,6 @@ def load_scores(scores_dir: pathlib.Path) -> pd.DataFrame:
         if not m:
             continue
         df = pd.read_csv(csv)
-        # Reference scores are prefixed "ref_" since the CLI redesign; the
-        # figures use the short names, so CSVs of either vintage work.
-        df = df.rename(columns=lambda c: c[4:] if c.startswith("ref_") else c)
-        df = df.rename(
-            columns={"typicality_pct": "typicality", "extremity_pct": "extremity"}
-        )
         df["query_set"], df["model"] = m.group(1), m.group(2)
         frames.append(df)
     if not frames:

@@ -18,7 +18,7 @@ The CLI is then available as `eosquality`. Start by setting it up, which fetches
 eosquality setup
 ```
 
-This downloads about 1.3 GB and stores the library under `~/.eosquality/indices/`.
+This downloads the reference library and stores it under `~/.eosquality/indices/`.
 
 ## Quick start
 
@@ -70,18 +70,6 @@ Typicality and extremity compare a query against the model's own predictions on 
 | **Training match** | `trn_match`, `trn_scaffold` | Is the same structure, or the same Murcko scaffold, in a training set? 1 or 0. |
 
 The `_pct` columns are calibrated percentiles and the `_raw` columns the underlying values. `run --details` also writes the per-column values and the nearest training molecules.
-
-## Documentation
-
-- [Concepts](docs/concepts.md): how each score is computed and calibrated
-- [CLI](docs/cli.md) and [Python API](docs/api.md)
-- [Architecture](docs/diagram.md): fit/run data flow and save layout
-- [Reference library](docs/reference-library.md): versioning, compatibility, maintainer release steps
-- [Project status](docs/status.md): current results, known limitations, open questions
-
-## License
-
-GPL-3.0-or-later; see [LICENSE](LICENSE).
 
 ## About the Ersilia Open Source Initiative
 

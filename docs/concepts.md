@@ -24,7 +24,7 @@ score  = clip(cdf(v), 1/(2n), 1)
 
 With mid-ranks, a raw value shared by many reference rows (common for one-output models or quantised typicality) lands in the middle of its tie block. Reference molecules therefore score close to Uniform(0, 1), and their mean is 0.5; this is the anchor (`reference_typicality_`, `reference_extremity_`, and the `ref_<score>_anchor` run metadata).
 
-`docs/figures/reference_calibration.png` checks this on 1,000 molecules sampled from the library.
+The first row of `docs/figures/reference_pct.png` checks this on 1,000 molecules sampled from the library.
 
 ## Missing values
 
@@ -61,7 +61,7 @@ Extremity asks how far from the centre of its range each output sits.
 - **Per column, percentile.** Each column's value is placed on that column's own reference distribution (mid-rank percentile of `min(|scaled|, 1)` among the reference library's values of that column), so a column that is rarely extreme counts the same as one that often is. These are `<column>_extremity_pct` in the reference details file, next to `<column>_extremity_raw`.
 - **Whole model, percentile.** `ref_extremity_pct` takes the Q66 of the per-column percentiles and maps it through the reference library's own distribution of that same statistic: ~0.5 for a typical reference molecule, 0.97 for one more extreme than 97% of the library. The last step keeps the value uniform under the reference whatever the number of columns, so it is comparable across models, which the raw value is not.
 
-Extremity is position-based where typicality is density-based, and the two are complementary. In practice they are strongly anti-correlated for most models (see `docs/figures/score_correlations.png`).
+Extremity is position-based where typicality is density-based, and the two are complementary. In practice they are strongly anti-correlated for most models.
 
 ### Match (is the molecule in the reference library?)
 
