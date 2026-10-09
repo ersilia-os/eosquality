@@ -42,7 +42,7 @@ _LIBRARY_ID_RE = re.compile(r"^ersilia_reference_library_v(\d+)$")
 # ``data/indices/ersilia_reference_library_vN/`` folders here via eosvc;
 # clients pull via plain HTTPS.
 DEFAULT_REFERENCE_BASE_URL: str = (
-    "https://eosvc-public.s3.amazonaws.com/eosquality/indices/"
+    "https://eosvc-public.s3.amazonaws.com/eosquality/data/indices/"
 )
 
 
