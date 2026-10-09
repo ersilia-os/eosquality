@@ -26,19 +26,21 @@ classifiers = [
 ]
 
 dependencies = [
-  "click==8.3.2",
+  "click>=8.3.2,<9",
+  # Exact: RDKit is checked against the version that built a library or index,
+  # and the FPSim2 index files and eosframes scaler parameters are saved formats.
   "eosframes==1.2.0",
   "FPSim2==0.7.4",
-  "loguru==0.7.3",
-  "numpy==2.4.4",
-  "packaging==26.0",
-  "pandas==3.0.2",
-  "psutil==7.2.2",
   "rdkit==2026.3.1",
-  "rich==15.0.0",
-  "scikit-learn==1.8.0",
-  "scipy==1.17.1",
-  "threadpoolctl==3.6.0",
+  "loguru>=0.7.3,<1",
+  "numpy>=2.4.4,<3",
+  "packaging>=26.0",
+  "pandas>=3.0.2,<4",
+  "psutil>=7.2.2,<8",
+  "rich>=15.0.0,<16",
+  "scikit-learn>=1.8.0,<2",
+  "scipy>=1.17.1,<2",
+  "threadpoolctl>=3.6.0,<4",
 ]
 
 [project.optional-dependencies]
