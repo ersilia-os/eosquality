@@ -62,7 +62,7 @@ def ensure_library_downloaded(
     ----------
     base_url : str
         Public HTTPS prefix under which library folders live, e.g.
-        ``https://eosvc-public.s3.amazonaws.com/eosquality/indices/``.
+        ``https://eosvc-public.s3.amazonaws.com/eosquality/data/indices/``.
     dirname : str
         Folder name on S3 and in the cache, e.g. ``ersilia_reference_library_v0``.
     cache_dir : pathlib.Path

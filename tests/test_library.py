@@ -115,3 +115,10 @@ def test_library_major_matches_the_package_major():
 
     major = Version(importlib.metadata.version("eosquality")).major
     assert identity.library_major() == major
+
+
+def test_the_default_download_url_follows_the_eosvc_layout():
+    from eosquality.library.identity import DEFAULT_REFERENCE_BASE_URL
+
+    # `eosvc upload --path data/indices/<library>/` stores the folder under eosquality/data/
+    assert DEFAULT_REFERENCE_BASE_URL.endswith("/eosquality/data/indices/")
