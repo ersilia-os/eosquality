@@ -4,7 +4,7 @@
 
 ## Example results
 
-The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/score_distributions.py` (in an environment with stylia; the figures use its NPG palette).
+The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/score_distributions.py` (in an environment with stylia; the figures use its NPG palette and black article style).
 
 | model | endpoint | outputs | kept after selection |
 |---|---|---|---|

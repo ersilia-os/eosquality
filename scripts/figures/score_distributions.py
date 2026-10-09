@@ -26,7 +26,7 @@ from _common import (
 )
 
 stylia.set_format("slide")
-stylia.set_style("ersilia")
+stylia.set_style("article")
 
 N_BINS = 30
 HALF_WIDTH = 0.42
