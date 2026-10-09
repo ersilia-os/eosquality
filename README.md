@@ -79,6 +79,10 @@ The `_pct` columns are calibrated percentiles and the `_raw` columns the underly
 - [Reference library](docs/reference-library.md): versioning, compatibility, maintainer release steps
 - [Project status](docs/status.md): current results, known limitations, open questions
 
+## License
+
+GPL-3.0-or-later; see [LICENSE](LICENSE).
+
 ## About the Ersilia Open Source Initiative
 
 The [Ersilia Open Source Initiative](https://ersilia.io) is a tech-nonprofit organization fueling sustainable research in the Global South. Ersilia's main asset is the [Ersilia Model Hub](https://github.com/ersilia-os/ersilia), an open-source repository of AI/ML models for antimicrobial drug discovery.
