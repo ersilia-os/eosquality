@@ -61,3 +61,11 @@ When an artifact is fit against a custom library (`library=` in the Python API, 
    eosvc upload --path data/libraries/ersilia_reference_library_v1.csv
    eosvc upload --path data/indices/ersilia_reference_library_v1/
    ```
+
+## Releasing the package (maintainers)
+
+1. Bump `version` in `pyproject.toml` (and the version named in `docs/status.md` and above), merge, and tag the merge commit `vX.Y.Z`.
+2. Publish a GitHub release for the tag. The `Release` workflow builds the wheel and sdist, checks that the tag equals the package version, and uploads them to PyPI through trusted publishing (no token is stored). To publish an existing tag by hand: Actions > Release > Run workflow, with the tag.
+3. One-time setup: on pypi.org add a (pending) trusted publisher for `eosquality` with owner `ersilia-os`, repository `eosquality`, workflow `release.yml`, environment `pypi`; create the `pypi` environment in the repository settings.
+
+A PyPI version cannot be uploaded twice; fix a bad release with the next version.
