@@ -122,7 +122,7 @@ See `docs/diagram.md`: `<artifacts>/manifest.json`, `reference_mode/`, `training
 ## Code Conventions
 
 - **Formatting and linting** use ruff only (`ruff format`, `ruff check`); black is not used. Ruff's `target-version` follows `requires-python` (py311), not the org template's py310.
-- **Dependencies** are pinned to exact versions in `pyproject.toml`; bump them deliberately.
+- **Dependencies** in `pyproject.toml` are ranges (the tested version up to the next major), so the package installs next to other tools. RDKit, FPSim2 and eosframes stay exact, because their versions are recorded in or fix the format of saved libraries, indices and artifacts; bump them deliberately. The dev tools (pytest, ruff, pre-commit) are exact. CI installs the newest allowed versions, which is what catches a breaking release.
 - **CLI** is built with Click (`cli/`); commands raise `CliError` for user-facing errors, and `run_command` turns them into `✖ error:` lines and exit status 1. The library fetch command is `setup`, matching the other Ersilia tools.
 - **Output:** user-facing status goes through `utils/console/` (steps, panels), never through `logger.info`. `logger` is for diagnostics, which go to the log file and appear on screen only with `-v`. Library code narrates fit/run with `console.section` + `console.Steps`, which are no-ops while the console is off.
 - **Size limits:** modules stay under 600 lines and functions under 80; split them before they grow past that. `console.table` prints at most `MAX_TABLE_ROWS` (15) and then `… and N more`, so a 41-column fit does not flood the terminal; the full table is in the log file.
