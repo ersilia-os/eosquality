@@ -4,7 +4,7 @@
 
 ## Example results
 
-The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/*.py` (in an environment with stylia).
+The example models and query sets are those of `scripts/run_all_scores.sh`: it fits every reference score for five Ersilia models (the `emh_paper` fit sets in `data/fit_examples/`) and scores 1,000 molecules from each of five query sets (`data/run_examples/`). The figures in `figures/` are regenerated from its output with `scripts/figures/score_distributions.py` (in an environment with stylia; the figures use its NPG palette).
 
 | model | endpoint | outputs | kept after selection |
 |---|---|---|---|
@@ -28,14 +28,12 @@ The query sets, and how many of their molecules the reference library holds (`re
 
 **Calibration.** Library molecules score roughly Uniform(0, 1) on typicality and extremity, and the anchors are 0.500 by construction (mid-rank calibration). On the library sample the KS distance to uniform is at most 0.040 for every model and both scores, against a 95% critical value of 0.043 for n = 1,000.
 
-![Reference calibration](figures/reference_calibration.png)
-![Score distributions](figures/score_distributions.png)
+![Reference percentiles](figures/reference_pct.png)
+![Reference raw scores](figures/reference_raw.png)
 
 **Typicality is smooth.** The density is interpolated between int8 levels, so the percentile varies continuously with the value (about 770–990 distinct values per 1,000 molecules for the one-output models, against about 130 when each value was rounded to a level). Exact ties remain where the outputs themselves tie (a binary or constant column).
 
 **Redundancy.** For the single-output models typicality and extremity are nearly redundant (Spearman ρ −0.85 to −0.95, over all query sets: a value far from the centre is almost always a rare value); the panels of 3 and 49 outputs are less so (−0.60 and −0.36).
-
-![Score correlations](figures/score_correlations.png)
 
 **Cost.** On eos4e40, `fit` with reference and training sets takes about 13 s and `run` on 1,000 drugs about 11 s (about 4 s for molecules that are in the library, whose descriptors come from its cache), with the RDKit descriptors spread over the cores (`-j`). The largest training sets cost most: the cytotoxicity model (3 columns of 39,000 molecules, one shared index) fits in about 1.1 minutes, the ADMET panel (10 selected columns) in about 1.3 minutes. `eosquality build` of the 1.35M-molecule library takes about 30 minutes (the physchem descriptors dominate). The artifacts are 25–160 MB per model, mostly the training sets (their indices and physchem matrices, shared by columns measured on the same molecules) and the reference CDF tables (about 11 MB for typicality and 16 MB for extremity).
 
@@ -64,9 +62,10 @@ Each output column can have its own training set. It is fitted with
 `-t/--training-sets`, alone or together with `-r/--reference`; with both, the
 reference scores use only the columns that have a training set.
 
-![Training-score distributions](figures/training_scores.png)
+![Training percentiles](figures/training_pct.png)
+![Training raw scores](figures/training_raw.png)
 
-Read that figure critically. The columns are the Tanimoto similarity percentile (`trn_tanimoto_pct`), the raw mean Tanimoto similarity (`trn_tanimoto_raw`) and the physchem similarity percentile (`trn_physchem_pct`). Against most query sets, including a sample of the reference library itself, the similarity percentile sits far below the training set's own typical value (the dashed 0.5 line) and often saturates near 0. That is honest: the training sets hold a few thousand molecules against a 1.35M-molecule library, so almost any query is farther from them than their molecules are from each other. It leaves the calibrated score with little resolution once everything is "far", which is why `trn_tanimoto_raw` is reported alongside it. Drugs are the closest set for eos4e40 (E. coli), whose training data is a drug-like screen; the synthetic set is the farthest for every model. The natural products fall outside every training set's physchem range, so `trn_physchem_pct` is near 0 for them.
+Read these figures critically. They show the Tanimoto and physchem similarity, as percentiles (`trn_tanimoto_pct`, `trn_physchem_pct`) and raw (`trn_tanimoto_raw`, `trn_physchem_raw`). Against most query sets, including a sample of the reference library itself, the similarity percentile sits far below the training set's own typical value (the dashed 0.5 line) and often saturates near 0. That is honest: the training sets hold a few thousand molecules against a 1.35M-molecule library, so almost any query is farther from them than their molecules are from each other. It leaves the calibrated score with little resolution once everything is "far", which is why `trn_tanimoto_raw` is reported alongside it. Drugs are the closest set for eos4e40 (E. coli), whose training data is a drug-like screen; the synthetic set is the farthest for every model. The natural products fall outside every training set's physchem range, so `trn_physchem_pct` is near 0 for them.
 
 ## Open items
 
