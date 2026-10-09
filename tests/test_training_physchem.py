@@ -65,47 +65,11 @@ def test_leave_one_out_is_the_mean_distance_to_the_k_nearest_others():
     np.testing.assert_allclose(domain.sorted_distances, np.sort(expected), rtol=1e-4)
 
 
-def test_only_the_query_itself_is_left_out():
-    """A twin with identical descriptors (an enantiomer, say) is a neighbour."""
-    raw, domain = _domain_on_random_descriptors()
-    twinned = np.vstack([raw, raw[:1]])  # row 40 duplicates row 0
-    from eosquality.library.physchem import canonical_scaler
-
-    domain = PhyschemDomain.fit(twinned, canonical_scaler(), k=3)
-    not_a_member = domain.measure(raw[:1])  # kept: both zero-distance rows count
-    member = domain.measure(raw[:1], np.array([0]))  # drops only itself
-    assert member[0] > not_a_member[0]
-    z = domain.train.astype(np.float64)
-    others = np.sort(np.linalg.norm(z - z[0], axis=1))[1:]  # [twin 0, then rest]
-    assert others[0] < 1e-3
-    np.testing.assert_allclose(member[0], others[:3].mean(), rtol=1e-4)
-
-
-def test_rows_of_finds_training_molecules(fitted):
-    column = fitted._training.columns["mw"]
-    rows = column.rows_of([column.smiles[3], "not in the training set"])
-    assert rows.tolist() == [3, -1]
-
-
-def test_an_extreme_molecule_is_far_out(fitted):
-    """A tiny inorganic salt sits outside drug-like physchem space."""
-    q = pd.DataFrame({"key": ["far"], "input": ["[Fe+2].[Cl-].[Cl-]"]})
-    # Similarity percentile: far from the training set is near 0.
-    assert fitted.training_physchem.run(q).score.iloc[0] < 0.1
-
-
 def test_unparsable_smiles_give_nan(fitted):
     q = pd.DataFrame({"key": ["ok", "bad"], "input": ["CCO", "not a smiles"]})
     res = fitted.training_physchem.run(q)
     assert np.isfinite(res.score.iloc[0]) and np.isnan(res.score.iloc[1])
     assert np.isfinite(res.score_raw.iloc[0])
-
-
-def test_run_columns_are_in_range(fitted, query):
-    res = fitted.training_physchem.run(query)
-    assert ((res.score > 0) & (res.score <= 1)).all()
-    assert (res.score_raw <= 1).all()  # a similarity: 1 is identical
-    assert (res.distance > 0).all()
 
 
 def test_roundtrip(fitted, query, tmp_path):

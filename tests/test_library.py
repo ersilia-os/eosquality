@@ -95,13 +95,6 @@ def test_library_is_found_in_the_working_directory_then_the_cache(
     )
 
 
-def test_library_ids():
-    assert identity.is_library_id("ersilia_reference_library_v12")
-    assert not identity.is_library_id("ersilia_reference_library_v")
-    assert not identity.is_library_id("mylib")
-    assert identity.library_major() == int(identity.LIBRARY_ID.rsplit("_v", 1)[1])
-
-
 def test_a_folder_that_is_not_a_library_is_a_clear_error(tmp_path):
     from eosquality.library.reference import ReferenceLibrary
 

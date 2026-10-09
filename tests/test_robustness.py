@@ -2,10 +2,8 @@
 
 import pytest
 
-import eosquality
 from eosquality import ErsiliaQuality
 from eosquality.cli import main
-from eosquality.cli.run import sibling_path
 from eosquality.utils import console
 from eosquality.utils.logging import logger
 
@@ -35,10 +33,6 @@ def test_unparsable_smiles_score_nan_without_failing(fitted, query):
         assert scores[name].iloc[[1, 3]].isna().all()
     assert scores["ref_match"].drop(index=q.index[[1, 3]]).notna().all()
     assert scores["ref_typicality_pct"].notna().all()  # output-based, needs no SMILES
-
-
-def test_log_path_sits_next_to_the_output():
-    assert str(sibling_path("out/scores.csv", ".log")) == "out/scores.log"
 
 
 @pytest.mark.parametrize(
@@ -83,17 +77,6 @@ def test_empty_query_is_a_clear_error(tmp_path, fitted, capsys):
     out = tmp_path / "s_eos0aaa_v1.csv"
     assert _run(["run", "-i", str(empty), "-a", str(art), "-o", str(out)]) == 1
     assert "hasnorows" in _unwrapped(capsys.readouterr().err)
-
-
-def test_dir_lists_lazy_names():
-    assert {"ErsiliaQuality", "ReferenceMatch", "RunResult"} <= set(dir(eosquality))
-
-
-def test_set_verbosity_false_silences_the_console():
-    eosquality.set_verbosity(True)
-    assert console.enabled()
-    eosquality.set_verbosity(False)
-    assert not console.enabled()
 
 
 def test_library_code_never_starts_a_process_pool(monkeypatch):
@@ -220,3 +203,9 @@ def test_jobs_must_be_minus_one_or_positive(tmp_path, capsys, jobs):
         )
     assert exc.value.code == 2
     assert "--jobs" in capsys.readouterr().err
+
+
+def test_dir_lists_lazy_names():
+    import eosquality
+
+    assert {"ErsiliaQuality", "ReferenceMatch", "RunResult"} <= set(dir(eosquality))

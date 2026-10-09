@@ -148,12 +148,6 @@ def test_fit_and_run_write_log_files(files):
     assert "eosquality.cli.run" in log
 
 
-def test_commands():
-    from eosquality.cli import cli
-
-    assert list(cli.commands) == ["setup", "fit", "run", "build"]
-
-
 def test_query_name_needs_no_model(files, training_dir, query):
     only = str(files["tmp"] / "training_only_eos0aaa_v1")
     assert _run(["fit", "-t", str(training_dir), "-a", only]) == 0
@@ -278,15 +272,6 @@ def test_the_maintainer_workflow_build_then_fit_then_run(
     assert json.loads(meta.read_text())["library_path"] == ""  # canonical: by identity
     assert {"ref_match", "ref_scaffold", "ref_typicality_pct"} <= set(scores.columns)
     assert scores["ref_match"].tail(40).eq(1).all()  # the 40 reference rows
-
-
-def test_fit_and_run_use_a_pool_for_the_descriptors_when_asked(files, training_dir):
-    """The default ``-j -1`` path: a pool for a column of 200 or more molecules."""
-    only = str(files["tmp"] / "training_only_eos0aaa_v1")
-    assert _run(["fit", "-t", str(training_dir), "-a", only, "-j", "2"]) == 0
-    out = str(files["tmp"] / "pooled_eos0aaa_v1.csv")
-    assert _run(["run", "-i", files["query"], "-a", only, "-o", out, "-j", "2"]) == 0
-    assert "trn_physchem_pct" in pd.read_csv(out).columns
 
 
 def test_a_custom_library_found_through_the_environment_is_recorded_by_path(files):

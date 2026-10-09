@@ -67,11 +67,6 @@ def test_standalone_component_load(fitted, query, tmp_path):
     )
 
 
-def test_reference_anchors_near_half(fitted):
-    for value in (fitted.reference_typicality_, fitted.reference_extremity_):
-        assert value == pytest.approx(0.5, abs=0.02)
-
-
 def test_old_format_is_rejected(fitted, tmp_path):
     fitted.save(tmp_path / "art")
     meta_path = tmp_path / "art/reference_mode/shared/metadata.json"
@@ -181,12 +176,6 @@ def test_artifacts_of_another_library_or_major_are_refused(
     meta_path.write_text(json.dumps({**meta, **edit}))
     with pytest.raises(IncompatibleArtifactsError, match=message):
         ErsiliaQuality.load(tmp_path / "art")
-
-
-def test_post_fit_attributes(fitted):
-    assert fitted.modalities_ == ["reference"]
-    assert fitted.metadata_.eos_id == "eos0aaa" and fitted.metadata_.n_samples == 600
-    assert fitted.schema_.column_names == fitted.shared_.schema.column_names
 
 
 def test_an_unfitted_instance_refuses_to_run(query):

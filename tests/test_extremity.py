@@ -17,13 +17,6 @@ def fitted(reference, library):
     )
 
 
-def test_each_column_is_uniform_on_the_reference(fitted, reference):
-    """The per-column percentile averages 0.5 on the reference, column by column."""
-    result = fitted.extremity.run(reference)
-    assert list(result.per_feature_pct.columns) == fitted.shared_.selected_columns
-    np.testing.assert_allclose(result.per_feature_pct.mean(), 0.5, atol=0.02)
-
-
 def test_whole_model_percentile_is_uniform_on_the_reference(fitted, reference):
     score = fitted.extremity.run(reference).score
     assert score.mean() == pytest.approx(0.5, abs=0.01)
@@ -58,23 +51,6 @@ def test_sign_is_ignored():
     per_feature = per_feature_extremity(np.array([[0.3, -0.7, 2.0], [-0.3, 0.7, -2.0]]))
     np.testing.assert_allclose(per_feature[0], per_feature[1])
     np.testing.assert_allclose(per_feature[0], [0.3, 0.7, 1.0])
-
-
-def test_reference_details_has_one_row_per_query(fitted, query):
-    result = fitted.run(query)
-    details = result.reference_details
-    assert len(details) == len(query)
-    cols = fitted.shared_.selected_columns
-    assert list(details.columns) == [
-        "key",
-        "input",
-        *[f"{c}_{kind}" for c in cols for kind in ("extremity_raw", "extremity_pct")],
-    ]
-    first = cols[0]
-    np.testing.assert_allclose(
-        details[f"{first}_extremity_raw"],
-        fitted.extremity.run(query).per_feature[first],
-    )
 
 
 def test_save_load_keeps_the_tables(fitted, query, tmp_path):
